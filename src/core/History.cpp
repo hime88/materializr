@@ -96,20 +96,25 @@ bool History::editStep(int index, Document& doc) {
         return false;
     }
 
-    // Replay from the edited step forward
-    // Clear the document and re-execute all enabled ops from the start
-    doc.clear();
-
     int limit = m_currentIndex;
     if (m_breakpoint >= 0 && m_breakpoint < limit) {
         limit = m_breakpoint;
     }
+    if (index > limit) return false; // step isn't part of the current state
 
-    for (int i = 0; i <= limit; ++i) {
+    // Rebuild IN PLACE rather than clearing the document: clearing would also
+    // wipe bodies that aren't operations (the base/imported bodies) and reset
+    // body ids, so dependent ops (which reference body ids) would fail. Instead
+    // roll back to just before `index` by undoing the applied ops in reverse,
+    // then re-execute from `index` forward so the edited parameters take effect.
+    for (int i = limit; i >= index; --i) {
+        Operation* op = m_operations[i].get();
+        if (op->isEnabled()) op->undo(doc);
+    }
+    for (int i = index; i <= limit; ++i) {
         Operation* op = m_operations[i].get();
         if (op->isEnabled()) {
             if (!op->execute(doc)) {
-                // If an operation fails during replay, stop and report
                 m_currentIndex = i - 1;
                 return false;
             }
