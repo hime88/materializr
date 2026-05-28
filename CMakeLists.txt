@@ -57,7 +57,14 @@ target_link_libraries(imgui_lib PUBLIC glfw)
 
 find_package(OpenGL REQUIRED)
 
-# OpenCASCADE: work around missing libtbb-dev symlinks by patching cmake files locally.
+# OpenCASCADE
+if(WIN32)
+    # Windows: OpenCASCADE is provided by vcpkg (see vcpkg.json). Its CMake config
+    # exports the same TK* targets and sets OpenCASCADE_INCLUDE_DIR, so the rest
+    # of this file is identical to the Linux path.
+    find_package(OpenCASCADE CONFIG REQUIRED)
+else()
+# Linux: work around missing libtbb-dev symlinks by patching cmake files locally.
 # Auto-detect the OCCT cmake directory (differs between aarch64/x86_64).
 file(GLOB_RECURSE _occt_config_search "/usr/lib/*/cmake/opencascade/OpenCASCADEConfig.cmake")
 if(_occt_config_search)
@@ -107,6 +114,7 @@ find_package(OpenCASCADE REQUIRED
     PATHS ${OCCT_CMAKE_LOCAL}
     NO_DEFAULT_PATH
 )
+endif()
 
 # ─── Main executable ─────────────────────────────────────────────────────────
 
@@ -240,6 +248,22 @@ target_link_libraries(materializr PRIVATE
     TKIGES
     TKSTL
 )
+
+# ─── Windows specifics ───────────────────────────────────────────────────────
+# Everything here is gated on Windows/MSVC, so the Linux build is unaffected.
+if(WIN32)
+    # GL loader (opengl32.dll only provides GL 1.1). GLEW comes from vcpkg.
+    find_package(GLEW REQUIRED)
+    target_link_libraries(materializr PRIVATE GLEW::GLEW)
+endif()
+
+if(MSVC)
+    # _USE_MATH_DEFINES: M_PI etc.  NOMINMAX: keep std::min/max usable.
+    # /bigobj: OpenCASCADE-heavy translation units exceed the default obj limit.
+    target_compile_definitions(materializr PRIVATE
+        _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_options(materializr PRIVATE /bigobj)
+endif()
 
 # ─── Tests ───────────────────────────────────────────────────────────────────
 

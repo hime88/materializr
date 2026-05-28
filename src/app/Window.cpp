@@ -1,5 +1,6 @@
 #include "app/Window.h"
 
+#include "gl_common.h"   // GLEW (Windows) must be included before GLFW
 #include <GLFW/glfw3.h>
 #include <stdexcept>
 #include <iostream>
@@ -30,6 +31,16 @@ Window::Window(int width, int height, const std::string& title)
     }
 
     glfwMakeContextCurrent(m_window);
+
+#ifdef _WIN32
+    // Load GL 3.3 core entry points (no-op on Linux, which uses Mesa prototypes).
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        glfwTerminate();
+        throw std::runtime_error("Failed to initialize GLEW (OpenGL loader)");
+    }
+#endif
+
     glfwSwapInterval(1); // Enable vsync
 }
 

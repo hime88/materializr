@@ -4,11 +4,28 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+
+#ifdef _WIN32
+#include <filesystem>
+#else
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 namespace materializr {
+
+// True if `p` is an existing directory. Platform-split so the Linux path keeps
+// its original POSIX stat() behaviour untouched.
+static bool dlgIsDir(const std::string& p) {
+#ifdef _WIN32
+    std::error_code ec;
+    return std::filesystem::is_directory(p, ec);
+#else
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
 
 static struct {
     bool open = false;
@@ -24,15 +41,38 @@ static struct {
     int selectedEntry = -1;
     std::function<void(const std::string&)> callback;
 
+    // Add a file entry, applying the active extension filter. Shared by both
+    // platform listing paths below.
+    void considerFile(std::vector<std::pair<std::string, bool>>& items,
+                      const std::string& name) {
+        if (!filters.empty() && selectedFilter < (int)filters.size()) {
+            if (!matchesFilter(name, filters[selectedFilter].pattern)) return;
+        }
+        items.push_back({name, false});
+    }
+
     void refresh() {
         entries.clear();
         isDirVec.clear();
         selectedEntry = -1;
 
+        std::vector<std::pair<std::string, bool>> items;
+
+#ifdef _WIN32
+        // std::filesystem doesn't yield "." / "..", so add parent navigation.
+        items.push_back({"..", true});
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(currentDir, ec), end;
+             it != end && !ec; it.increment(ec)) {
+            std::string name = it->path().filename().string();
+            if (name.empty()) continue;
+            if (it->is_directory(ec)) items.push_back({name, true});
+            else considerFile(items, name);
+        }
+#else
         DIR* dir = opendir(currentDir.c_str());
         if (!dir) return;
 
-        std::vector<std::pair<std::string, bool>> items;
         struct dirent* ent;
         while ((ent = readdir(dir)) != nullptr) {
             std::string name = ent->d_name;
@@ -48,15 +88,11 @@ static struct {
             if (isDirectory) {
                 items.push_back({name, true});
             } else {
-                if (!filters.empty() && selectedFilter < (int)filters.size()) {
-                    std::string pattern = filters[selectedFilter].pattern;
-                    bool match = matchesFilter(name, pattern);
-                    if (!match) continue;
-                }
-                items.push_back({name, false});
+                considerFile(items, name);
             }
         }
         closedir(dir);
+#endif
 
         std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
             if (a.second != b.second) return a.second > b.second;
@@ -104,12 +140,21 @@ static struct {
         selectedEntry = -1;
         std::memset(nameBuf, 0, sizeof(nameBuf));
 
+#ifdef _WIN32
+        // Use forward slashes throughout so the navigation logic (rfind('/'),
+        // currentDir + "/" + name) works; the Win32/filesystem APIs accept them.
+        std::error_code ec;
+        currentDir = std::filesystem::current_path(ec).string();
+        std::replace(currentDir.begin(), currentDir.end(), '\\', '/');
+        if (currentDir.empty()) currentDir = "C:/";
+#else
         char cwd[1024];
         if (getcwd(cwd, sizeof(cwd))) {
             currentDir = cwd;
         } else {
             currentDir = "/home";
         }
+#endif
         std::strncpy(pathBuf, currentDir.c_str(), sizeof(pathBuf) - 1);
 
         if (!defaultName.empty()) {
@@ -161,8 +206,7 @@ void FileDialogs::render() {
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputText("##path", s_state.pathBuf, sizeof(s_state.pathBuf),
                          ImGuiInputTextFlags_EnterReturnsTrue)) {
-        struct stat st;
-        if (stat(s_state.pathBuf, &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (dlgIsDir(s_state.pathBuf)) {
             s_state.currentDir = s_state.pathBuf;
             s_state.refresh();
         }

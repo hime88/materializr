@@ -40,6 +40,14 @@ void readBool(const std::map<std::string, std::string>& kv, const char* key, boo
 } // namespace
 
 std::string SettingsIO::defaultPath() {
+#ifdef _WIN32
+    // %APPDATA%\materializr\settings.cfg (fall back to the user profile).
+    if (const char* appdata = std::getenv("APPDATA"); appdata && *appdata)
+        return std::string(appdata) + "\\materializr\\settings.cfg";
+    if (const char* up = std::getenv("USERPROFILE"); up && *up)
+        return std::string(up) + "\\materializr\\settings.cfg";
+    return "materializr-settings.cfg"; // last resort: current directory
+#else
     std::string base;
     if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) {
         base = xdg;
@@ -49,6 +57,7 @@ std::string SettingsIO::defaultPath() {
         base = "."; // last resort: current directory
     }
     return base + "/materializr/settings.cfg";
+#endif
 }
 
 AppSettings SettingsIO::load(const std::string& path) {
