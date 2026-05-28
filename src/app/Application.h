@@ -26,6 +26,9 @@ class SelectionHighlight;
 class BoxSelect;
 class Toolbar;
 class HistoryPanel;
+class AboutDialog;
+class ShortcutsPanel;
+class HelpPanel;
 class ItemsPanel;
 class CommandPalette;
 class StatusBar;
@@ -69,6 +72,7 @@ private:
     void loadAppSettings();   // restore persisted preferences at startup
     void saveAppSettings();   // write persisted preferences
     void renderMirrorPopup();
+    void renderUpdatePopup();
     void renderScalePanel();
     void handleToolAction(int action);
     void handleShortcuts();
@@ -150,6 +154,18 @@ private:
     std::unique_ptr<StatusBar> m_statusBar;
     std::unique_ptr<ThemeManager> m_themeManager;
     std::unique_ptr<PropertiesPanel> m_propertiesPanel;
+    std::unique_ptr<AboutDialog> m_aboutDialog;
+    std::unique_ptr<ShortcutsPanel> m_shortcutsPanel;
+    std::unique_ptr<HelpPanel> m_helpPanel;
+
+    // Update-check popup state (Help → Check for Updates).
+    bool m_showUpdatePopup = false;
+    bool m_updateChecked = false;
+    std::string m_updateCurrent;
+    std::string m_updateLatest;
+    std::string m_updateMessage;
+    std::string m_updateReleaseUrl;
+    bool m_updateAvailable = false;
 
     // Sketch
     std::shared_ptr<Sketch> m_activeSketch;

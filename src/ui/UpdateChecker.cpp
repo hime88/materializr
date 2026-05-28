@@ -1,0 +1,151 @@
+#include "UpdateChecker.h"
+
+#include <curl/curl.h>
+
+#include <algorithm>
+#include <cctype>
+#include <sstream>
+#include <vector>
+
+#ifndef MATERIALIZR_VERSION
+#define MATERIALIZR_VERSION "0.0.0"
+#endif
+
+namespace materializr {
+
+namespace {
+
+// libcurl write callback: append into a std::string.
+size_t writeToString(void* contents, size_t size, size_t nmemb, void* userp) {
+    size_t total = size * nmemb;
+    static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total);
+    return total;
+}
+
+// Extract a quoted JSON string value for a top-level "key". Skips whitespace
+// after the colon and reads through escapes minimally — sufficient for the few
+// fields we want (tag_name, html_url) without dragging in a JSON dependency.
+std::string findJsonString(const std::string& json, const std::string& key) {
+    std::string needle = "\"" + key + "\"";
+    size_t p = json.find(needle);
+    if (p == std::string::npos) return {};
+    p = json.find(':', p + needle.size());
+    if (p == std::string::npos) return {};
+    ++p;
+    while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) ++p;
+    if (p >= json.size() || json[p] != '"') return {};
+    ++p;
+    std::string out;
+    while (p < json.size() && json[p] != '"') {
+        if (json[p] == '\\' && p + 1 < json.size()) {
+            char c = json[p + 1];
+            if (c == '/') out += '/';
+            else if (c == 'n') out += '\n';
+            else if (c == 't') out += '\t';
+            else if (c == '"') out += '"';
+            else if (c == '\\') out += '\\';
+            else out += c;
+            p += 2;
+        } else {
+            out += json[p++];
+        }
+    }
+    return out;
+}
+
+// Strip a leading "v"/"V" — release tags are usually "v0.1.0".
+std::string stripV(std::string s) {
+    if (!s.empty() && (s.front() == 'v' || s.front() == 'V')) s.erase(0, 1);
+    return s;
+}
+
+std::vector<int> parseNumericComponents(const std::string& v) {
+    std::vector<int> parts;
+    std::stringstream ss(v);
+    std::string tok;
+    while (std::getline(ss, tok, '.')) {
+        // Drop any non-digit suffix (e.g. "1-rc2" -> 1).
+        size_t i = 0;
+        while (i < tok.size() && std::isdigit(static_cast<unsigned char>(tok[i]))) ++i;
+        if (i == 0) parts.push_back(0);
+        else parts.push_back(std::stoi(tok.substr(0, i)));
+    }
+    return parts;
+}
+
+} // namespace
+
+int UpdateChecker::compareVersions(const std::string& a, const std::string& b) {
+    auto pa = parseNumericComponents(stripV(a));
+    auto pb = parseNumericComponents(stripV(b));
+    size_t n = std::max(pa.size(), pb.size());
+    pa.resize(n, 0);
+    pb.resize(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        if (pa[i] < pb[i]) return -1;
+        if (pa[i] > pb[i]) return  1;
+    }
+    return 0;
+}
+
+UpdateChecker::Result UpdateChecker::check(const std::string& owner,
+                                           const std::string& repo) {
+    Result r;
+    r.current = MATERIALIZR_VERSION;
+    r.releasePageUrl = "https://github.com/" + owner + "/" + repo + "/releases";
+
+    CURL* curl = curl_easy_init();
+    if (!curl) { r.errorMessage = "Failed to initialise libcurl."; return r; }
+
+    std::string url = "https://api.github.com/repos/" + owner + "/" + repo +
+                      "/releases/latest";
+    std::string body;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Accept: application/vnd.github+json");
+    headers = curl_slist_append(headers, "User-Agent: Materializr-UpdateChecker");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+
+    CURLcode code = curl_easy_perform(curl);
+    long httpStatus = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (code != CURLE_OK) {
+        r.errorMessage = curl_easy_strerror(code);
+        return r;
+    }
+    if (httpStatus == 404) {
+        // No releases published yet — treat as "up to date" rather than an error.
+        r.ok = true;
+        r.latest = r.current;
+        r.errorMessage = "No releases published yet.";
+        return r;
+    }
+    if (httpStatus < 200 || httpStatus >= 300) {
+        r.errorMessage = "GitHub returned HTTP " + std::to_string(httpStatus);
+        return r;
+    }
+
+    std::string tag = findJsonString(body, "tag_name");
+    if (tag.empty()) {
+        r.errorMessage = "Could not find tag_name in GitHub response.";
+        return r;
+    }
+    std::string pageUrl = findJsonString(body, "html_url");
+    if (!pageUrl.empty()) r.releasePageUrl = pageUrl;
+
+    r.ok = true;
+    r.latest = stripV(tag);
+    r.updateAvailable = compareVersions(r.current, r.latest) < 0;
+    return r;
+}
+
+} // namespace materializr

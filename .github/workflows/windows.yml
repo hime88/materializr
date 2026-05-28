@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-            opencascade:x64-windows glew:x64-windows
+            opencascade:x64-windows glew:x64-windows curl:x64-windows
 
       - name: Configure
         shell: pwsh

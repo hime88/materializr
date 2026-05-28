@@ -4,6 +4,11 @@
 #include <filesystem>
 #include <map>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #include "app/Application.h"
 #include "app/Window.h"
 #include "viewport/Viewport.h"
@@ -28,6 +33,10 @@
 #include "ui/StatusBar.h"
 #include "ui/ThemeManager.h"
 #include "ui/PropertiesPanel.h"
+#include "ui/AboutDialog.h"
+#include "ui/ShortcutsPanel.h"
+#include "ui/HelpPanel.h"
+#include "ui/UpdateChecker.h"
 #include "modeling/Sketch.h"
 #include "modeling/SketchSolver.h"
 #include "modeling/SketchTool.h"
@@ -109,6 +118,9 @@ Application::Application() {
     m_statusBar = std::make_unique<StatusBar>();
     m_themeManager = std::make_unique<ThemeManager>();
     m_propertiesPanel = std::make_unique<PropertiesPanel>();
+    m_aboutDialog = std::make_unique<AboutDialog>();
+    m_shortcutsPanel = std::make_unique<ShortcutsPanel>();
+    m_helpPanel = std::make_unique<HelpPanel>();
 
     // Wire up references
     m_toolbar->setSelectionManager(m_selection.get());
@@ -469,6 +481,18 @@ void Application::renderMenuBar() {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Help")) {
+            if (ImGui::MenuItem("User Guide")) m_helpPanel->setVisible(true);
+            if (ImGui::MenuItem("Keyboard Shortcuts")) m_shortcutsPanel->setVisible(true);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Check for Updates...")) {
+                m_showUpdatePopup = true;
+                m_updateChecked = false; // run the network call when the popup opens
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("About Materializr...")) m_aboutDialog->setVisible(true);
+            ImGui::EndMenu();
+        }
         ImGui::EndMainMenuBar();
     }
 }
@@ -638,6 +662,76 @@ void Application::renderMirrorPopup() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
+    }
+}
+
+void Application::renderUpdatePopup() {
+    if (!m_showUpdatePopup) return;
+
+    ImGui::OpenPopup("Check for Updates");
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(400, 220), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Check for Updates", &m_showUpdatePopup,
+                               ImGuiWindowFlags_NoResize)) {
+        // First open: run the network check.
+        if (!m_updateChecked) {
+            auto r = UpdateChecker::check("materializr-cad", "materializr");
+            m_updateCurrent     = r.current;
+            m_updateLatest      = r.latest;
+            m_updateAvailable   = r.updateAvailable;
+            m_updateReleaseUrl  = r.releasePageUrl;
+            m_updateMessage     = r.ok ? "" : r.errorMessage;
+            m_updateChecked     = true;
+        }
+
+        ImGui::Text("Current version: %s", m_updateCurrent.c_str());
+        if (!m_updateLatest.empty()) {
+            ImGui::Text("Latest release:  %s", m_updateLatest.c_str());
+        }
+        ImGui::Spacing();
+
+        if (!m_updateMessage.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                               "Couldn't reach GitHub: %s", m_updateMessage.c_str());
+        } else if (m_updateAvailable) {
+            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
+                               "A newer release is available.");
+            ImGui::TextWrapped("Download the new build from the release page; the "
+                               "installer or portable zip will replace this one.");
+            ImGui::Spacing();
+            if (ImGui::Button("Open Release Page", ImVec2(180, 0))) {
+                // openInBrowser lives in AboutDialog.cpp — duplicate the tiny
+                // platform helper inline so this file doesn't add a dependency.
+#ifdef _WIN32
+                ShellExecuteA(nullptr, "open", m_updateReleaseUrl.c_str(),
+                              nullptr, nullptr, SW_SHOWNORMAL);
+#else
+                std::string cmd = std::string("xdg-open ") + "\"" +
+                                  m_updateReleaseUrl + "\" >/dev/null 2>&1 &";
+                [[maybe_unused]] int rc = std::system(cmd.c_str());
+#endif
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
+                               "You are running the latest release.");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
+            m_showUpdatePopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Re-check", ImVec2(100, 0))) {
+            m_updateChecked = false;
+        }
+        ImGui::EndPopup();
+    } else {
+        m_showUpdatePopup = false;
     }
 }
 
@@ -3302,6 +3396,13 @@ void Application::run() {
             renderInteractionsPanel();
             renderSettings();
             renderMirrorPopup();
+
+            // Help system: dockable user guide, modal About, modal "Check for
+            // Updates" popup that fires a one-shot HTTPS GET to GitHub on open.
+            m_helpPanel->render();
+            m_shortcutsPanel->render();
+            m_aboutDialog->render();
+            renderUpdatePopup();
 
             if (m_historyPanel->render()) {
                 m_meshesDirty = true;

@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     libgl-dev libxrandr-dev libxinerama-dev \
     libxcursor-dev libxi-dev libxkbcommon-dev \
     libwayland-dev pkg-config \
+    libcurl4-openssl-dev \
     file patchelf wget fuse libfuse2 \
     && rm -rf /var/lib/apt/lists/*
 

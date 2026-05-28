@@ -209,6 +209,8 @@ add_executable(materializr
     src/ui/ToastNotification.cpp
     src/ui/ShortcutsPanel.cpp
     src/ui/AboutDialog.cpp
+    src/ui/UpdateChecker.cpp
+    src/ui/HelpPanel.cpp
     src/io/ProjectIO.cpp
     src/io/Settings.cpp
     src/io/StepIO.cpp
@@ -275,6 +277,16 @@ if(MSVC)
         _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(materializr PRIVATE /bigobj)
 endif()
+
+# Surface the project version to the C++ code so About / update-checker can use
+# a single source of truth (the project() VERSION at the top of this file).
+target_compile_definitions(materializr PRIVATE
+    MATERIALIZR_VERSION="${PROJECT_VERSION}")
+
+# libcurl powers the Help → Check for Updates feature (a small HTTPS GET to
+# GitHub's releases API). Required on both platforms.
+find_package(CURL REQUIRED)
+target_link_libraries(materializr PRIVATE CURL::libcurl)
 
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
