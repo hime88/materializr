@@ -121,6 +121,8 @@ endif()
 add_executable(materializr
     src/main.cpp
     src/app/Application.cpp
+    src/app/Application_Dialogs.cpp
+    src/app/Application_Viewport.cpp
     src/app/Window.cpp
     src/plugin/PluginContext.cpp
     src/plugin/PluginRegistry.cpp
