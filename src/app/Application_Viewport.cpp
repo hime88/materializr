@@ -1575,7 +1575,7 @@ void Application::renderViewport() {
             m_contextMenuFace.Nullify();
         }
         if (ImGui::MenuItem("Extrude Face")) {
-            beginInteractiveExtrude(m_contextMenuFace);
+            beginInteractiveExtrude(m_contextMenuFace, ExtrudeMode::NewBody, -1);
             m_contextMenuFace.Nullify();
         }
         if (ImGui::MenuItem("Select Body")) {

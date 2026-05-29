@@ -587,8 +587,7 @@ void Application::handleToolAction(int action) {
             const auto& sel = m_selection->getSelection();
             for (const auto& entry : sel) {
                 if (entry.type == SelectionType::Face && !entry.shape.IsNull()) {
-                    enterSketchOnFace(TopoDS::Face(entry.shape));
-                    if (m_activeSketch) m_activeSketch->setSourceBody(entry.bodyId);
+                    enterSketchOnFace(TopoDS::Face(entry.shape), entry.bodyId);
                     break;
                 }
             }
@@ -618,8 +617,31 @@ void Application::handleToolAction(int action) {
             const auto& sel = m_selection->getSelection();
             for (const auto& entry : sel) {
                 if (entry.type == SelectionType::Sketch && entry.sketchId >= 0) {
-                    extrudeSketchById(entry.sketchId);
+                    extrudeSketchById(entry.sketchId, ExtrudeMode::NewBody);
                     break;
+                }
+            }
+            break;
+        }
+
+        case ToolAction::SubtractSketch: {
+            // Clicking a sketch in the viewport selects a region, so handle that
+            // first; fall back to a whole-sketch selection (from the Items panel).
+            const auto& sel = m_selection->getSelection();
+            bool started = false;
+            for (const auto& entry : sel) {
+                if (entry.type == SelectionType::SketchRegion && entry.sketchId >= 0) {
+                    subtractSketchRegion(entry.sketchId, entry.subShapeIndex);
+                    started = true;
+                    break;
+                }
+            }
+            if (!started) {
+                for (const auto& entry : sel) {
+                    if (entry.type == SelectionType::Sketch && entry.sketchId >= 0) {
+                        extrudeSketchById(entry.sketchId, ExtrudeMode::Subtract);
+                        break;
+                    }
                 }
             }
             break;
@@ -1040,6 +1062,11 @@ void Application::rebuildMeshes() {
             // Use the body's own colour (defaults to light grey) instead of an
             // index-based palette, so colours are stable and user-controllable.
             m_shapeRenderer->setColor(idx, m_document->getBodyColor(id));
+            // The live tool volume of a Subtract extrude is shown in red.
+            if (m_extruding && m_extrudeMode == ExtrudeMode::Subtract &&
+                id == m_extrudePreviewBodyId) {
+                m_shapeRenderer->setSubtractPreview(idx, true);
+            }
         }
         m_edgeRenderer->addShape(shape, deflection);
     }
@@ -1333,7 +1360,7 @@ void Application::enterSketchMode() {
         const auto& sel = m_selection->getSelection();
         for (const auto& entry : sel) {
             if (entry.type == SelectionType::Face && !entry.shape.IsNull()) {
-                enterSketchOnFace(TopoDS::Face(entry.shape));
+                enterSketchOnFace(TopoDS::Face(entry.shape), entry.bodyId);
                 return;
             }
         }
@@ -1374,12 +1401,17 @@ void Application::enterSketchOnPlane(const gp_Pln& plane) {
     alignCameraToActiveSketch();
 }
 
-void Application::enterSketchOnFace(const TopoDS_Face& face) {
+void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
     saveCameraInto(m_savedCameraForSketch, m_viewport->getCamera());
 
     m_activeSketch = std::make_shared<Sketch>();
     m_sketchSolver = std::make_unique<SketchSolver>();
     m_activeSketchId = -1;
+
+    // Remember which body this face belongs to so a later Subtract (and other
+    // body-relative ops) know what to cut from. Every face-sketch entry point
+    // routes through here, so setting it here keeps the source body consistent.
+    m_activeSketch->setSourceBody(sourceBodyId);
 
     Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
     if (!surf.IsNull() && surf->IsKind(STANDARD_TYPE(Geom_Plane))) {
@@ -1458,7 +1490,7 @@ void Application::editSketch(int sketchId) {
     alignCameraToActiveSketch();
 }
 
-void Application::extrudeSketchById(int sketchId) {
+void Application::extrudeSketchById(int sketchId, ExtrudeMode mode) {
     auto sketch = m_document->getSketch(sketchId);
     if (!sketch) return;
     TopoDS_Face profile = buildSketchProfileFace(*sketch);
@@ -1466,7 +1498,38 @@ void Application::extrudeSketchById(int sketchId) {
         std::fprintf(stderr, "Sketch has no closed profile to extrude\n");
         return;
     }
-    beginInteractiveExtrude(profile);
+
+    int targetBody = -1;
+    if (mode == ExtrudeMode::Subtract) {
+        targetBody = sketch->getSourceBody();
+        if (targetBody < 0) {
+            std::fprintf(stderr, "Subtract needs a sketch drawn on a body face; "
+                                 "this sketch has no source body\n");
+            return;
+        }
+    }
+    beginInteractiveExtrude(profile, mode, targetBody);
+}
+
+void Application::subtractSketchRegion(int sketchId, int regionIndex) {
+    auto sketch = m_document->getSketch(sketchId);
+    if (!sketch) return;
+
+    int targetBody = sketch->getSourceBody();
+    if (targetBody < 0) {
+        std::fprintf(stderr, "Subtract needs a sketch drawn on a body face; "
+                             "this sketch has no source body\n");
+        return;
+    }
+
+    auto regions = sketch->buildRegions();
+    if (regionIndex < 0 || regionIndex >= static_cast<int>(regions.size())) return;
+    const TopoDS_Face& profile = regions[regionIndex].face;
+    if (profile.IsNull()) {
+        std::fprintf(stderr, "Sketch region has no profile face to subtract\n");
+        return;
+    }
+    beginInteractiveExtrude(profile, ExtrudeMode::Subtract, targetBody);
 }
 
 void Application::alignCameraToActiveSketch() {
@@ -2072,9 +2135,20 @@ void Application::cancelResizeCylindrical() {
     m_meshesDirty = true;
 }
 
-void Application::beginInteractiveExtrude(const TopoDS_Shape& profile) {
+double Application::extrudeOpDistance() const {
+    // The profile face normal points outward from the body. For a Subtract the
+    // tool must go into the body, so negate the distance.
+    return (m_extrudeMode == ExtrudeMode::Subtract)
+        ? -static_cast<double>(m_extrudeDistance)
+        : static_cast<double>(m_extrudeDistance);
+}
+
+void Application::beginInteractiveExtrude(const TopoDS_Shape& profile,
+                                          ExtrudeMode mode, int targetBody) {
     m_extrudeProfile = profile;
     m_extruding = true;
+    m_extrudeMode = mode;
+    m_extrudeTargetBody = targetBody;
     m_extrudeDistance = 5.0f;
     std::snprintf(m_extrudeInputBuf, sizeof(m_extrudeInputBuf), "%.1f", m_extrudeDistance);
     m_extrudeInputFocus = true;
@@ -2093,11 +2167,16 @@ void Application::beginInteractiveExtrude(const TopoDS_Shape& profile) {
         }
         m_extrudeOrigin = glm::vec3(center.X(), center.Y(), center.Z());
     }
+    // Point the on-screen arrow into the body for a Subtract so dragging toward
+    // the material deepens the cut.
+    if (mode == ExtrudeMode::Subtract) m_extrudeNormal = -m_extrudeNormal;
 
-    // Create initial preview body
+    // Create initial preview body. The preview is always a NewBody (the solid
+    // tool volume) so the user sees the shape being swept; for a Subtract it is
+    // tinted/outlined red and the actual boolean cut happens on commit.
     auto op = std::make_unique<ExtrudeOp>();
     op->setProfile(profile);
-    op->setDistance(m_extrudeDistance);
+    op->setDistance(extrudeOpDistance());
     op->setMode(ExtrudeMode::NewBody);
     if (m_history->pushOperation(std::move(op), *m_document)) {
         auto ids = m_document->getAllBodyIds();
@@ -2116,7 +2195,7 @@ void Application::updateInteractiveExtrude() {
 
     auto op = std::make_unique<ExtrudeOp>();
     op->setProfile(m_extrudeProfile);
-    op->setDistance(static_cast<double>(m_extrudeDistance));
+    op->setDistance(extrudeOpDistance());
     op->setMode(ExtrudeMode::NewBody);
     if (m_history->pushOperation(std::move(op), *m_document)) {
         auto ids = m_document->getAllBodyIds();
@@ -2126,12 +2205,36 @@ void Application::updateInteractiveExtrude() {
 }
 
 void Application::commitInteractiveExtrude() {
-    // The current extrude is already in history — just finalize
+    if (m_extrudeMode == ExtrudeMode::Subtract && m_extrudeTargetBody >= 0) {
+        // Discard the NewBody tool preview and replace it with the real boolean
+        // cut against the body the sketch was drawn on.
+        if (m_extrudePreviewBodyId >= 0) {
+            m_document->removeBody(m_extrudePreviewBodyId);
+            m_history->undo(*m_document);
+        }
+        auto op = std::make_unique<ExtrudeOp>();
+        op->setProfile(m_extrudeProfile);
+        op->setDistance(extrudeOpDistance());
+        op->setMode(ExtrudeMode::Subtract);
+        op->setTargetBody(m_extrudeTargetBody);
+        if (m_history->pushOperation(std::move(op), *m_document)) {
+            markDirty();
+            std::fprintf(stdout, "Subtracted %.1f mm from body %d\n",
+                         std::abs(m_extrudeDistance), m_extrudeTargetBody);
+        } else {
+            std::fprintf(stderr, "Subtract failed\n");
+        }
+    } else {
+        // NewBody: the preview op is already the result — just finalize.
+        std::fprintf(stdout, "Extruded %.1f mm\n", m_extrudeDistance);
+    }
+
     m_extruding = false;
     m_extrudeProfile.Nullify();
     m_extrudePreviewBodyId = -1;
+    m_extrudeMode = ExtrudeMode::NewBody;
+    m_extrudeTargetBody = -1;
     m_meshesDirty = true;
-    std::fprintf(stdout, "Extruded %.1f mm\n", m_extrudeDistance);
 }
 
 void Application::cancelInteractiveExtrude() {
@@ -2142,6 +2245,8 @@ void Application::cancelInteractiveExtrude() {
     m_extruding = false;
     m_extrudeProfile.Nullify();
     m_extrudePreviewBodyId = -1;
+    m_extrudeMode = ExtrudeMode::NewBody;
+    m_extrudeTargetBody = -1;
     m_meshesDirty = true;
 }
 

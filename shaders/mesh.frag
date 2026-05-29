@@ -16,6 +16,7 @@ uniform bool u_selected;
 uniform float u_ambient;       // base illumination 0..1 (softens shadows)
 uniform bool u_headlight;      // key light tracks the camera when true
 uniform float u_fillStrength;  // fill light contribution (0 disables it)
+uniform bool u_previewCut;     // tint red: this volume will be subtracted
 
 out vec4 fragColor;
 
@@ -42,6 +43,11 @@ void main() {
     vec3 specular = specularStrength * spec * vec3(1.0);
 
     vec3 result = ambient + diffuse + specular;
+
+    // Subtract preview: tint red (this volume will be removed)
+    if (u_previewCut) {
+        result = mix(result, vec3(0.9, 0.1, 0.1), 0.55);
+    }
 
     // Selection highlight: tint with blue
     if (u_selected) {

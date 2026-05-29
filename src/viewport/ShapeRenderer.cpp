@@ -53,6 +53,7 @@ uniform bool u_selected;
 uniform float u_ambient;       // base illumination 0..1 (softens shadows)
 uniform bool u_headlight;      // key light tracks the camera when true
 uniform float u_fillStrength;  // fill light contribution (0 disables it)
+uniform bool u_previewCut;     // tint red: this volume will be subtracted
 
 out vec4 fragColor;
 
@@ -76,6 +77,10 @@ void main() {
     vec3 specular = specularStrength * spec * vec3(1.0);
 
     vec3 result = ambient + diffuse + specular;
+
+    if (u_previewCut) {
+        result = mix(result, vec3(0.9, 0.1, 0.1), 0.55);
+    }
 
     if (u_selected) {
         result = mix(result, vec3(0.3, 0.5, 1.0), 0.3);
@@ -157,6 +162,7 @@ bool ShapeRenderer::initialize()
     m_meshLoc_ambient = glGetUniformLocation(m_meshProgram, "u_ambient");
     m_meshLoc_headlight = glGetUniformLocation(m_meshProgram, "u_headlight");
     m_meshLoc_fillStrength = glGetUniformLocation(m_meshProgram, "u_fillStrength");
+    m_meshLoc_previewCut = glGetUniformLocation(m_meshProgram, "u_previewCut");
 
     // Compile outline shader
     unsigned int outlineVert = 0, outlineFrag = 0;
@@ -327,10 +333,13 @@ void ShapeRenderer::render(const glm::mat4& view, const glm::mat4& projection,
     // Then render the outline for selected meshes
     // Finally render all meshes normally
 
-    // --- Outline pass for selected objects (stencil technique) ---
+    // --- Outline pass (stencil technique) ---
+    // Selected meshes get the blue selection outline; subtract previews get a
+    // red one so it reads as "this volume will be removed".
+    static const glm::vec4 kSubtractOutline(0.95f, 0.12f, 0.12f, 1.0f);
     for (const auto& mesh : m_meshes) {
-        if (!mesh.selected) continue;
-        renderMeshOutline(mesh, view, projection);
+        if (mesh.selected) renderMeshOutline(mesh, view, projection, m_outlineColor);
+        else if (mesh.subtractPreview) renderMeshOutline(mesh, view, projection, kSubtractOutline);
     }
 
     // --- Main render pass ---
@@ -348,6 +357,7 @@ void ShapeRenderer::render(const glm::mat4& view, const glm::mat4& projection,
         glUniformMatrix4fv(m_meshLoc_model, 1, GL_FALSE, glm::value_ptr(mesh.modelMatrix));
         glUniform3fv(m_meshLoc_objectColor, 1, glm::value_ptr(mesh.color));
         glUniform1i(m_meshLoc_selected, mesh.selected ? 1 : 0);
+        glUniform1i(m_meshLoc_previewCut, mesh.subtractPreview ? 1 : 0);
 
         glBindVertexArray(mesh.vao);
         glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
@@ -358,7 +368,7 @@ void ShapeRenderer::render(const glm::mat4& view, const glm::mat4& projection,
 }
 
 void ShapeRenderer::renderMeshOutline(const MeshData& mesh, const glm::mat4& view,
-                                      const glm::mat4& projection)
+                                      const glm::mat4& projection, const glm::vec4& color)
 {
     // Stencil technique:
     // 1. Draw the mesh into stencil buffer (marking pixels with 1)
@@ -391,7 +401,7 @@ void ShapeRenderer::renderMeshOutline(const MeshData& mesh, const glm::mat4& vie
     glUniformMatrix4fv(m_outlineLoc_model, 1, GL_FALSE, glm::value_ptr(mesh.modelMatrix));
     glUniformMatrix4fv(m_outlineLoc_view, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(m_outlineLoc_projection, 1, GL_FALSE, glm::value_ptr(projection));
-    glUniform4fv(m_outlineLoc_outlineColor, 1, glm::value_ptr(m_outlineColor));
+    glUniform4fv(m_outlineLoc_outlineColor, 1, glm::value_ptr(color));
     glUniform1f(m_outlineLoc_outlineWidth, m_outlineWidth);
 
     glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
@@ -422,6 +432,13 @@ void ShapeRenderer::setSelected(int meshIndex, bool selected)
 {
     if (meshIndex >= 0 && meshIndex < static_cast<int>(m_meshes.size())) {
         m_meshes[meshIndex].selected = selected;
+    }
+}
+
+void ShapeRenderer::setSubtractPreview(int meshIndex, bool subtractPreview)
+{
+    if (meshIndex >= 0 && meshIndex < static_cast<int>(m_meshes.size())) {
+        m_meshes[meshIndex].subtractPreview = subtractPreview;
     }
 }
 

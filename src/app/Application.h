@@ -9,6 +9,8 @@
 #include <TopoDS_Face.hxx>
 #include <gp_Pln.hxx>
 
+#include "modeling/ExtrudeOp.h" // for ExtrudeMode
+
 namespace materializr {
 
 class Window;
@@ -102,9 +104,13 @@ private:
 
     void enterSketchMode();
     void enterSketchOnPlane(const gp_Pln& plane);
-    void enterSketchOnFace(const TopoDS_Face& face);
+    void enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId = -1);
     void editSketch(int sketchId);
-    void extrudeSketchById(int sketchId);
+    void extrudeSketchById(int sketchId, ExtrudeMode mode = ExtrudeMode::NewBody);
+    // Interactive subtract of a single sketch region from the body the sketch
+    // was drawn on (red preview). Used by the region toolbar where viewport
+    // clicks land, since clicking a sketch selects a region, not the whole sketch.
+    void subtractSketchRegion(int sketchId, int regionIndex);
     TopoDS_Face buildSketchProfileFace(const Sketch& sketch) const;
     void exitSketchMode();
 
@@ -124,8 +130,13 @@ private:
     void updatePushPull();
     void commitPushPull();
     void cancelPushPull();
-    void beginInteractiveExtrude(const TopoDS_Shape& profile);
+    void beginInteractiveExtrude(const TopoDS_Shape& profile,
+                                 ExtrudeMode mode = ExtrudeMode::NewBody,
+                                 int targetBody = -1);
     void updateInteractiveExtrude();
+    // Signed distance to pass to ExtrudeOp: Subtract cuts into the body (the
+    // profile normal points outward), so it uses the negated distance.
+    double extrudeOpDistance() const;
     void commitInteractiveExtrude();
     void cancelInteractiveExtrude();
 
@@ -416,6 +427,11 @@ private:
     int m_extrudePreviewBodyId = -1;
     char m_extrudeInputBuf[32] = "5.0";
     bool m_extrudeInputFocus = true;
+    // NewBody (default) or Subtract: Subtract cuts the extruded profile out of
+    // m_extrudeTargetBody (the body the sketch was drawn on) on commit, and the
+    // live preview is shown in red.
+    ExtrudeMode m_extrudeMode = ExtrudeMode::NewBody;
+    int m_extrudeTargetBody = -1;
 
     // Right-click face context menu state
     int m_contextMenuBodyId = -1;

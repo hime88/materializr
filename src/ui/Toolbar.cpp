@@ -267,6 +267,10 @@ ToolAction Toolbar::renderSketchSelectedTools() {
         action = ToolAction::EditSketch;
     if (ImGui::Button("Extrude Sketch", ImVec2(-1, 30)))
         action = ToolAction::ExtrudeSketch;
+    if (ImGui::Button("Subtract Sketch", ImVec2(-1, 30)))
+        action = ToolAction::SubtractSketch;
+    ImGui::TextWrapped("Subtract cuts the extruded profile into the body the "
+                       "sketch was drawn on (preview shown in red).");
 
     // Plugin buttons for HasSketches context
     renderPluginButtons(1 << static_cast<int>(SelectionContext::HasSketches));
@@ -287,6 +291,13 @@ ToolAction Toolbar::renderSketchRegionTools() {
     // drag to extrude/cut) — same as a body face.
     if (ImGui::Button("Push / Pull", ImVec2(-1, 30)))
         action = ToolAction::PushPull;
+
+    // Subtract: cut this region out of the body the sketch sits on, with a red
+    // preview of the removed volume. Disabled when the sketch has no source body.
+    if (ImGui::Button("Subtract", ImVec2(-1, 30)))
+        action = ToolAction::SubtractSketch;
+    ImGui::SetItemTooltip("Cut this region into the body the sketch was drawn on "
+                          "(preview shown in red).");
 
     // Any remaining HasSketchRegions plugin buttons.
     renderPluginButtons(1 << static_cast<int>(SelectionContext::HasSketchRegions));

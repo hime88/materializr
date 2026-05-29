@@ -51,6 +51,10 @@ public:
     /// Set the selection state for a specific mesh.
     void setSelected(int meshIndex, bool selected);
 
+    /// Mark a mesh as a boolean-subtract preview: it is tinted and outlined red
+    /// to show the volume that will be removed when the operation is committed.
+    void setSubtractPreview(int meshIndex, bool subtractPreview);
+
     /// Update the scene lighting parameters (applied on the next render).
     void setLighting(const LightingParams& params) { m_lighting = params; }
 
@@ -71,12 +75,13 @@ private:
         glm::mat4 modelMatrix = glm::mat4(1.0f);
         glm::vec3 color = glm::vec3(0.7f, 0.7f, 0.7f);
         bool selected = false;
+        bool subtractPreview = false;
     };
 
     bool compileShader(unsigned int& shader, unsigned int type, const char* source);
     bool linkProgram(unsigned int program, unsigned int vertShader, unsigned int fragShader);
     void renderMeshOutline(const MeshData& mesh, const glm::mat4& view,
-                           const glm::mat4& projection);
+                           const glm::mat4& projection, const glm::vec4& color);
 
     std::vector<MeshData> m_meshes;
 
@@ -93,6 +98,7 @@ private:
     int m_meshLoc_ambient = -1;
     int m_meshLoc_headlight = -1;
     int m_meshLoc_fillStrength = -1;
+    int m_meshLoc_previewCut = -1;
 
     // Outline shader program
     unsigned int m_outlineProgram = 0;
