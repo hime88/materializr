@@ -18,21 +18,42 @@ jobs:
   windows:
     runs-on: windows-latest
 
+    # `packages: write` lets us push compiled vcpkg binaries (OpenCASCADE etc.)
+    # to the repo's GitHub Packages NuGet feed so the next build can pull them
+    # back. `contents: write` is for softprops/action-gh-release to attach
+    # build artifacts when a Release is published.
+    permissions:
+      contents: write
+      packages: write
+
     env:
-      # Use the GitHub Actions cache as a vcpkg binary cache so the (slow)
-      # OpenCASCADE build is only paid once.
-      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      # vcpkg binary cache via NuGet on GitHub Packages. The first build writes
+      # OCCT (and friends) into the feed; subsequent builds download the
+      # binaries instead of recompiling, dropping OCCT's ~1h cold compile to
+      # a few minutes. Replaces the now-removed `x-gha` backend.
+      VCPKG_BINARY_SOURCES: "clear;nuget,GitHub,readwrite"
+      # Where the NuGet feed lives. Per-org URL; ${{ github.repository_owner }}
+      # resolves to materializr-cad for this repo, but stays correct on forks.
+      NUGET_FEED_URL: "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
 
     steps:
       - uses: actions/checkout@v4
 
-      # vcpkg's x-gha binary cache needs these two endpoints exported.
-      - name: Export GitHub Actions cache endpoints
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      # Wire vcpkg up to authenticate against the GitHub Packages NuGet feed.
+      # GITHUB_TOKEN is the workflow's own short-lived token; with the
+      # `packages: write` permission above it can both pull cached binaries
+      # and push new ones.
+      - name: Configure vcpkg binary cache (GitHub Packages NuGet feed)
+        shell: pwsh
+        run: |
+          $nuget = & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" fetch nuget | Select-Object -Last 1
+          & $nuget sources add `
+            -Source "$env:NUGET_FEED_URL" `
+            -StorePasswordInClearText `
+            -Name "GitHub" `
+            -UserName "${{ github.repository_owner }}" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:NUGET_FEED_URL"
 
       - name: Install dependencies (OpenCASCADE + GLEW) via vcpkg
         shell: pwsh
