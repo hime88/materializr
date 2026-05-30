@@ -163,8 +163,12 @@ bool SketchTool::applyDimension(float value) {
             return true;
         }
         case SketchToolMode::Polygon: {
-            glm::vec2 perimeter = m_firstClick + dir * value;
-            handlePolygonTool(perimeter);
+            // For polygon the typed value is the SIDE COUNT (≥3), not the
+            // radius. We DON'T commit here — just update m_polygonSides so
+            // the live preview re-renders with the new count, and the user
+            // can keep dragging to size + rotation. The actual placement
+            // commits on the second click as for any other polygon.
+            m_polygonSides = std::max(3, static_cast<int>(std::round(value)));
             return true;
         }
         case SketchToolMode::Rectangle: {
@@ -1240,12 +1244,18 @@ void SketchTool::handlePolygonTool(glm::vec2 pos) {
         m_isPlacing = true;
         m_clickCount = 1;
     } else {
-        // Second click: set radius and create polygon
-        float radius = glm::length(pos - m_firstClick);
+        // Second click: set radius + rotation and create polygon. Cursor
+        // direction from center defines vertex 0's angle, so the first
+        // vertex lands exactly under the (grid-snapped) cursor — same
+        // "corner snaps to grid" behaviour the user gets with circles.
+        glm::vec2 delta = pos - m_firstClick;
+        float radius = glm::length(delta);
         if (radius > 1e-6f) {
             int existing = findCoincidentPoint(m_firstClick, -1);
             int centerId = (existing >= 0) ? existing : m_sketch->addPoint(m_firstClick);
-            m_sketch->addPolygon(centerId, static_cast<double>(radius), m_polygonSides);
+            double rotation = std::atan2(delta.y, delta.x);
+            m_sketch->addPolygon(centerId, static_cast<double>(radius),
+                                 m_polygonSides, rotation);
         }
 
         m_isPlacing = false;

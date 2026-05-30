@@ -26,6 +26,7 @@
 #include <BRepTools.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp_Face.hxx>
 #include <Bnd_Box.hxx>
 #include <Geom_CylindricalSurface.hxx>
@@ -848,7 +849,8 @@ void Application::beginPushPull() {
     // "fuse for +, cut for −" convention the user expects).
     m_pushPullHasArrow = false;
     try {
-        const TopoDS_Face& f = m_pushPullTargets.front().profile;
+        const auto& tgt0 = m_pushPullTargets.front();
+        const TopoDS_Face& f = tgt0.profile;
         if (!f.IsNull()) {
             BRepGProp_Face prop(f);
             double u1, u2, v1, v2;
@@ -856,6 +858,38 @@ void Application::beginPushPull() {
             gp_Pnt c; gp_Vec n;
             prop.Normal((u1 + u2) * 0.5, (v1 + v2) * 0.5, c, n);
             if (n.Magnitude() > 1e-10) {
+                // Classifier-based outward verification — mirror of the same
+                // check in PushPullOp::execute so the live arrow and the
+                // executed extrusion agree on direction even on STEP-imported
+                // faces whose surface normal points the wrong way.
+                if (tgt0.sourceBodyId >= 0) {
+                    try {
+                        const TopoDS_Shape& body = m_document->getBody(tgt0.sourceBodyId);
+                        if (!body.IsNull()) {
+                            Bnd_Box bb;
+                            BRepBndLib::Add(f, bb);
+                            if (!bb.IsVoid()) {
+                                double xmn,ymn,zmn,xmx,ymx,zmx;
+                                bb.Get(xmn,ymn,zmn,xmx,ymx,zmx);
+                                gp_Pnt fc((xmn+xmx)*0.5,(ymn+ymx)*0.5,(zmn+zmx)*0.5);
+                                gp_Vec nu = n.Normalized();
+                                const double eps = 1.0;
+                                gp_Pnt fwd(fc.X() + nu.X() * eps,
+                                           fc.Y() + nu.Y() * eps,
+                                           fc.Z() + nu.Z() * eps);
+                                gp_Pnt back(fc.X() - nu.X() * eps,
+                                            fc.Y() - nu.Y() * eps,
+                                            fc.Z() - nu.Z() * eps);
+                                BRepClass3d_SolidClassifier fcl(body, fwd,  1e-6);
+                                BRepClass3d_SolidClassifier bcl(body, back, 1e-6);
+                                if (fcl.State() == TopAbs_IN &&
+                                    bcl.State() == TopAbs_OUT) {
+                                    n.Reverse();
+                                }
+                            }
+                        }
+                    } catch (...) {}
+                }
                 gp_Vec dir = n;
                 Handle(Geom_Surface) surf = BRep_Tool::Surface(f);
                 gp_Dir axis;

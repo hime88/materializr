@@ -542,6 +542,37 @@ bool ResizeCylindricalOp::execute(Document& doc) {
     }
 }
 
+std::string ResizeCylindricalOp::serializeParams() const {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "oldBot=%.6f;oldTop=%.6f;newBot=%.6f;newTop=%.6f;height=%.6f;isHole=%d",
+        m_oldBottomR, m_oldTopR, m_newBottomR, m_newTopR, m_height,
+        m_isHole ? 1 : 0);
+    return buf;
+}
+
+bool ResizeCylindricalOp::deserializeParams(const std::string& blob) {
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string key = blob.substr(pos, eq - pos);
+        std::string val = blob.substr(eq + 1, end - eq - 1);
+        double d = std::atof(val.c_str());
+        if      (key == "oldBot") { m_oldBottomR = d; any = true; }
+        else if (key == "oldTop") { m_oldTopR    = d; any = true; }
+        else if (key == "newBot") { m_newBottomR = d; any = true; }
+        else if (key == "newTop") { m_newTopR    = d; any = true; }
+        else if (key == "height") { m_height     = d; any = true; }
+        else if (key == "isHole") { m_isHole = (std::atoi(val.c_str()) != 0); any = true; }
+        pos = end + 1;
+    }
+    return any;
+}
+
 bool ResizeCylindricalOp::undo(Document& doc) {
     if (m_bodyId < 0 || m_previousShape.IsNull()) return false;
     try { doc.updateBody(m_bodyId, m_previousShape); return true; }

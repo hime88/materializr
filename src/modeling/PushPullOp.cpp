@@ -4,6 +4,9 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepGProp_Face.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <Bnd_Box.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom_ConicalSurface.hxx>
@@ -57,6 +60,41 @@ bool PushPullOp::execute(Document& doc) {
             prop.Normal((u1 + u2) * 0.5, (v1 + v2) * 0.5, center, n);
             if (n.Magnitude() > 1e-10) {
                 faceNormal = n.Normalized();
+                // Verify the surface normal actually points OUTWARD from the
+                // source body. STEP-imported faces sometimes carry surface
+                // normals that point INTO the body, in which case the prism
+                // ends up extruding into the solid (push) and pulling into
+                // empty space (cut with no overlap). Probe the body's
+                // classifier on BOTH sides of the face at 1 mm; only flip
+                // when "forward is IN, backward is OUT" — an unambiguous
+                // disagreement that's safe to act on.
+                if (tgt.sourceBodyId >= 0) {
+                    try {
+                        TopoDS_Shape body = doc.getBody(tgt.sourceBodyId);
+                        if (!body.IsNull()) {
+                            Bnd_Box bb;
+                            BRepBndLib::Add(tgt.profile, bb);
+                            if (!bb.IsVoid()) {
+                                double xmn,ymn,zmn,xmx,ymx,zmx;
+                                bb.Get(xmn,ymn,zmn,xmx,ymx,zmx);
+                                gp_Pnt c((xmn+xmx)*0.5,(ymn+ymx)*0.5,(zmn+zmx)*0.5);
+                                const double eps = 1.0;
+                                gp_Pnt fwd(c.X() + faceNormal.X() * eps,
+                                           c.Y() + faceNormal.Y() * eps,
+                                           c.Z() + faceNormal.Z() * eps);
+                                gp_Pnt back(c.X() - faceNormal.X() * eps,
+                                            c.Y() - faceNormal.Y() * eps,
+                                            c.Z() - faceNormal.Z() * eps);
+                                BRepClass3d_SolidClassifier fc(body, fwd, 1e-6);
+                                BRepClass3d_SolidClassifier bc(body, back, 1e-6);
+                                if (fc.State() == TopAbs_IN &&
+                                    bc.State() == TopAbs_OUT) {
+                                    faceNormal.Reverse();
+                                }
+                            }
+                        }
+                    } catch (...) {}
+                }
                 Handle(Geom_Surface) surf = BRep_Tool::Surface(tgt.profile);
                 gp_Dir axis; bool hasAxis = false;
                 if (auto cone = Handle(Geom_ConicalSurface)::DownCast(surf);

@@ -143,7 +143,11 @@ void Application::renderViewport() {
             if (sketching) {
                 const gp_Ax3& ax = m_activeSketch->getPlane().Position();
                 auto v3 = [](const gp_Dir& d){ return glm::vec3(d.X(), d.Y(), d.Z()); };
-                gp.origin = glm::vec3(ax.Location().X(), ax.Location().Y(), ax.Location().Z());
+                // Use the world-aligned anchor (computed at sketch entry) as
+                // the grid origin so grid lines pass through whole world-grid
+                // intersections on the sketch plane instead of being shifted
+                // by the face's off-grid centre.
+                gp.origin = m_sketchSnappedAnchor;
                 gp.u = v3(ax.XDirection());
                 gp.v = v3(ax.YDirection());
                 gp.normal = v3(ax.Direction());
@@ -452,20 +456,28 @@ void Application::renderViewport() {
             // Camera drag uses the configurable bindings (File > Settings). The
             // orbit button pans instead when Shift is held; a distinct pan button
             // always pans.
-            if (ImGui::IsMouseDragging(m_orbitButton)) {
+            //
+            // In TRACKPAD mode both orbit and pan are bound to the LEFT button —
+            // the same button the gizmo and picker use. Without suppression, a
+            // gizmo-handle drag would also yank the camera, so the gizmo and
+            // picker block the camera-drag while they own the interaction.
+            bool gizmoOwnsDrag = m_gizmoDragging;
+            if (!gizmoOwnsDrag && ImGui::IsMouseDragging(m_orbitButton)) {
                 ImVec2 delta = io.MouseDelta;
                 if (io.KeyShift) cam.pan(delta.x, delta.y);
                 else cam.orbit(delta.x, delta.y);
             }
-            if (m_panButton != m_orbitButton && ImGui::IsMouseDragging(m_panButton)) {
+            if (!gizmoOwnsDrag && m_panButton != m_orbitButton &&
+                ImGui::IsMouseDragging(m_panButton)) {
                 cam.pan(io.MouseDelta.x, io.MouseDelta.y);
             }
 
             // Pause interactive operations while a camera button is also being
             // dragged — otherwise the changing view matrix re-projects the same
             // mouse motion onto a moving target each frame and the value jolts.
-            bool camDragging = ImGui::IsMouseDragging(m_orbitButton) ||
-                (m_panButton != m_orbitButton && ImGui::IsMouseDragging(m_panButton));
+            bool camDragging = !gizmoOwnsDrag &&
+                (ImGui::IsMouseDragging(m_orbitButton) ||
+                 (m_panButton != m_orbitButton && ImGui::IsMouseDragging(m_panButton)));
 
             // Pattern axis-origin picker. While the user is picking the
             // axis origin in the radial-pattern popup, we project the mouse
@@ -1002,8 +1014,14 @@ void Application::renderViewport() {
                         int ownerStep = -1; // fillet/chamfer step to open in the editor
                         if (result.hit) {
                             SelectionEntry entry;
-                            // If click is near an edge (<8px), select edge; otherwise face
-                            if (result.edgeScreenDist < 8.0f && !result.nearestEdge.IsNull()) {
+                            // If click is near an edge, select edge; otherwise face. The
+                            // 8 px threshold is clamped to ¼ of the face's on-screen size
+                            // so a small face (say 20 px wide) doesn't lose every interior
+                            // click to one of its own boundary edges (every interior pixel
+                            // is within 8 px of an edge when the face is itself only 16 px
+                            // across).
+                            float edgeThresh = std::min(8.0f, result.faceScreenSize * 0.25f);
+                            if (result.edgeScreenDist < edgeThresh && !result.nearestEdge.IsNull()) {
                                 entry.type = SelectionType::Edge;
                                 entry.bodyId = result.bodyId;
                                 entry.shape = result.nearestEdge;
@@ -1133,7 +1151,10 @@ void Application::renderViewport() {
             // Sketch mode mouse input — ray-plane intersection. Skipped while
             // the camera is being dragged so the in-progress preview (e.g. the
             // line endpoint following the cursor) doesn't jolt as the view moves.
-            if (m_inSketchMode && m_activeSketch && !camDragging) {
+            // Suppress while the ViewCube widget is being hovered/dragged so its
+            // click doesn't pass through and start a line draw underneath.
+            if (m_inSketchMode && m_activeSketch && !camDragging &&
+                !m_viewCube->wasHovered()) {
                 ImVec2 mousePos = ImGui::GetMousePos();
                 ImVec2 winPos = ImGui::GetItemRectMin();
                 float localX = mousePos.x - winPos.x;
@@ -1933,10 +1954,17 @@ void Application::renderViewport() {
     if (m_inSketchMode && m_sketchTool && m_sketchTool->hasPreview()) {
         SketchToolMode mode = m_sketchTool->getPreviewType();
         const char* dimLabel = nullptr;
+        const char* dimHint  =
+            "Type a value and press Enter. The shape extends from your first click toward the cursor.";
         switch (mode) {
             case SketchToolMode::Line:      dimLabel = "Length (mm)"; break;
             case SketchToolMode::Circle:    dimLabel = "Radius (mm)"; break;
-            case SketchToolMode::Polygon:   dimLabel = "Radius (mm)"; break;
+            case SketchToolMode::Polygon:
+                dimLabel = "Sides";
+                dimHint  = "Type sides (≥3) and Enter to preview — radius and "
+                           "rotation come from cursor. Click to commit; the "
+                           "first vertex lands on the (snapped) cursor.";
+                break;
             case SketchToolMode::Rectangle: dimLabel = "Side (mm)";   break;
             default: dimLabel = nullptr;
         }
@@ -1951,7 +1979,7 @@ void Application::renderViewport() {
 
             ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", dimLabel);
             ImGui::Separator();
-            ImGui::TextWrapped("Type a value and press Enter. The shape extends from your first click toward the cursor.");
+            ImGui::TextWrapped("%s", dimHint);
 
             // Grab keyboard focus the first frame placement begins
             if (!m_sketchDimWasShown) {

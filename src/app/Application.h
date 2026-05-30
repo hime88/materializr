@@ -250,6 +250,12 @@ private:
     std::unique_ptr<SketchSolver> m_sketchSolver;
     std::unique_ptr<SketchTool> m_sketchTool;
     bool m_inSketchMode = false;
+    // History step index immediately before the current sketch was entered.
+    // The "Exit Sketch (discard)" button rewinds history back to this step
+    // so the user can bail out of a half-built sketch without keeping any
+    // partial content. -1 = no sketch in progress (or pre-sketch state
+    // wasn't capturable).
+    int m_sketchEntryHistoryStep = -1;
     int m_activeSketchId = -1; // document id of the sketch being edited, or -1 if new
 
     // Hovered sketch region (for highlight in viewport)
@@ -262,6 +268,12 @@ private:
 
     // Sketch grid step in mm (drives both the visual face grid and snap-to-line)
     float m_sketchGridStep = 1.0f;
+    // World-aligned anchor used as the sketch grid origin and the camera
+    // target. Computed at sketch entry from the face centre snapped to the
+    // nearest grid intersection projected onto the sketch plane. Preserved
+    // through orbit-exit so the new perspective view pivots around the same
+    // point the user was sketching on.
+    glm::vec3 m_sketchSnappedAnchor{0.0f};
 
     // Push/Pull interactive operation state
     bool m_pushPullActive = false;

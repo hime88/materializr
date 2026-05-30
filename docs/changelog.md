@@ -3,6 +3,133 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.3.3] — 2026-05-30
+
+A long session of polish: ViewCube redesign + axis triad + roll buttons,
+ortho-snap respecting turntable, picker depth occlusion fix, sketch-tool
+highlight, polygon preview / rotation / corner-snap, push/pull direction
+correction on STEP imports, two-step Escape + Exit-Sketch discard button,
+and op-parameter persistence in the project file.
+
+### Added
+
+- **ViewCube overhaul** to match FreeCAD's layout: smaller cube body, four
+  cardinal triangle-arrow orbit buttons, two large sweeping corner arrows
+  for 90° camera roll around the view axis, a home / reset-view button
+  with a house glyph, and a coloured XYZ axis triad that rotates with the
+  camera. Triad colours follow the world grid convention (X red,
+  Y green = world up, Z blue = world forward).
+- **Side-face labels** shortened to `L / F / R / B` so the smaller cube
+  reads cleanly; Top / Bottom keep full labels.
+- **Roll buttons** (`RollLeft` / `RollRight` actions) rotate the camera's
+  up vector 90° around the view direction — a snapped ortho view stays
+  snapped but spins in place.
+- **Z-up turntable respect on Top / Bottom ortho snap.** The new ortho
+  view's up vector is computed from the camera's horizontal forward
+  direction so whatever was ahead of you before clicking the face ends
+  up at the top of the screen. Front / Back / Left / Right snaps keep
+  world +Y up (those are unambiguous).
+- **Sketch-on-face turntable + axis snap.** When sketching on a horizontal
+  face the projected camera up degenerates; we fall back to the camera's
+  forward direction projected onto the plane, then snap to whichever of
+  ±faceY / ±faceX is closest, so the sketch view always lands axis-aligned
+  but in the quadrant the user was facing.
+- **Sketch grid origin snapped to the nearest world-grid intersection**
+  projected onto the sketch plane — grid lines coincide with whole-mm
+  world positions on the face plane instead of being shifted by the
+  face centre's fractional coords. Same snapped point becomes the camera
+  target, so an orbit out of ortho pivots around the area you were
+  sketching on.
+- **Active sketch-tool highlight.** The current tool's button in the
+  sketch toolbar gets a 2 px mid-grey (`#808080`) border so it's
+  unambiguous at a glance which mode (Line / Circle / Rectangle / Arc /
+  Spline / Polygon / Trim) is active.
+- **Polygon tool overhaul.** Dimension popup label reads "Sides" (≥3) and
+  typing a count + Enter updates the live preview without committing —
+  the user can iterate on side count, rotation, and radius before clicking
+  to commit. The cursor's direction from the centre sets the polygon's
+  rotation so the first vertex lands exactly on the (snapped) cursor —
+  same "corner snaps to grid" behaviour as the circle tool.
+- **Two-step Escape in sketch mode.** First press cancels just the
+  in-progress shape (line mid-stroke, polygon awaiting its second click,
+  etc.); second press exits sketch mode entirely.
+- **Exit Sketch (discard) button** under Finish Sketch. Rewinds history
+  to before the sketch was entered, removes the sketch from the document
+  if empty, and exits — leaves the body in its pre-sketch state. Useful
+  for bailing on a half-built sketch.
+- **Op parameter persistence in the project file.** Each saved history
+  step gains an optional `PARAMS "blob"` line; FilletOp, ChamferOp,
+  ResizeCylindricalOp, ShellOp, and PatternOp each implement
+  `serializeParams` / `deserializeParams` to round-trip their scalar
+  inputs (radius, distance, count, axis, origin, etc.). ReplayOp carries
+  the blob across save / load so a future edit-after-reload pass has the
+  data already on hand. Older project files without `PARAMS` lines load
+  unchanged.
+
+### Fixed
+
+- **Picker depth occlusion: clicking edges through a face.** The previous
+  view-direction depth tolerance scaled with view distance (4 % then
+  0.5 %), which at typical CAD scales let edges of a 1 mm wall on the
+  far side of the body remain "clickable through" the front face. Now
+  the picker computes the face's surface normal at the hit point and
+  rejects edge segments whose signed distance to the face's tangent
+  plane is more than 0.3 mm behind the camera-side. The check is
+  camera-angle-independent, so a 1 mm wall reads as 1 mm behind whether
+  the view is shallow or steep.
+- **Edges of small / zoomed-out faces stealing clicks** from the face
+  centre. The 8 px edge-promotion threshold is now clamped to ¼ of the
+  face's projected on-screen size, so a 20 px face has at most a 5 px
+  edge zone (vs every interior pixel previously being within 8 px of
+  some boundary edge).
+- **Push / Pull direction wrong on STEP-imported horizontal faces.**
+  `BRepGProp_Face::Normal` returns the geometric surface normal, which
+  on imported geometry sometimes points INTO the body — so push went
+  into the solid and pull cut into thin air. Push / Pull now probes the
+  body's solid classifier on BOTH sides of the face at 1 mm; if forward
+  is inside and back is outside it flips the normal. Same check fires
+  for the live arrow display in `beginPushPull` so arrow and extrusion
+  agree.
+- **Sketch on STEP-imported face plane normal verified by the classifier.**
+  Mirror of the push/pull fix at sketch-entry time so the sketch plane
+  itself faces outward — fixes the case where push/pull on a sketch
+  region had to fight an inverted underlying plane.
+- **Orbit out of sketch ortho** resets the camera up vector to world +Y
+  (was carrying over the sketch's chosen up, which caused the post-orbit
+  view to look rotated / twisted) and preserves the snapped sketch
+  anchor as the orbit target so the model stays framed.
+- **Exit Sketch leaves the camera where it is.** Previously
+  `exitSketchMode` force-restored the pre-sketch camera, yanking the user
+  back to wherever they were before they clicked the face. Now exit
+  feels like leaving ortho-snap: the area being looked at stays framed,
+  only the sketch grid disappears.
+- **Trackpad-mode gizmo drag suppressed camera drag.** When orbit and pan
+  are both bound to the Left button (trackpad mode), the camera drag
+  block fired in addition to gizmo drag — so trying to drag a gizmo
+  handle also yawed the camera. The camera drag now checks
+  `m_gizmoDragging` first and suppresses itself while the gizmo owns the
+  interaction.
+- **ViewCube click-through.** The sketch input block now also gates on
+  `m_viewCube->wasHovered()`, mirroring the body picker. Clicking a roll
+  arrow or face on the cube no longer leaks a line-draw to the sketch
+  underneath.
+
+### Changed
+
+- **Side faces of the ViewCube** are labelled `L / F / R / B` (single
+  letters) to fit the smaller cube comfortably.
+- **`addPolygon`** gained a `rotationRad` parameter so the first vertex
+  can be aligned with the cursor direction. Existing callers that don't
+  pass it default to 0 rotation as before.
+
+### Internal
+
+- `Operation` gained `serializeParams()` / `deserializeParams()` virtuals
+  (empty default). ReplayOp carries the blob across save / load via
+  `setStoredParams` / `storedParams()`.
+- `ProjectHistoryStep` gained an opaque `params` field. ProjectIO writes
+  `PARAMS "blob"` per step when non-empty; load tolerates missing lines.
+
 ## [0.3.2] — 2026-05-30
 
 Sketch pattern polish: circles + arcs now actually replicate, the radial

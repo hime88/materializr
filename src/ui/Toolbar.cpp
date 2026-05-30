@@ -111,21 +111,38 @@ ToolAction Toolbar::renderSketchTools() {
     }
     ImGui::Separator();
 
-    if (ImGui::Button("Select / Move", ImVec2(-1, 30))) action = ToolAction::SelectSketch;
+    // Render a sketch-tool button with a thick light-grey border when it's
+    // the currently active mode. Caller checks the return value to set
+    // `action`. Mode id matches SketchToolMode enum (see Toolbar.h).
+    auto skBtn = [&](const char* label, int modeId) -> bool {
+        bool active = (m_activeSketchMode == modeId);
+        if (active) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        }
+        bool clicked = ImGui::Button(label, ImVec2(-1, 30));
+        if (active) {
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+        }
+        return clicked;
+    };
+
+    if (skBtn("Select / Move", 1)) action = ToolAction::SelectSketch;
     tip("Pick sketch elements (points, lines, regions). Drag selection to move.");
-    if (ImGui::Button("Line", ImVec2(-1, 30)))      action = ToolAction::Line;
+    if (skBtn("Line",      2))     action = ToolAction::Line;
     tip("Draw straight line segments. Click to add vertices, Esc to finish.");
-    if (ImGui::Button("Circle", ImVec2(-1, 30)))    action = ToolAction::Circle;
+    if (skBtn("Circle",    3))     action = ToolAction::Circle;
     tip("Draw a circle: click centre, drag to radius.");
-    if (ImGui::Button("Rectangle", ImVec2(-1, 30))) action = ToolAction::Rectangle;
+    if (skBtn("Rectangle", 4))     action = ToolAction::Rectangle;
     tip("Draw an axis-aligned rectangle: click one corner, drag to the opposite.");
-    if (ImGui::Button("Arc", ImVec2(-1, 30)))       action = ToolAction::Arc;
+    if (skBtn("Arc",       5))     action = ToolAction::Arc;
     tip("Three-point arc: click start, end, then a point on the curve.");
-    if (ImGui::Button("Spline", ImVec2(-1, 30)))    action = ToolAction::Spline;
+    if (skBtn("Spline",    6))     action = ToolAction::Spline;
     tip("Multi-point spline. Click control points, Enter to finish.");
-    if (ImGui::Button("Polygon", ImVec2(-1, 30)))   action = ToolAction::Polygon;
+    if (skBtn("Polygon",   7))     action = ToolAction::Polygon;
     tip("Regular polygon: click centre, drag to size. Side count in properties.");
-    if (ImGui::Button("Trim", ImVec2(-1, 30)))      action = ToolAction::Trim;
+    if (skBtn("Trim",      8))     action = ToolAction::Trim;
     tip("Trim a sketch segment at the nearest intersections.");
 
     // Transforms operate on the current sketch-element selection (Select tool +
@@ -158,7 +175,14 @@ ToolAction Toolbar::renderSketchTools() {
     ImGui::Separator();
     if (ImGui::Button("Finish Sketch", ImVec2(-1, 30)))
         action = ToolAction::FinishSketch;
-    tip("Leave sketch mode and return to the 3D viewport.");
+    tip("Leave sketch mode and return to the 3D viewport. Keeps the sketch.");
+    if (ImGui::Button("Exit Sketch (discard)", ImVec2(-1, 30)))
+        action = ToolAction::ExitSketchDiscard;
+    tip("Discard the current sketch entirely and leave sketch mode. Rewinds "
+        "history to before the sketch was entered; the body returns to its "
+        "pre-sketch state. Useful when you've started a sketch you don't "
+        "want to keep — Esc-while-placing only cancels the in-progress shape, "
+        "this clears everything.");
 
     // Plugin buttons for InSketchMode context
     renderPluginButtons(1 << static_cast<int>(SelectionContext::InSketchMode));

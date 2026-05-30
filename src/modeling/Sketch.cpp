@@ -137,7 +137,7 @@ int Sketch::addSpline(const std::vector<int>& controlPointIds) {
     return spline.id;
 }
 
-int Sketch::addPolygon(int centerPtId, double radius, int sides) {
+int Sketch::addPolygon(int centerPtId, double radius, int sides, double rotationRad) {
     SketchPolygon polygon;
     polygon.id = nextId();
     polygon.centerPointId = centerPtId;
@@ -147,9 +147,12 @@ int Sketch::addPolygon(int centerPtId, double radius, int sides) {
     const SketchPoint* center = getPoint(centerPtId);
     if (!center) return -1;
 
-    // Create N vertex points evenly spaced around center
+    // Create N vertex points evenly spaced around center. The first vertex
+    // lands at angle `rotationRad` so the caller can align it with the cursor
+    // direction — used by SketchTool to snap a corner of the polygon to the
+    // grid (the first vertex is exactly under the snapped cursor).
     for (int i = 0; i < sides; ++i) {
-        double angle = 2.0 * M_PI * i / sides;
+        double angle = rotationRad + 2.0 * M_PI * i / sides;
         float vx = center->pos.x + static_cast<float>(radius * std::cos(angle));
         float vy = center->pos.y + static_cast<float>(radius * std::sin(angle));
         int ptId = addPoint(glm::vec2(vx, vy));

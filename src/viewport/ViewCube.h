@@ -11,7 +11,12 @@ enum class ViewCubeAction {
     None, Front, Back, Left, Right, Top, Bottom,
     FrontTopRight, FrontTopLeft, BackTopRight, BackTopLeft,
     FrontBottomRight, FrontBottomLeft, BackBottomRight, BackBottomLeft,
-    RotateLeft, RotateRight, RotateUp, RotateDown
+    RotateLeft, RotateRight, RotateUp, RotateDown,
+    // Roll the camera 90° around the view axis (CCW / CW). Lets the user
+    // re-orient a snapped ortho view (e.g. Top) without un-snapping.
+    RollLeft, RollRight,
+    // Snap to the default 3/4 isometric view (FrontTopRight equivalent).
+    Home
 };
 
 class ViewCube {

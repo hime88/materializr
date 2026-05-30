@@ -80,6 +80,7 @@ namespace materializr { namespace force_link { void linkAll(); } }
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepGProp_Face.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -703,6 +704,30 @@ void Application::handleToolAction(int action) {
             }
             break;
         }
+        case ToolAction::ExitSketchDiscard: {
+            // Rewind history to where the user entered this sketch, then
+            // leave sketch mode. Drops every line / circle / arc / etc. the
+            // user drew, plus any in-progress placement state.
+            if (m_inSketchMode && m_history && m_sketchTool) {
+                m_sketchTool->onCancel(); // clear m_isPlacing etc.
+                while (m_history->currentStep() > m_sketchEntryHistoryStep &&
+                       m_history->canUndo()) {
+                    m_history->undo(*m_document);
+                }
+                m_sketchEntryHistoryStep = -1;
+                m_meshesDirty = true;
+                // After undo'ing everything we did since entry, also remove
+                // the sketch from the document if it ended up empty.
+                if (m_activeSketch && m_activeSketch->elementCount() == 0 &&
+                    m_activeSketchId >= 0) {
+                    m_document->removeSketch(m_activeSketchId);
+                }
+            }
+            // Use the same exit path the close-without-saving flow uses —
+            // leaves the camera where it is and clears sketch state.
+            if (m_inSketchMode) exitSketchMode();
+            break;
+        }
         case ToolAction::FinishSketch: {
             if (m_inSketchMode) {
                 recordSketchMutation([&]{ m_sketchTool->onConfirm(); });
@@ -1128,8 +1153,20 @@ void Application::handleShortcuts() {
         } else if (m_extruding) {
             cancelInteractiveExtrude();
         } else if (m_inSketchMode) {
-            m_sketchTool->onCancel();
-            exitSketchMode();
+            // Two-step Escape inside sketch mode:
+            //   1st press while a shape placement is in progress → cancel
+            //      just that placement (Line mid-stroke, Circle awaiting
+            //      its radius click, Polygon awaiting its second click,
+            //      Spline mid-stream, etc.). The sketch stays active so
+            //      the user can resume drawing.
+            //   2nd press (or 1st press when nothing is in progress) →
+            //      exit sketch mode entirely (same as Finish Sketch but
+            //      without an explicit click).
+            if (m_sketchTool && m_sketchTool->isPlacing()) {
+                m_sketchTool->onCancel();
+            } else {
+                exitSketchMode();
+            }
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) && m_edgeOpActive) {
@@ -1237,6 +1274,29 @@ void Application::handleViewCubeAction(int action) {
         case ViewCubeAction::RotateRight: cam.rotateAroundTarget( kRot, 0.0f); return;
         case ViewCubeAction::RotateUp:    cam.rotateAroundTarget(0.0f, -kRot); return;
         case ViewCubeAction::RotateDown:  cam.rotateAroundTarget(0.0f,  kRot); return;
+
+        // Roll: rotate the camera's "up" vector around the view direction by
+        // 90°. Doesn't change camera position / target, so a snapped ortho
+        // view stays snapped — just spins in place.
+        case ViewCubeAction::Home:
+            // Default 3/4 isometric view (FrontTopRight). Camera offset along
+            // (+1,+1,+1) so all three labelled faces (Front, Top, Right) are
+            // visible, with world +Y up.
+            handleViewCubeAction(static_cast<int>(ViewCubeAction::FrontTopRight));
+            return;
+
+        case ViewCubeAction::RollLeft:
+        case ViewCubeAction::RollRight: {
+            glm::vec3 viewDir = glm::normalize(cam.getTarget() - cam.getPosition());
+            float ang = (a == ViewCubeAction::RollLeft) ? +kRot : -kRot;
+            float ca = std::cos(ang), sa = std::sin(ang);
+            // Rodrigues' rotation of m_up around viewDir.
+            glm::vec3 u = cam.getUp();
+            glm::vec3 rotated = u * ca + glm::cross(viewDir, u) * sa
+                              + viewDir * glm::dot(viewDir, u) * (1.0f - ca);
+            cam.setUp(glm::normalize(rotated));
+            return;
+        }
         default: break;
     }
 
@@ -1264,8 +1324,23 @@ void Application::handleViewCubeAction(int action) {
         case ViewCubeAction::Back:   dir = { 0, 0,-1}; up = {0, 1, 0}; break;
         case ViewCubeAction::Right:  dir = { 1, 0, 0}; up = {0, 1, 0}; break;
         case ViewCubeAction::Left:   dir = {-1, 0, 0}; up = {0, 1, 0}; break;
-        case ViewCubeAction::Top:    dir = { 0, 1, 0}; up = {0, 0,-1}; break;
-        case ViewCubeAction::Bottom: dir = { 0,-1, 0}; up = {0, 0, 1}; break;
+        // Top + Bottom: the "up" direction is computed from the CURRENT
+        // camera's horizontal forward so the snap respects turntable
+        // orientation — i.e. whatever was "ahead of you" in the orbiting
+        // view ends up at the top of the screen when you look straight
+        // down. Without this the view always snaps to the same up
+        // direction regardless of where you'd yawed to, which feels
+        // jarring after a turntable spin.
+        case ViewCubeAction::Top:
+        case ViewCubeAction::Bottom: {
+            dir = (a == ViewCubeAction::Top) ? glm::vec3(0, 1, 0)
+                                             : glm::vec3(0,-1, 0);
+            glm::vec3 fwd = cam.getTarget() - cam.getPosition();
+            glm::vec3 horiz(fwd.x, 0.0f, fwd.z);
+            if (glm::length(horiz) < 1e-3f) horiz = glm::vec3(0, 0, -1);
+            up = glm::normalize(horiz);
+            break;
+        }
         case ViewCubeAction::FrontTopRight:    dir = { 1, 1, 1}; break;
         case ViewCubeAction::FrontTopLeft:     dir = {-1, 1, 1}; break;
         case ViewCubeAction::BackTopRight:     dir = { 1, 1,-1}; break;
@@ -1356,6 +1431,7 @@ ProjectHistory Application::captureProjectHistory() {
         steps[i].name = op->name();
         steps[i].description = op->description();
         steps[i].enabled = op->isEnabled();
+        steps[i].params = op->serializeParams();
         if (!op->isEnabled()) continue; // a disabled step changed nothing
 
         OperationDiff d = op->captureDiff();
@@ -1406,6 +1482,10 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist) {
         auto op = std::make_unique<ReplayOp>(st.typeId, st.name, st.description,
                                              std::move(before), std::move(after));
         op->setEnabled(st.enabled);
+        // Carry the saved parameter blob along so a future edit-after-reload
+        // pass (when face-id stability lands) can pull the original radii /
+        // distances / etc. back out without re-prompting the user.
+        if (!st.params.empty()) op->setStoredParams(st.params);
         m_history->pushExecuted(std::move(op));
     }
 }
@@ -1586,6 +1666,7 @@ void Application::enterSketchMode() {
     m_sketchTool->setSolver(m_sketchSolver.get());
     m_sketchTool->setMode(SketchToolMode::Line);
     m_inSketchMode = true;
+    m_sketchEntryHistoryStep = m_history ? m_history->currentStep() : -1;
     m_toolbar->setSketchMode(true);
     alignCameraToActiveSketch();
 }
@@ -1607,6 +1688,7 @@ void Application::enterSketchOnPlane(const gp_Pln& plane) {
     m_sketchTool->setSolver(m_sketchSolver.get());
     m_sketchTool->setMode(SketchToolMode::Line);
     m_inSketchMode = true;
+    m_sketchEntryHistoryStep = m_history ? m_history->currentStep() : -1;
     m_toolbar->setSketchMode(true);
     alignCameraToActiveSketch();
 }
@@ -1635,6 +1717,53 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
             ax.ZReverse();
             pln = gp_Pln(ax);
         }
+        // STEP-imported faces sometimes carry an orientation flag that doesn't
+        // match the geometric outward direction, so the orientation check
+        // alone isn't enough — we end up with a sketch plane pointing INTO
+        // the body and push/pull goes the wrong way. Verify by probing the
+        // body's solid classifier on BOTH sides of the face: one direction
+        // should be OUT and the other IN. If the directions are reversed
+        // (forward is IN, opposite is OUT), flip the plane. We probe both
+        // sides at a generous offset (1 mm) so tessellation slack near the
+        // surface doesn't confuse the classifier.
+        if (sourceBodyId >= 0) {
+            try {
+                const TopoDS_Shape& body = m_document->getBody(sourceBodyId);
+                if (!body.IsNull()) {
+                    Bnd_Box bb;
+                    BRepBndLib::Add(face, bb);
+                    if (!bb.IsVoid()) {
+                        double xmin, ymin, zmin, xmax, ymax, zmax;
+                        bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                        gp_Pnt c((xmin + xmax) * 0.5,
+                                 (ymin + ymax) * 0.5,
+                                 (zmin + zmax) * 0.5);
+                        gp_Dir nd = pln.Position().Direction();
+                        const double eps = 1.0; // mm
+                        gp_Pnt fwd(c.X() + nd.X() * eps,
+                                   c.Y() + nd.Y() * eps,
+                                   c.Z() + nd.Z() * eps);
+                        gp_Pnt back(c.X() - nd.X() * eps,
+                                    c.Y() - nd.Y() * eps,
+                                    c.Z() - nd.Z() * eps);
+                        BRepClass3d_SolidClassifier fwdCls(body, fwd,  1e-6);
+                        BRepClass3d_SolidClassifier backCls(body, back, 1e-6);
+                        bool fwdIsIn  = (fwdCls.State()  == TopAbs_IN);
+                        bool backIsIn = (backCls.State() == TopAbs_IN);
+                        // Only flip if we have a clear "forward is inside,
+                        // opposite is outside" disagreement. Mixed / ambiguous
+                        // states (ON / UNKNOWN) leave the existing direction
+                        // alone so we don't double-flip a face that was
+                        // already correctly oriented by the topology check.
+                        if (fwdIsIn && !backIsIn) {
+                            gp_Ax3 ax = pln.Position();
+                            ax.ZReverse();
+                            pln = gp_Pln(ax);
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
         m_activeSketch->setPlane(pln);
         m_activeSketch->setSourceFace(face);
     } else {
@@ -1647,6 +1776,7 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
     m_sketchTool->setSolver(m_sketchSolver.get());
     m_sketchTool->setMode(SketchToolMode::Line);
     m_inSketchMode = true;
+    m_sketchEntryHistoryStep = m_history ? m_history->currentStep() : -1;
     m_toolbar->setSketchMode(true);
     alignCameraToActiveSketch();
 }
@@ -1695,6 +1825,7 @@ void Application::editSketch(int sketchId) {
     // can immediately click & drag points/lines.
     m_sketchTool->setMode(SketchToolMode::Select);
     m_inSketchMode = true;
+    m_sketchEntryHistoryStep = m_history ? m_history->currentStep() : -1;
     m_toolbar->setSketchMode(true);
     m_selection->clear();
     alignCameraToActiveSketch();
@@ -1779,20 +1910,62 @@ void Application::alignCameraToActiveSketch() {
         } catch (...) {}
     }
 
+    // Snap the look-at point to the nearest world-grid intersection PROJECTED
+    // onto the sketch plane. The grid in the viewport then draws lines that
+    // pass through actual world-grid positions on this plane (so a "1 mm"
+    // grid step lands on whole-mm boundaries even when the face's centre is
+    // at fractional world coords). The same snapped point doubles as the
+    // camera target — when the user later orbits out of ortho, the orbit
+    // pivots around this stable, world-aligned anchor close to the face.
+    {
+        float step = std::max(m_sketchGridStep, 0.01f);
+        glm::vec3 rounded(std::round(lookAt.x / step) * step,
+                          std::round(lookAt.y / step) * step,
+                          std::round(lookAt.z / step) * step);
+        lookAt = rounded - normal * glm::dot(rounded - planeOrigin, normal);
+    }
+    m_sketchSnappedAnchor = lookAt;
+
     Camera& cam = m_viewport->getCamera();
     float standoff = std::max(orthoSize * 4.0f, 10.0f);
 
-    // Pick an "up" direction that keeps the apparent orientation as close to the
-    // user's previous view as possible: project the camera's current up onto
-    // the sketch plane (perpendicular to its normal). Falls back to the
-    // sketch plane's natural Y if the previous up is degenerate (nearly along
-    // the new normal, which happens when sketching on a face parallel to the
-    // current view's up axis).
-    glm::vec3 chosenUp = up;
+    // Pick an "up" direction that keeps the apparent orientation as close to
+    // the user's previous view as possible.
+    //
+    // First try projecting the camera's current up onto the sketch plane;
+    // works for vertical / tilted faces where the previous up has a useful
+    // component in-plane. For HORIZONTAL faces (top / bottom), the camera's
+    // up axis is parallel to the plane normal so the projection is zero —
+    // fall back to projecting the camera's horizontal FORWARD direction
+    // instead. That preserves turntable continuity: whichever way the user
+    // was facing before clicking the face ends up at the top of the new
+    // sketch view, instead of jumping to the face's arbitrary internal Y
+    // direction (which causes the random 90° rotations on top / bottom).
+    glm::vec3 chosenUp = up; // ultimate fallback: face's own Y
     glm::vec3 prevUp = cam.getUp();
-    glm::vec3 projected = prevUp - normal * glm::dot(prevUp, normal);
-    if (glm::length(projected) > 0.1f) {
-        chosenUp = glm::normalize(projected);
+    glm::vec3 projUp = prevUp - normal * glm::dot(prevUp, normal);
+    if (glm::length(projUp) > 0.1f) {
+        chosenUp = glm::normalize(projUp);
+    } else {
+        glm::vec3 fwd = cam.getTarget() - cam.getPosition();
+        glm::vec3 projFwd = fwd - normal * glm::dot(fwd, normal);
+        if (glm::length(projFwd) > 0.1f) {
+            chosenUp = glm::normalize(projFwd);
+        }
+    }
+    // Snap the chosen up to the nearest 90° of the face's natural axes so the
+    // view always lands axis-aligned. Without this the up vector inherits any
+    // arbitrary yaw the user had before clicking the face — the sketch comes
+    // out "cocked" at whatever orbit angle they happened to be in.
+    glm::vec3 faceY = up;
+    glm::vec3 faceX = glm::cross(faceY, normal); // in-plane, perpendicular to faceY
+    if (glm::length(faceX) > 1e-4f) faceX = glm::normalize(faceX);
+    float dY = glm::dot(chosenUp, faceY);
+    float dX = glm::dot(chosenUp, faceX);
+    if (std::abs(dY) >= std::abs(dX)) {
+        chosenUp = (dY >= 0.0f) ? faceY : -faceY;
+    } else {
+        chosenUp = (dX >= 0.0f) ? faceX : -faceX;
     }
 
     cam.setTarget(lookAt);
@@ -1903,18 +2076,12 @@ void Application::exitSketchMode() {
     m_activeSketchId = -1;
     m_meshesDirty = true; // refresh sketch rendering set
 
-    // Put the camera back where the user had it before they entered sketch
-    // mode, instead of leaving them looking straight at (and now past) the
-    // sketch plane in ortho. Falls through silently if nothing was saved.
-    if (m_savedCameraForSketch.valid && m_viewport) {
-        Camera& cam = m_viewport->getCamera();
-        cam.setTarget(m_savedCameraForSketch.target);
-        cam.setPosition(m_savedCameraForSketch.position);
-        cam.setUp(m_savedCameraForSketch.up);
-        cam.setOrthographic(m_savedCameraForSketch.ortho);
-        cam.setOrthoSize(m_savedCameraForSketch.orthoSize);
-        m_savedCameraForSketch.valid = false;
-    }
+    // Stay where the user is — don't yank them back to the pre-sketch camera.
+    // Exiting sketch should feel like leaving ortho-snap mode: the area being
+    // looked at remains framed, only the sketch grid disappears. Any orbit
+    // they do drops ortho mode and returns to perspective with a level
+    // horizon (handled in Camera::orbitLevel).
+    m_savedCameraForSketch.valid = false;
 }
 
 void Application::run() {
@@ -1950,6 +2117,11 @@ void Application::run() {
             m_toolbar->setCanEditDiameter(!m_resizeCylActive &&
                                           detectCylindricalResizeCandidate());
             m_toolbar->setShowTooltips(m_showToolbarTooltips);
+            // Pass the active sketch tool mode so the matching button gets
+            // a highlight border — disambiguates which tool is currently in
+            // use (Line vs Circle vs etc.) when in sketch mode.
+            m_toolbar->setActiveSketchMode(m_inSketchMode && m_sketchTool
+                ? static_cast<int>(m_sketchTool->getMode()) : 0);
             ToolAction action = m_toolbar->render();
             m_sketchGridStep = m_toolbar->getGridStep();
             m_snapToGrid = m_toolbar->getSnapToGrid();

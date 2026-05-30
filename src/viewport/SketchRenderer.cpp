@@ -416,11 +416,15 @@ void SketchRenderer::drawPreview(const Sketch* sketch, const SketchTool* tool,
         }
         uploadAndDraw(verts, GL_LINES, color, vp, 1.5f);
     } else if (mode == SketchToolMode::Polygon) {
-        float radius = glm::length(end - start);
-        const int sides = 6;
+        glm::vec2 delta = end - start;
+        float radius = glm::length(delta);
+        const int sides = tool ? tool->getPolygonSides() : 6;
+        // Rotation = direction from centre toward cursor. Matches the actual
+        // placement so vertex 0 sits exactly on the (grid-snapped) cursor.
+        float rotation = (radius > 1e-6f) ? std::atan2(delta.y, delta.x) : 0.0f;
         for (int i = 0; i < sides; i++) {
-            float a1 = 2.0f * (float)M_PI * i / sides;
-            float a2 = 2.0f * (float)M_PI * (i + 1) / sides;
+            float a1 = rotation + 2.0f * (float)M_PI * i / sides;
+            float a2 = rotation + 2.0f * (float)M_PI * (i + 1) / sides;
             pushPt(verts, pw(glm::vec2(start.x + radius*std::cos(a1), start.y + radius*std::sin(a1))));
             pushPt(verts, pw(glm::vec2(start.x + radius*std::cos(a2), start.y + radius*std::sin(a2))));
         }

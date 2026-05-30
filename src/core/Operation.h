@@ -46,6 +46,14 @@ public:
     // flag such steps after a project is reopened.
     virtual bool isReloaded() const { return false; }
 
+    // Serialise this op's input parameters (radii, distances, axis, etc.) as
+    // a single-line opaque text blob. Empty default = nothing to save (sketch
+    // edits, replay ops, simple ops without parameters). Read back by
+    // deserializeParams; returns true on a clean parse. The format is up to
+    // each op — keep it stable per typeId or version it inside the blob.
+    virtual std::string serializeParams() const { return ""; }
+    virtual bool deserializeParams(const std::string& /*blob*/) { return true; }
+
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool enabled) { m_enabled = enabled; }
 

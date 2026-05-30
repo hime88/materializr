@@ -78,3 +78,25 @@ void ShellOp::renderProperties() {
     ImGui::Text("Open faces: %d selected", faceCount);
     ImGui::Text("Body ID: %d", m_bodyId);
 }
+
+std::string ShellOp::serializeParams() const {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "thickness=%.6f", m_thickness);
+    return buf;
+}
+
+bool ShellOp::deserializeParams(const std::string& blob) {
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string key = blob.substr(pos, eq - pos);
+        std::string val = blob.substr(eq + 1, end - eq - 1);
+        if (key == "thickness") { m_thickness = std::atof(val.c_str()); any = true; }
+        pos = end + 1;
+    }
+    return any;
+}

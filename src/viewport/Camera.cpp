@@ -50,9 +50,23 @@ void Camera::orbitLevel(float yawDelta, float pitchDelta)
 {
     // Orbiting implies free 3D rotation, so drop the ortho lock if it was set
     // by entering a sketch. Pan and zoom intentionally keep ortho mode on.
+    bool wasOrtho = m_orthographic;
     m_orthographic = false;
 
+    // Reset up to world-up so a turntable orbit always shows a level horizon.
+    // Without this, a sketch's chosen up vector (which may be -X, +Z, etc.
+    // depending on the face) sticks around on the camera and orbiting looks
+    // rotated / twisted — the look-at point is fine but the up axis is wrong.
     const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    m_up = worldUp;
+
+    // The target is left as-is when transitioning out of ortho. While in a
+    // sketch ortho view, alignCameraToActiveSketch sets the target to a
+    // world-grid-aligned anchor near the face centre, so the orbit pivots
+    // around the same point the user was sketching on — instead of jumping
+    // to world origin (which can throw the model out of frame for off-centre
+    // sketches) or staying at an unsnapped fractional point.
+    (void)wasOrtho;
     glm::vec3 offset = m_position - m_target; // target -> camera
     float radius = glm::length(offset);
     if (radius < 1e-6f) return;

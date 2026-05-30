@@ -125,6 +125,47 @@ std::string PatternOp::description() const {
     return typeStr + " Pattern, " + std::to_string(m_count) + " copies";
 }
 
+std::string PatternOp::serializeParams() const {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "type=%d;count=%d;sx=%.6f;sy=%.6f;sz=%.6f;ax=%.6f;ay=%.6f;az=%.6f;"
+        "ox=%.6f;oy=%.6f;oz=%.6f;angle=%.6f",
+        static_cast<int>(m_type), m_count,
+        m_spacingX, m_spacingY, m_spacingZ,
+        m_axisX, m_axisY, m_axisZ,
+        m_originX, m_originY, m_originZ, m_totalAngle);
+    return buf;
+}
+
+bool PatternOp::deserializeParams(const std::string& blob) {
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string key = blob.substr(pos, eq - pos);
+        std::string val = blob.substr(eq + 1, end - eq - 1);
+        double d = std::atof(val.c_str());
+        int    i = std::atoi(val.c_str());
+        if      (key == "type")  { m_type = (i == 1) ? PatternType::Radial : PatternType::Linear; any = true; }
+        else if (key == "count") { m_count = i; any = true; }
+        else if (key == "sx")    { m_spacingX = d; any = true; }
+        else if (key == "sy")    { m_spacingY = d; any = true; }
+        else if (key == "sz")    { m_spacingZ = d; any = true; }
+        else if (key == "ax")    { m_axisX = d; any = true; }
+        else if (key == "ay")    { m_axisY = d; any = true; }
+        else if (key == "az")    { m_axisZ = d; any = true; }
+        else if (key == "ox")    { m_originX = d; any = true; }
+        else if (key == "oy")    { m_originY = d; any = true; }
+        else if (key == "oz")    { m_originZ = d; any = true; }
+        else if (key == "angle") { m_totalAngle = d; any = true; }
+        pos = end + 1;
+    }
+    return any;
+}
+
 void PatternOp::renderProperties() {
     ImGui::Text("Pattern");
     ImGui::Separator();

@@ -116,6 +116,33 @@ OperationDiff FilletOp::captureDiff() const {
     return d;
 }
 
+std::string FilletOp::serializeParams() const {
+    // Single-line key=value blob. Only scalar inputs for now — the edge set is
+    // tied to OCCT TopoDS pointers that don't survive save/load, so re-edit
+    // after reload is gated on a future face-/edge-ID stability pass.
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "radius=%.6f", m_radius);
+    return buf;
+}
+
+bool FilletOp::deserializeParams(const std::string& blob) {
+    // Tolerant key=value parser. Unknown keys are ignored; missing keys keep
+    // current defaults. Returns true if at least one key was understood.
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string key = blob.substr(pos, eq - pos);
+        std::string val = blob.substr(eq + 1, end - eq - 1);
+        if (key == "radius") { m_radius = std::atof(val.c_str()); any = true; }
+        pos = end + 1;
+    }
+    return any;
+}
+
 bool FilletOp::ownsFace(const TopoDS_Shape& face) const {
     if (face.IsNull() || face.ShapeType() != TopAbs_FACE) return false;
     for (const auto& f : m_generatedFaces) {

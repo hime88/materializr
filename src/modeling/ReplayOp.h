@@ -28,6 +28,18 @@ public:
     // snapshot machinery but should not be marked "(reloaded; not editable)".
     bool isReloaded() const override { return m_fromReload; }
 
+    // Carry the original op's parameter blob across save/load so a future
+    // edit-by-clicking pass can pull radii / distances / etc. out of a
+    // reloaded step. Empty when the project file predates the params
+    // extension or the op didn't override serializeParams.
+    void setStoredParams(std::string blob) { m_storedParams = std::move(blob); }
+    const std::string& storedParams() const { return m_storedParams; }
+    // Exposed so ProjectIO can write them back out on resave.
+    std::string serializeParams() const override { return m_storedParams; }
+    bool deserializeParams(const std::string& blob) override {
+        m_storedParams = blob; return true;
+    }
+
 private:
     static void restore(Document& doc, const BodyState& state,
                         bool removeUnlisted);
@@ -35,4 +47,5 @@ private:
     std::string m_typeId, m_name, m_description;
     BodyState m_before, m_after;
     bool m_fromReload = true;
+    std::string m_storedParams;
 };

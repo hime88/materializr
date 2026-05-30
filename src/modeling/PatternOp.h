@@ -37,6 +37,8 @@ public:
     std::string description() const override;
     void renderProperties() override;
     std::string typeId() const override { return "pattern"; }
+    std::string serializeParams() const override;
+    bool deserializeParams(const std::string& blob) override;
 
 private:
     int m_bodyId = -1;

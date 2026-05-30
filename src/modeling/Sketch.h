@@ -79,7 +79,7 @@ public:
 
     // Spline and polygon creation
     int addSpline(const std::vector<int>& controlPointIds);
-    int addPolygon(int centerPtId, double radius, int sides);
+    int addPolygon(int centerPtId, double radius, int sides, double rotationRad = 0.0);
 
     // Element access
     const std::vector<SketchLine>& getLines() const;

@@ -34,6 +34,8 @@ public:
     std::string typeId() const override { return "fillet"; }
     bool ownsFace(const TopoDS_Shape& face) const override;
     OperationDiff captureDiff() const override;
+    std::string serializeParams() const override;
+    bool deserializeParams(const std::string& blob) override;
 
 private:
     int m_bodyId = -1;

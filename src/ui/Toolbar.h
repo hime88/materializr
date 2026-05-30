@@ -14,7 +14,7 @@ enum class ToolAction {
     // Sketch tools (still dispatched via ToolAction — tightly coupled to viewport)
     StartSketch, StartSketchXY, StartSketchXZ, StartSketchYZ,
     SketchOnFace, SelectSketch, Line, Circle, Rectangle, Arc, Spline, Polygon, Trim,
-    FinishSketch, EditSketch, ExtrudeSketch, SubtractSketch, PushPull, LookAtSketch,
+    FinishSketch, ExitSketchDiscard, EditSketch, ExtrudeSketch, SubtractSketch, PushPull, LookAtSketch,
     SketchCopy, SketchMirror, SketchLinearPattern, SketchRadialPattern,
     // 3D tools that still need the old dispatch path. (Face extrude is owned by
     // ExtrudePlugin's toolbar button; the inline interactive extrude is reached
@@ -52,6 +52,13 @@ public:
     // cylinder on a recognized cylinder-or-tube body.
     void setCanEditDiameter(bool b) { m_canEditDiameter = b; }
 
+    // Active SketchToolMode (int — Toolbar avoids depending on SketchTool.h).
+    // Matches SketchToolMode enum: 0=None, 1=Select, 2=Line, 3=Circle,
+    // 4=Rectangle, 5=Arc, 6=Spline, 7=Polygon, 8=Trim. Used to draw a
+    // highlight border around the matching button so the active tool is
+    // unambiguous at a glance.
+    void setActiveSketchMode(int mode) { m_activeSketchMode = mode; }
+
     // When true (the default) every toolbar button shows a hover tooltip
     // describing what it does. Off via Settings → Interface for users who
     // don't want them. Settable any frame; takes effect on the next frame.
@@ -67,6 +74,7 @@ private:
     bool m_snapToGrid = true;
     bool m_canEditDiameter = false;
     bool m_showTooltips = true;
+    int  m_activeSketchMode = 0; // SketchToolMode (see setActiveSketchMode)
 
     ToolAction renderSketchTools();
     ToolAction renderSketchSelectedTools();

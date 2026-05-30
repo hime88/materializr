@@ -56,6 +56,17 @@ public:
     glm::vec2 getCurrentPos() const { return m_currentPos; }
     glm::vec2 getSecondClick() const { return m_secondClick; }
     int getClickCount() const { return m_clickCount; }
+    // Current side count for the polygon tool. Modifiable from the dimension
+    // popup without committing the placement, so the user can preview a new
+    // count before clicking.
+    int getPolygonSides() const { return m_polygonSides; }
+    void setPolygonSides(int n) { m_polygonSides = (n < 3) ? 3 : n; }
+
+    // True while the tool has an in-progress placement (first click made,
+    // second pending) — used by the host to give Escape two-step semantics:
+    // first Esc cancels just the in-progress shape, second Esc exits the
+    // sketch mode entirely.
+    bool isPlacing() const { return m_isPlacing; }
 
     // Grid step (in sketch-plane mm). Used for both visual grid and snap-to-line.
     // 0 disables grid snap entirely.

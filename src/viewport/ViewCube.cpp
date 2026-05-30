@@ -25,12 +25,16 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
     ViewCubeAction action = ViewCubeAction::None;
 
     // --- Layout: top-right of the current window, leaving room for the title bar.
+    //     cubeR is the cube's half-extent; widgetR is the radius used for the
+    //     surrounding accessory positions (arrows, home button, triad) so the
+    //     overall widget keeps a roomy layout even when the cube is small.
     ImVec2 wp = ImGui::GetWindowPos();
     ImVec2 ws = ImGui::GetWindowSize();
-    const float pad   = 10.0f;
-    const float cubeR = 38.0f;   // half-extent of cube projection (px)
-    ImVec2 center(wp.x + ws.x - pad - cubeR - 26.0f,
-                  wp.y + pad + cubeR + 42.0f);
+    const float pad     = 10.0f;
+    const float cubeR   = 19.0f;   // half-extent of cube projection (px)
+    const float widgetR = 38.0f;   // accessory placement radius
+    ImVec2 center(wp.x + ws.x - pad - widgetR - 26.0f,
+                  wp.y + pad + widgetR + 42.0f);
 
     // --- Camera view-rotation matrix (no translation), so the cube spins with
     //     the camera's orientation.
@@ -57,13 +61,17 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
     // Face definitions. Corner order is CCW from OUTSIDE the cube, so a face's
     // 2D screen winding flips sign when the face turns away from the camera.
     struct Face { int c[4]; glm::vec3 n; const char* label; ViewCubeAction act; };
+    // Side faces use single-letter labels (L/F/R/B) since the cube is now
+    // half its old size and full words don't fit cleanly. Top/Bottom keep
+    // their full label — they're the most recognisable and have more room
+    // on the square top/bottom faces of the projection.
     static const Face kFaces[6] = {
-        {{4,5,6,7}, { 0, 0, 1}, "Front", ViewCubeAction::Front},
-        {{1,0,3,2}, { 0, 0,-1}, "Back",  ViewCubeAction::Back},
-        {{0,4,7,3}, {-1, 0, 0}, "Left",  ViewCubeAction::Left},
-        {{5,1,2,6}, { 1, 0, 0}, "Right", ViewCubeAction::Right},
-        {{3,7,6,2}, { 0, 1, 0}, "Top",   ViewCubeAction::Top},
-        {{0,1,5,4}, { 0,-1, 0}, "Bottom",ViewCubeAction::Bottom},
+        {{4,5,6,7}, { 0, 0, 1}, "F",      ViewCubeAction::Front},
+        {{1,0,3,2}, { 0, 0,-1}, "B",      ViewCubeAction::Back},
+        {{0,4,7,3}, {-1, 0, 0}, "L",      ViewCubeAction::Left},
+        {{5,1,2,6}, { 1, 0, 0}, "R",      ViewCubeAction::Right},
+        {{3,7,6,2}, { 0, 1, 0}, "Top",    ViewCubeAction::Top},
+        {{0,1,5,4}, { 0,-1, 0}, "Bottom", ViewCubeAction::Bottom},
     };
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -155,7 +163,7 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
     // --- Four 90° rotation arrows positioned just outside the cube on each
     //     cardinal side. Clicking emits RotateLeft/Right/Up/Down.
     {
-        const float r = cubeR + 18.0f;          // arrow centre distance
+        const float r = widgetR + 18.0f;        // arrow centre distance
         const float s = 6.0f;                   // arrow half-size
         struct Arrow { ImVec2 dir; ViewCubeAction act; };
         Arrow arrows[4] = {
@@ -183,6 +191,127 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
                 }
             }
         }
+    }
+
+    // --- Two FreeCAD-style large sweeping roll arrows at the top corners of
+    //     the widget. Each is a quarter-circle arc with a clear arrowhead at
+    //     the inward end. Clicking rolls the camera 90° around the view
+    //     direction so a snapped ortho view re-orients without un-snapping.
+    {
+        const float ringR = widgetR + 14.0f; // arc radius (large sweep)
+        struct Roll { float a0; float a1; ViewCubeAction act; };
+        // a0 → a1 sweep direction; angles in radians, 0 = +X (right), going CCW
+        // in math convention. We use Y-flipped screen so visually CCW math =
+        // CCW screen at the top of the cube.
+        Roll rolls[2] = {
+            // Top-left arrow: arc on upper-left going from "left" (π) to "top"
+            // (π/2). Arrowhead at the top, indicating CCW roll.
+            { float(M_PI),         float(M_PI * 0.55f), ViewCubeAction::RollLeft },
+            // Top-right arrow: arc on upper-right going from "top" to "right".
+            { float(M_PI * 0.45f), 0.0f,                ViewCubeAction::RollRight },
+        };
+        for (auto& rb : rolls) {
+            // Generate ~12 segments along the arc to test hover & draw.
+            const int seg = 14;
+            ImVec2 pts[seg + 1];
+            for (int i = 0; i <= seg; ++i) {
+                float t = rb.a0 + (rb.a1 - rb.a0) * (i / float(seg));
+                // Screen Y inverted: subtract sin instead of add so the arc
+                // sits ABOVE the cube (top of screen has lower y in ImGui).
+                pts[i] = ImVec2(center.x + std::cos(t) * ringR,
+                                center.y - std::sin(t) * ringR);
+            }
+            // Hover test: distance from cursor to the arc's polyline.
+            float bestD = 1e9f;
+            for (int i = 0; i < seg; ++i) {
+                ImVec2 a = pts[i], b = pts[i + 1];
+                ImVec2 ab(b.x - a.x, b.y - a.y);
+                float lenSq = ab.x * ab.x + ab.y * ab.y;
+                float t = ((mp.x - a.x) * ab.x + (mp.y - a.y) * ab.y) / std::max(lenSq, 1e-6f);
+                t = std::clamp(t, 0.0f, 1.0f);
+                ImVec2 p(a.x + ab.x * t, a.y + ab.y * t);
+                float d = std::sqrt((mp.x - p.x) * (mp.x - p.x) +
+                                    (mp.y - p.y) * (mp.y - p.y));
+                if (d < bestD) bestD = d;
+            }
+            bool hover = bestD < 8.0f;
+            ImU32 col = hover ? IM_COL32(255, 220, 80, 255) : IM_COL32(210, 210, 230, 235);
+            // Polyline body.
+            for (int i = 0; i < seg; ++i) {
+                dl->AddLine(pts[i], pts[i + 1], col, 3.0f);
+            }
+            // Arrowhead at the end of the arc, oriented along the tangent.
+            ImVec2 tip = pts[seg];
+            ImVec2 prev = pts[seg - 1];
+            ImVec2 tan(tip.x - prev.x, tip.y - prev.y);
+            float tl = std::sqrt(tan.x * tan.x + tan.y * tan.y);
+            if (tl > 1e-4f) { tan.x /= tl; tan.y /= tl; }
+            ImVec2 base(tip.x - tan.x * 8.0f, tip.y - tan.y * 8.0f);
+            ImVec2 perp(-tan.y * 5.0f, tan.x * 5.0f);
+            dl->AddTriangleFilled(tip,
+                                   ImVec2(base.x + perp.x, base.y + perp.y),
+                                   ImVec2(base.x - perp.x, base.y - perp.y),
+                                   col);
+            if (hover) {
+                cubeHover = true;
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    action = rb.act;
+                }
+            }
+        }
+    }
+
+    // --- Small "Home" reset-view button: a circle at the top-right of the
+    //     widget. Clicking snaps to the default FrontTopRight (3/4 iso) view.
+    {
+        ImVec2 hc(center.x + widgetR + 22.0f, center.y - widgetR - 22.0f);
+        float dx = mp.x - hc.x, dy = mp.y - hc.y;
+        bool hover = std::sqrt(dx * dx + dy * dy) < 10.0f;
+        ImU32 fill = hover ? IM_COL32(255, 220, 80, 255) : IM_COL32(210, 210, 230, 230);
+        dl->AddCircleFilled(hc, 8.0f, fill);
+        dl->AddCircle      (hc, 8.0f, IM_COL32(60, 60, 70, 255), 0, 1.2f);
+        // Simple house glyph: triangle roof + small square body inside the circle.
+        ImVec2 roofL(hc.x - 4.0f, hc.y - 0.5f), roofR(hc.x + 4.0f, hc.y - 0.5f),
+               roofT(hc.x,       hc.y - 4.5f);
+        dl->AddTriangleFilled(roofL, roofT, roofR, IM_COL32(60, 60, 70, 255));
+        dl->AddRectFilled(ImVec2(hc.x - 3.0f, hc.y - 0.5f),
+                          ImVec2(hc.x + 3.0f, hc.y + 3.5f),
+                          IM_COL32(60, 60, 70, 255));
+        if (hover) {
+            cubeHover = true;
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                action = ViewCubeAction::Home;
+            }
+        }
+    }
+
+    // --- Coloured axis triad at the bottom-left of the widget. The three
+    //     short arms rotate with the camera so the user can read off the
+    //     current orientation. Labels use the user's Z-up convention:
+    //     user X → world X (red), user Y → world Z (green), user Z → world Y
+    //     (blue) — matches the rest of the UI.
+    {
+        ImVec2 tc(center.x - widgetR - 22.0f, center.y + widgetR + 22.0f);
+        const float armLen = 18.0f;
+        // Triad colours match the world grid: X red, Y (world up) green, Z blue.
+        // Labels follow the user's Z-up convention (their Z is world Y).
+        struct Arm { glm::vec3 world; ImU32 col; const char* lbl; };
+        Arm arms[3] = {
+            { {1, 0, 0}, IM_COL32(230,  60,  60, 255), "X" }, // world X
+            { {0, 0, 1}, IM_COL32( 80, 130, 240, 255), "Y" }, // world Z, blue (user Y = forward/back)
+            { {0, 1, 0}, IM_COL32( 70, 200,  90, 255), "Z" }, // world Y, green (user Z = up)
+        };
+        for (auto& ar : arms) {
+            glm::vec4 e = V * glm::vec4(ar.world, 0.0f);
+            ImVec2 tip(tc.x + e.x * armLen, tc.y - e.y * armLen);
+            dl->AddLine(tc, tip, ar.col, 2.0f);
+            // Small label near the tip.
+            ImVec2 lp(tip.x + (e.x >= 0 ? 2.0f : -8.0f),
+                      tip.y - (e.y >= 0 ? 8.0f : -2.0f));
+            dl->AddText(lp, ar.col, ar.lbl);
+        }
+        // Origin dot.
+        dl->AddCircleFilled(tc, 2.5f, IM_COL32(220, 220, 230, 255));
     }
 
     // --- Drag the cube body itself to free-orbit (yaw + pitch). Click without

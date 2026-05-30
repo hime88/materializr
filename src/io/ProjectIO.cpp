@@ -212,6 +212,13 @@ ProjectSaveResult ProjectIO::save(const std::string& filePath, const Document& d
             ofs << "NAME \"" << st.name << "\"\n";
             ofs << "DESC \"" << st.description << "\"\n";
             ofs << "ENABLED " << (st.enabled ? 1 : 0) << "\n";
+            // Optional per-op parameter blob (since 0.3.x). Omitted entirely
+            // when empty so older parsers see a familiar STEP block. Quoted
+            // single-line; embedded quotes are deliberately not supported —
+            // ops keep their key=value blobs to ASCII / decimal text.
+            if (!st.params.empty()) {
+                ofs << "PARAMS \"" << st.params << "\"\n";
+            }
             ofs << "CHANGED_COUNT " << static_cast<int>(st.changed.size()) << "\n";
             for (const auto& [id, shape] : st.changed)
                 writeBodyBlock(ofs, id, shape);
@@ -538,11 +545,13 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
                     std::istringstream ls(l);
                     std::string t; ls >> t;
                     if (t == "TYPE") { ls >> st.typeId; }
-                    else if (t == "NAME" || t == "DESC") {
+                    else if (t == "NAME" || t == "DESC" || t == "PARAMS") {
                         auto fq = l.find('"'), lq = l.rfind('"');
                         std::string v = (fq != std::string::npos && lq != fq)
                                             ? l.substr(fq + 1, lq - fq - 1) : "";
-                        if (t == "NAME") st.name = v; else st.description = v;
+                        if      (t == "NAME")   st.name = v;
+                        else if (t == "DESC")   st.description = v;
+                        else                    st.params = v; // PARAMS
                     } else if (t == "ENABLED") { int e = 1; ls >> e; st.enabled = (e != 0); }
                     else if (t == "CHANGED_COUNT") {
                         int m = 0; ls >> m;

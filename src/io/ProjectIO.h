@@ -28,6 +28,11 @@ struct ProjectHistoryStep {
     bool enabled = true;
     std::vector<std::pair<int, TopoDS_Shape>> changed; // id -> shape after this step
     std::vector<int> deleted;                          // ids removed at this step
+    // Opaque per-op parameter blob (radii, distances, etc.) produced by
+    // Operation::serializeParams() and consumed by deserializeParams() on
+    // load. Empty for ops that don't override serialisation or for project
+    // files that predate the params extension.
+    std::string params;
 };
 
 struct ProjectHistory {
