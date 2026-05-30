@@ -29,6 +29,10 @@ add_library(materializr_core STATIC
 
 target_include_directories(materializr_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
+)
+# Mark OpenCASCADE as a SYSTEM include so its own deprecated declarations
+# (e.g. std::iterator under C++17) don't spam our build with warnings.
+target_include_directories(materializr_core SYSTEM PUBLIC
     ${OpenCASCADE_INCLUDE_DIR}
 )
 

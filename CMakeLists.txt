@@ -225,6 +225,10 @@ add_executable(materializr
 
 target_include_directories(materializr PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+)
+# Mark OpenCASCADE as a SYSTEM include so its own deprecated declarations
+# (e.g. std::iterator under C++17) don't spam our build with warnings.
+target_include_directories(materializr SYSTEM PRIVATE
     ${OpenCASCADE_INCLUDE_DIR}
 )
 
