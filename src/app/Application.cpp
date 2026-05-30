@@ -603,6 +603,7 @@ AppSettings Application::currentSettings() const {
     s.msaaSamples = m_msaaSamples;
     s.meshQuality = m_meshQuality;
     s.selectionLineWidth = m_selectionLineWidth;
+    s.showToolbarTooltips = m_showToolbarTooltips;
     s.autoOpenLastProject = m_autoOpenLastProject;
     s.lastProjectPath = m_currentProjectPath; // empty after closeProject()
     s.checkForUpdatesOnLaunch = m_checkForUpdatesOnLaunch;
@@ -630,6 +631,7 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_msaaSamples = s.msaaSamples;
     m_meshQuality = s.meshQuality;
     m_selectionLineWidth = s.selectionLineWidth;
+    m_showToolbarTooltips = s.showToolbarTooltips;
     m_autoOpenLastProject = s.autoOpenLastProject;
     m_checkForUpdatesOnLaunch = s.checkForUpdatesOnLaunch;
 }
@@ -890,6 +892,13 @@ void Application::handleToolAction(int action) {
             }
             break;
         }
+
+        case ToolAction::SketchLinearPattern:
+            beginSketchPattern(PatternKind::Linear);
+            break;
+        case ToolAction::SketchRadialPattern:
+            beginSketchPattern(PatternKind::Radial);
+            break;
 
         case ToolAction::ResetCamera: m_viewport->getCamera().reset(); break;
         case ToolAction::Measure:
@@ -1940,11 +1949,26 @@ void Application::run() {
             // here, those are only used by the actual begin path.
             m_toolbar->setCanEditDiameter(!m_resizeCylActive &&
                                           detectCylindricalResizeCandidate());
+            m_toolbar->setShowTooltips(m_showToolbarTooltips);
             ToolAction action = m_toolbar->render();
             m_sketchGridStep = m_toolbar->getGridStep();
             m_snapToGrid = m_toolbar->getSnapToGrid();
             if (action != ToolAction::None) {
                 handleToolAction(static_cast<int>(action));
+            }
+
+            // A plugin toolbar action may have requested an interactive op that
+            // needs Application's popup machinery (e.g. PatternPlugin asking for
+            // the Linear / Radial pattern popup). Dispatch any pending request.
+            if (m_pluginContext) {
+                std::string pending = m_pluginContext->takeRequestedInteractiveOp();
+                if (!pending.empty()) {
+                    if      (pending == "LinearPattern") beginPattern(PatternKind::Linear);
+                    else if (pending == "RadialPattern") beginPattern(PatternKind::Radial);
+                    // Unknown ids are silently ignored — future plugins can
+                    // ship their own without modifying Application by routing
+                    // through whatever new dispatcher is added here.
+                }
             }
 
             // Active interactive tool (plugin system)
@@ -1972,6 +1996,8 @@ void Application::run() {
             renderMultiTransformPanel();
             renderResizeCylindricalPanel();
             renderShellPanel();
+            renderPatternPanel();
+            renderSketchPatternPopup();
 
             // Keep measurement results in sync with the current selection,
             // then draw the panel. Cheap when inactive.

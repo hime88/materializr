@@ -467,6 +467,110 @@ void Application::renderViewport() {
             bool camDragging = ImGui::IsMouseDragging(m_orbitButton) ||
                 (m_panButton != m_orbitButton && ImGui::IsMouseDragging(m_panButton));
 
+            // Pattern axis-origin picker. While the user is picking the
+            // axis origin in the radial-pattern popup, we project the mouse
+            // ray onto the world plane PERPENDICULAR to the chosen rotation
+            // axis (so e.g. Z-axis rotation picks on the floor XY plane).
+            // Coordinates snap to the current sketch grid step; the chosen
+            // axis-coordinate is forced to 0 so the axis line passes through
+            // the world origin in that dimension. A yellow dot follows the
+            // cursor; left-click commits the origin and exits pick mode.
+            if (m_patternActive && m_patternPickingOrigin && !camDragging) {
+                ImVec2 mp = ImGui::GetMousePos();
+                ImVec2 wp = ImGui::GetItemRectMin();
+                glm::mat4 invVP = glm::inverse(proj * view);
+                float nx = ((mp.x - wp.x) / contentSize.x) * 2.0f - 1.0f;
+                float ny = 1.0f - ((mp.y - wp.y) / contentSize.y) * 2.0f;
+                glm::vec4 np = invVP * glm::vec4(nx, ny, -1.0f, 1.0f);
+                glm::vec4 fp = invVP * glm::vec4(nx, ny,  1.0f, 1.0f);
+                glm::vec3 ro(np / np.w);
+                glm::vec3 rd = glm::normalize(glm::vec3(fp / fp.w) - ro);
+                // Picker plane = perpendicular to the rotation axis. Use the
+                // user-axis → world mapping so "Z" picks on the floor (XZ in
+                // Y-up world) which is what the user expects.
+                glm::vec3 planeN = userAxisToWorldVec(m_patternAxisIdx);
+                int worldIdx = userAxisToWorldIdx(m_patternAxisIdx);
+                float denom = glm::dot(rd, planeN);
+                if (std::abs(denom) > 1e-6f) {
+                    float t = -glm::dot(ro, planeN) / denom;
+                    if (t > 0.0f) {
+                        glm::vec3 hit = ro + rd * t;
+                        float step = std::max(m_sketchGridStep, 0.01f);
+                        hit.x = std::round(hit.x / step) * step;
+                        hit.y = std::round(hit.y / step) * step;
+                        hit.z = std::round(hit.z / step) * step;
+                        hit[worldIdx] = 0.0f;
+                        // Project the snapped 3D point back to screen for the dot.
+                        glm::vec4 clip = (proj * view) * glm::vec4(hit, 1.0f);
+                        auto* dl = ImGui::GetForegroundDrawList();
+
+                        // Picker plane grid: faint lines at the snap step,
+                        // drawn on the same plane the dot snaps to. Lets the
+                        // user see where the snap points are. Capped at
+                        // 50 lines per direction so a fine snap step doesn't
+                        // produce a wall of pixels.
+                        auto worldToScreen = [&](const glm::vec3& p, ImVec2& out) -> bool {
+                            glm::vec4 c = (proj * view) * glm::vec4(p, 1.0f);
+                            if (c.w <= 0.0f) return false;
+                            glm::vec3 ndc(c / c.w);
+                            out = ImVec2(wp.x + (ndc.x * 0.5f + 0.5f) * contentSize.x,
+                                         wp.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * contentSize.y);
+                            return true;
+                        };
+                        // Two in-plane unit vectors. Choose by which world
+                        // axis is the plane normal so they're axis-aligned.
+                        glm::vec3 axU, axV;
+                        if (worldIdx == 0)      { axU = glm::vec3(0,1,0); axV = glm::vec3(0,0,1); }
+                        else if (worldIdx == 1) { axU = glm::vec3(1,0,0); axV = glm::vec3(0,0,1); }
+                        else                    { axU = glm::vec3(1,0,0); axV = glm::vec3(0,1,0); }
+                        int half = std::min(50, static_cast<int>(50.0f / step));
+                        float halfRange = half * step;
+                        for (int i = -half; i <= half; ++i) {
+                            float t = i * step;
+                            glm::vec3 p0 = t * axU - halfRange * axV;
+                            glm::vec3 p1 = t * axU + halfRange * axV;
+                            glm::vec3 q0 = -halfRange * axU + t * axV;
+                            glm::vec3 q1 =  halfRange * axU + t * axV;
+                            ImVec2 s0, s1, t0, t1;
+                            // Axes through origin pop in yellow; the surrounding
+                            // grid is medium-grey at clearly-visible alpha.
+                            ImU32 col = (i == 0) ? IM_COL32(255, 220, 50, 220)
+                                                 : IM_COL32(180, 180, 180, 160);
+                            float thick = (i == 0) ? 1.5f : 1.0f;
+                            if (worldToScreen(p0, s0) && worldToScreen(p1, s1))
+                                dl->AddLine(s0, s1, col, thick);
+                            if (worldToScreen(q0, t0) && worldToScreen(q1, t1))
+                                dl->AddLine(t0, t1, col, thick);
+                        }
+
+                        if (clip.w > 0.0f) {
+                            glm::vec3 ndc(clip / clip.w);
+                            ImVec2 sp(wp.x + (ndc.x * 0.5f + 0.5f) * contentSize.x,
+                                      wp.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * contentSize.y);
+                            dl->AddCircleFilled(sp, 7.0f, IM_COL32(255, 220, 50, 255));
+                            dl->AddCircle      (sp, 7.0f, IM_COL32(0, 0, 0, 255), 0, 1.5f);
+                            // Coord label next to the dot.
+                            char buf[64];
+                            std::snprintf(buf, sizeof(buf), "(%.2f, %.2f, %.2f)",
+                                          hit.x, hit.y, hit.z);
+                            dl->AddText(ImVec2(sp.x + 10.0f, sp.y - 8.0f),
+                                        IM_COL32(255, 220, 50, 255), buf);
+                        }
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                            m_patternOriginX = hit.x;
+                            m_patternOriginY = hit.y;
+                            m_patternOriginZ = hit.z;
+                            m_patternPickingOrigin = false;
+                            updatePattern();
+                        }
+                    }
+                }
+                // While picking, suppress the rest of the viewport input so
+                // the click doesn't also fire a body pick / gizmo drag.
+                // We do that by returning from this section after handling.
+                // (Caller still does the camera + UI rendering paths.)
+            }
+
             // Interactive extrude drag: left-drag moves distance along normal
             if (m_extruding && !camDragging &&
                 ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -516,8 +620,10 @@ void Application::renderViewport() {
             }
 
             // Gizmo input + Face hover highlighting + picking (suppressed while an
-            // interactive op owns the left-drag: extrude, push/pull, fillet/chamfer).
-            if (!m_inSketchMode && !m_extruding && !m_pushPullActive && !m_edgeOpActive) {
+            // interactive op owns the left-drag: extrude, push/pull, fillet/chamfer,
+            // or the pattern axis-origin picker).
+            if (!m_inSketchMode && !m_extruding && !m_pushPullActive && !m_edgeOpActive &&
+                !(m_patternActive && m_patternPickingOrigin)) {
                 ImVec2 mousePos = ImGui::GetMousePos();
                 ImVec2 winPos = ImGui::GetItemRectMin();
                 float localX = mousePos.x - winPos.x;

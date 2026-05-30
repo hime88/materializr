@@ -3,6 +3,65 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.3.1] — 2026-05-30
+
+Toolbar polish + Linear / Radial Pattern popups + sketch-mode patterns +
+Z-up axis labels.
+
+### Added
+
+- **Toolbar tooltips** on every button (built-in tools and plugin
+  contributions). Hover for a one-line description. Toggle via
+  Settings → General → Interface → Show toolbar tooltips.
+- **Linear Pattern popup** (body): pick an axis (X / Y / Z), count, and
+  spacing, with a slider that lives-previews each change.
+- **Radial Pattern popup** (body): pick an axis, count, total angle, and
+  the world-space origin of the rotation axis — interactively by clicking
+  a *Pick axis origin in viewport* button which drops a yellow snap-to-
+  grid dot on the picker plane (perpendicular to the chosen rotation
+  axis). The picker plane is overlaid with a faint grid so the snap
+  points are visible.
+- **Sketch-mode Linear / Radial patterns.** Same popup style as body
+  patterns, without the axis radio (the sketch is on a fixed plane).
+  Linear copies along sketch +X by a user-set spacing; Radial rotates
+  around a user-supplied sketch-coords (X, Y) origin. Undoable via the
+  normal sketch-edit op.
+- **Z-up axis convention** in user-facing axis radios (Pattern, Split):
+  X = left / right, Y = forward / back, Z = up. The world stays Y-up
+  internally; only labels swap.
+
+### Fixed
+
+- **Items-panel visibility, scroll jitter, popup focus** (already in
+  0.3.0; called out again here since users reported related cases).
+- **Split X / Y / Z axes** now match the Z-up label convention. *(Note:
+  the 0.3.0 ad-hoc X↔Z swap is superseded by the proper user-axis →
+  world-axis mapping in 0.3.1.)*
+- **Plugin button visibility under face selection.** Split, Duplicate,
+  Linear Pattern, Radial Pattern no longer appear when a face is
+  selected — those are whole-body operations and would just confuse.
+  Move / Rotate / Scale / Mirror still appear (they're useful with a
+  face picked: they move the parent body).
+
+### Changed
+
+- **Plugin contribution struct** grows an optional `tooltip` string.
+  Existing plugins compile unchanged; new plugin buttons opt in by
+  passing a 7th brace-init field.
+- **PluginContext** gains `requestInteractiveOp(name)` /
+  `takeRequestedInteractiveOp()` — a small request channel a plugin
+  can use to defer to Application's popup machinery. Currently used
+  by PatternPlugin to hand off the Linear / Radial button to the
+  interactive popup; future plugins that need viewport + UI plumbing
+  can reuse the same hook.
+
+### Internal
+
+- New `Application::userAxisToWorldVec()` / `userAxisToWorldIdx()`
+  helpers centralise the Z-up label → world-axis remap.
+- `PatternOp::setRadialOrigin()` lets the rotation axis pass through
+  an arbitrary world-space point instead of the implicit (0, 0, 0).
+
 ## [0.3.0] — 2026-05-29
 
 Geometry-correctness pass on the cylindrical-resize op and the push/pull

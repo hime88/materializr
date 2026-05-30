@@ -14,7 +14,9 @@ REGISTER_PLUGIN(ConstructionPlane, [](materializr::PluginContext& ctx) {
             op->setName("Custom Plane");
             ctx.history().pushOperation(std::move(op), ctx.document());
             ctx.markMeshesDirty();
-        }, nullptr});
+        }, nullptr,
+        "Add a new flat reference plane (default XY at the origin). Edit its "
+        "orientation / offset in the History panel; use it as a sketch target."});
 
     ctx.registerCommand({"New Construction Plane", "",
         [](materializr::PluginContext& ctx) {

@@ -39,15 +39,18 @@ REGISTER_PLUGIN(Boolean, [](materializr::PluginContext& ctx) {
     ctx.registerToolbarButton({"Union", "Boolean",
         materializr::SelectionContext::MultipleBodies, 100,
         [](materializr::PluginContext& ctx) { doBooleanOp(ctx, BooleanMode::Union); },
-        nullptr});
+        nullptr,
+        "Merge the selected bodies into one (A ∪ B). Overlapping volumes fuse."});
 
     ctx.registerToolbarButton({"Subtract", "Boolean",
         materializr::SelectionContext::MultipleBodies, 101,
         [](materializr::PluginContext& ctx) { doBooleanOp(ctx, BooleanMode::Subtract); },
-        nullptr});
+        nullptr,
+        "Cut the second selected body out of the first (A − B)."});
 
     ctx.registerToolbarButton({"Intersect", "Boolean",
         materializr::SelectionContext::MultipleBodies, 102,
         [](materializr::PluginContext& ctx) { doBooleanOp(ctx, BooleanMode::Intersect); },
-        nullptr});
+        nullptr,
+        "Keep only the volume the selected bodies share (A ∩ B)."});
 })

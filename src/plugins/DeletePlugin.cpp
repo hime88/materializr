@@ -26,7 +26,8 @@ REGISTER_PLUGIN(Delete, [](materializr::PluginContext& ctx) {
             }
             ctx.selection().clear();
             ctx.markMeshesDirty();
-        }, nullptr});
+        }, nullptr,
+        "Delete the selected body / bodies. Undoable from the History panel."});
 
     ctx.registerCommand({"Delete Selected", "Delete",
         [](materializr::PluginContext& ctx) {

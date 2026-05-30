@@ -38,6 +38,12 @@ void PatternOp::setRadialAxis(double ax, double ay, double az) {
     m_axisZ = az;
 }
 
+void PatternOp::setRadialOrigin(double ox, double oy, double oz) {
+    m_originX = ox;
+    m_originY = oy;
+    m_originZ = oz;
+}
+
 void PatternOp::setTotalAngle(double deg) {
     m_totalAngle = deg;
 }
@@ -70,7 +76,8 @@ bool PatternOp::execute(Document& doc) {
                 // Radial: rotate by i * (totalAngle / count) around axis
                 double stepAngle = (m_totalAngle / m_count) * i;
                 double stepAngleRad = stepAngle * M_PI / 180.0;
-                gp_Ax1 axis(gp_Pnt(0, 0, 0), gp_Dir(m_axisX, m_axisY, m_axisZ));
+                gp_Ax1 axis(gp_Pnt(m_originX, m_originY, m_originZ),
+                            gp_Dir(m_axisX, m_axisY, m_axisZ));
                 trsf.SetRotation(axis, stepAngleRad);
             }
 

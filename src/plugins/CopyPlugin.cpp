@@ -20,5 +20,6 @@ REGISTER_PLUGIN(Copy, [](materializr::PluginContext& ctx) {
                     ctx.markMeshesDirty();
                 }
             }
-        }, nullptr});
+        }, nullptr,
+        "Add an exact copy of the selected body on top of itself. Use Move to reposition."});
 })

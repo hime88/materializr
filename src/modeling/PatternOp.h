@@ -18,6 +18,10 @@ public:
     void setCount(int n);
     void setLinearSpacing(double x, double y, double z);
     void setRadialAxis(double ax, double ay, double az);
+    // World-space point that the radial axis passes through. Default is the
+    // origin; setting it elsewhere shifts the rotation centre so the body's
+    // copies orbit around that point instead of (0,0,0).
+    void setRadialOrigin(double ox, double oy, double oz);
     void setTotalAngle(double deg);
 
     // Getters
@@ -48,6 +52,9 @@ private:
     double m_axisX = 0.0;
     double m_axisY = 1.0;
     double m_axisZ = 0.0;
+    double m_originX = 0.0;
+    double m_originY = 0.0;
+    double m_originZ = 0.0;
     double m_totalAngle = 360.0;
 
     std::vector<int> m_createdBodyIds;

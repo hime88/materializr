@@ -46,15 +46,20 @@ void doSplit(materializr::PluginContext& ctx, const gp_Dir& normal) {
 } // namespace
 
 REGISTER_PLUGIN(SplitBody, [](materializr::PluginContext& ctx) {
-    // One button per axis. "Split X" cuts with a plane perpendicular to X (i.e.
-    // separates the body into +X / -X halves), and likewise for Y and Z.
+    // Axis labels follow user / 3D-printer convention (X = left/right,
+    // Y = forward/back, Z = up). Materializr's world is Y-up internally,
+    // so user-Y → world Z and user-Z → world Y. Hand-mirroring the helper
+    // in Application::userAxisToWorldVec since plugins can't reach it.
     ctx.registerToolbarButton({"Split X", "Feature",
         materializr::SelectionContext::HasBodies, 502,
-        [](materializr::PluginContext& ctx) { doSplit(ctx, gp_Dir(1, 0, 0)); }, nullptr});
+        [](materializr::PluginContext& ctx) { doSplit(ctx, gp_Dir(1, 0, 0)); }, nullptr,
+        "Cut the selected body in half along the X axis (left / right halves)."});
     ctx.registerToolbarButton({"Split Y", "Feature",
         materializr::SelectionContext::HasBodies, 503,
-        [](materializr::PluginContext& ctx) { doSplit(ctx, gp_Dir(0, 1, 0)); }, nullptr});
+        [](materializr::PluginContext& ctx) { doSplit(ctx, gp_Dir(0, 0, 1)); }, nullptr,
+        "Cut the selected body in half along the Y axis (front / back halves)."});
     ctx.registerToolbarButton({"Split Z", "Feature",
         materializr::SelectionContext::HasBodies, 504,
-        [](materializr::PluginContext& ctx) { doSplit(ctx, gp_Dir(0, 0, 1)); }, nullptr});
+        [](materializr::PluginContext& ctx) { doSplit(ctx, gp_Dir(0, 1, 0)); }, nullptr,
+        "Cut the selected body in half along the Z axis (top / bottom halves)."});
 })

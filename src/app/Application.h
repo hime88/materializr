@@ -301,6 +301,7 @@ private:
     int   m_msaaSamples = 4;        // viewport anti-aliasing: 0=off, 2, 4, 8
     int   m_meshQuality = 1;        // tessellation density: 0=Low..3=Ultra
     float m_selectionLineWidth = 3.0f; // px width of highlighted edges/body outlines
+    bool  m_showToolbarTooltips = true; // hover description on each toolbar button
     // Apply m_light*/m_msaaSamples/m_selectionLineWidth to the renderer + viewport.
     void applyRenderingSettings();
     // Map m_meshQuality to OCCT tessellation parameters.
@@ -450,6 +451,65 @@ private:
     void commitInteractiveShell();
     void cancelInteractiveShell();
     void renderShellPanel();
+
+    // Interactive Pattern (Linear / Radial). Same live-preview-via-history idiom
+    // as push/pull and resize: each parameter change replays an updated PatternOp,
+    // commit leaves the op in history at the user's values, cancel undoes it.
+    enum class PatternKind { Linear, Radial };
+    bool m_patternActive = false;
+    PatternKind m_patternKind = PatternKind::Linear;
+    int m_patternBodyId = -1;
+    int m_patternAxisIdx = 0; // 0=X, 1=Y, 2=Z
+    int m_patternCount = 3;
+    float m_patternDistance = 5.0f; // linear: spacing in mm along chosen axis
+    float m_patternAngle = 360.0f;   // radial: total sweep in degrees
+    float m_patternOriginX = 0.0f, m_patternOriginY = 0.0f, m_patternOriginZ = 0.0f;
+    bool m_patternPickingOrigin = false; // viewport is in axis-origin-pick mode
+    bool m_patternPreviewPushed = false; // true while a preview PatternOp is on history
+    bool m_patternInputFocus = true;
+    char m_patternCountBuf[16] = "3";
+    char m_patternDistanceBuf[32] = "5.0";
+    char m_patternAngleBuf[32] = "360.0";
+
+    void beginPattern(PatternKind kind);
+    void updatePattern();      // (re-)push a preview PatternOp from current state
+    void commitPattern();      // leave preview as the final op + clean up state
+    void cancelPattern();      // undo preview if any + clean up state
+    void renderPatternPanel(); // ImGui popup contents
+
+    // Sketch-mode Linear / Radial patterns. Simpler than body patterns: the
+    // sketch is on a fixed 2D plane so there's no axis radio. Linear copies
+    // along the sketch's +X axis by `m_sketchPatternDistance` per step;
+    // radial rotates around the user-supplied (x, y) origin in sketch coords
+    // for a total sweep of `m_sketchPatternAngle` degrees. The popup is a
+    // small modal — no live preview. On apply we run an inline geometry copy
+    // similar to SketchCopy / Mirror and push a single SketchEditOp.
+    bool m_sketchPatternActive = false;
+    PatternKind m_sketchPatternKind = PatternKind::Linear;
+    int  m_sketchPatternCount = 3;
+    float m_sketchPatternDistance = 5.0f;
+    float m_sketchPatternAngle = 360.0f;
+    float m_sketchPatternOriginX = 0.0f;
+    float m_sketchPatternOriginY = 0.0f;
+    bool m_sketchPatternFocusInput = false;
+    char m_sketchPatternCountBuf[16]    = "3";
+    char m_sketchPatternDistanceBuf[32] = "5.0";
+    char m_sketchPatternAngleBuf[32]    = "360.0";
+    char m_sketchPatternOXBuf[32] = "0.0";
+    char m_sketchPatternOYBuf[32] = "0.0";
+
+    void beginSketchPattern(PatternKind kind);
+    void applySketchPattern(); // perform the geometry copy + push SketchEditOp
+    void renderSketchPatternPopup();
+
+    // User-facing axis convention follows 3D-printer / Z-up: X = side-to-side,
+    // Y = forward-back, Z = up. Materializr's world stays Y-up internally, so
+    // the user's axis index translates to a world direction via this helper
+    // (user X → world X, user Y → world Z, user Z → world Y). Also returns
+    // which world-axis index (0/1/2 = world X/Y/Z) the user index resolves to,
+    // useful for coordinate-component access like `pos[worldIdx] = ...`.
+    static glm::vec3 userAxisToWorldVec(int userIdx);
+    static int       userAxisToWorldIdx(int userIdx);
 
     // Interactive extrude state
     bool m_extruding = false;

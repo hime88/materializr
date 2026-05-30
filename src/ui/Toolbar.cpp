@@ -12,6 +12,13 @@ namespace materializr {
 
 Toolbar::Toolbar() = default;
 
+// Tooltip helper. ImGui::SetItemTooltip auto-handles the show delay + hovered
+// check, so we just gate on the user's "show toolbar tooltips" preference.
+// Called immediately after each button.
+void Toolbar::tip(const char* text) const {
+    if (m_showTooltips) ImGui::SetItemTooltip("%s", text);
+}
+
 void Toolbar::setSelectionManager(const SelectionManager* sel) {
     m_selection = sel;
 }
@@ -32,7 +39,11 @@ ToolAction Toolbar::render() {
     } else if (m_selection->hasSelectedFaces()) {
         action = renderFaceTools();
         if (action == ToolAction::None) {
-            action = renderBodyTools();
+            // Body tools (gizmos + Mirror) stay available when a face is
+            // selected so the user can move/rotate/scale the whole body, but
+            // the whole-body plugin contributions (Split / Duplicate / Pattern)
+            // are skipped — they don't apply in face-selection context.
+            action = renderBodyTools(/*includePluginButtons=*/false);
         }
     } else if (m_selection->hasSelectedBodies()) {
         action = renderBodyTools();
@@ -77,6 +88,7 @@ void Toolbar::renderPluginButtons(int contextMask) {
                 c.action(*m_pluginCtx);
             }
         }
+        if (!c.tooltip.empty()) tip(c.tooltip.c_str());
         ImGui::PopID();
     }
 }
@@ -100,13 +112,21 @@ ToolAction Toolbar::renderSketchTools() {
     ImGui::Separator();
 
     if (ImGui::Button("Select / Move", ImVec2(-1, 30))) action = ToolAction::SelectSketch;
+    tip("Pick sketch elements (points, lines, regions). Drag selection to move.");
     if (ImGui::Button("Line", ImVec2(-1, 30)))      action = ToolAction::Line;
+    tip("Draw straight line segments. Click to add vertices, Esc to finish.");
     if (ImGui::Button("Circle", ImVec2(-1, 30)))    action = ToolAction::Circle;
+    tip("Draw a circle: click centre, drag to radius.");
     if (ImGui::Button("Rectangle", ImVec2(-1, 30))) action = ToolAction::Rectangle;
+    tip("Draw an axis-aligned rectangle: click one corner, drag to the opposite.");
     if (ImGui::Button("Arc", ImVec2(-1, 30)))       action = ToolAction::Arc;
+    tip("Three-point arc: click start, end, then a point on the curve.");
     if (ImGui::Button("Spline", ImVec2(-1, 30)))    action = ToolAction::Spline;
+    tip("Multi-point spline. Click control points, Enter to finish.");
     if (ImGui::Button("Polygon", ImVec2(-1, 30)))   action = ToolAction::Polygon;
+    tip("Regular polygon: click centre, drag to size. Side count in properties.");
     if (ImGui::Button("Trim", ImVec2(-1, 30)))      action = ToolAction::Trim;
+    tip("Trim a sketch segment at the nearest intersections.");
 
     // Transforms operate on the current sketch-element selection (Select tool +
     // click/Ctrl+click on points and lines). No-op if nothing is selected.
@@ -114,22 +134,31 @@ ToolAction Toolbar::renderSketchTools() {
     // so it doesn't get its own button.
     ImGui::Separator();
     if (ImGui::Button("Copy",   ImVec2(-1, 28))) action = ToolAction::SketchCopy;
+    tip("Duplicate the selected sketch elements at an offset.");
     if (ImGui::Button("Mirror", ImVec2(-1, 28))) action = ToolAction::SketchMirror;
+    tip("Mirror selected elements across a sketch line you'll pick next.");
+    if (ImGui::Button("Linear Pattern", ImVec2(-1, 28))) action = ToolAction::SketchLinearPattern;
+    tip("Copy the selected sketch elements N times along the sketch X axis.");
+    if (ImGui::Button("Radial Pattern", ImVec2(-1, 28))) action = ToolAction::SketchRadialPattern;
+    tip("Copy the selected sketch elements around an origin you specify.");
 
     ImGui::Separator();
     if (ImGui::Button("Measure", ImVec2(-1, 28))) action = ToolAction::Measure;
+    tip("Measure distance / length between picked sketch elements.");
 
     if (!m_cameraOrtho) {
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.85f, 1.0f));
         if (ImGui::Button("Look at Sketch", ImVec2(-1, 30)))
             action = ToolAction::LookAtSketch;
+        tip("Snap the camera to look straight down the sketch plane (orthographic).");
         ImGui::PopStyleColor();
     }
 
     ImGui::Separator();
     if (ImGui::Button("Finish Sketch", ImVec2(-1, 30)))
         action = ToolAction::FinishSketch;
+    tip("Leave sketch mode and return to the 3D viewport.");
 
     // Plugin buttons for InSketchMode context
     renderPluginButtons(1 << static_cast<int>(SelectionContext::InSketchMode));
@@ -144,13 +173,17 @@ ToolAction Toolbar::renderNoSelectionTools() {
     ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Create");
     ImGui::Separator();
     if (ImGui::Button("Sketch on XY", ImVec2(-1, 30))) action = ToolAction::StartSketchXY;
+    tip("Start a new sketch on the world XY (floor) plane.");
     if (ImGui::Button("Sketch on XZ", ImVec2(-1, 30))) action = ToolAction::StartSketchXZ;
+    tip("Start a new sketch on the world XZ (front) plane.");
     if (ImGui::Button("Sketch on YZ", ImVec2(-1, 30))) action = ToolAction::StartSketchYZ;
+    tip("Start a new sketch on the world YZ (side) plane.");
 
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Inspect");
     ImGui::Separator();
     if (ImGui::Button("Measure", ImVec2(-1, 30))) action = ToolAction::Measure;
+    tip("Measure distance, length, or angle between picked features.");
 
     // Plugin buttons: NoSelection + Always
     int mask = (1 << static_cast<int>(SelectionContext::NoSelection))
@@ -160,7 +193,7 @@ ToolAction Toolbar::renderNoSelectionTools() {
     return action;
 }
 
-ToolAction Toolbar::renderBodyTools() {
+ToolAction Toolbar::renderBodyTools(bool includePluginButtons) {
     ToolAction action = ToolAction::None;
 
     ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Transform");
@@ -169,11 +202,15 @@ ToolAction Toolbar::renderBodyTools() {
     // Gizmo modes side by side, then Mirror.
     float third = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3.0f;
     if (ImGui::Button("Move", ImVec2(third, 30)))   action = ToolAction::Move;
+    tip("Show the translate gizmo. Drag axes / planes to move. (W)");
     ImGui::SameLine();
     if (ImGui::Button("Rotate", ImVec2(third, 30))) action = ToolAction::Rotate;
+    tip("Show the rotate gizmo. Drag rings to rotate around each axis. (E)");
     ImGui::SameLine();
     if (ImGui::Button("Scale", ImVec2(third, 30)))  action = ToolAction::Scale;
+    tip("Show the scale gizmo. Drag handles to resize. (R)");
     if (ImGui::Button("Mirror", ImVec2(-1, 30)))    action = ToolAction::Mirror;
+    tip("Mirror the selected bodies across a plane you pick next.");
 
     ImGui::Checkbox("Snap to grid", &m_snapToGrid);
     const float gridSteps[] = { 0.1f, 0.5f, 1.0f, 10.0f };
@@ -193,11 +230,13 @@ ToolAction Toolbar::renderBodyTools() {
     // least two bodies are actually selected. Previously OR-ing them both
     // unconditionally meant boolean ops appeared with a single body picked,
     // which can't do anything.
-    int mask = (1 << static_cast<int>(SelectionContext::HasBodies));
-    if (m_selection && m_selection->selectedBodyCount() >= 2) {
-        mask |= (1 << static_cast<int>(SelectionContext::MultipleBodies));
+    if (includePluginButtons) {
+        int mask = (1 << static_cast<int>(SelectionContext::HasBodies));
+        if (m_selection && m_selection->selectedBodyCount() >= 2) {
+            mask |= (1 << static_cast<int>(SelectionContext::MultipleBodies));
+        }
+        renderPluginButtons(mask);
     }
-    renderPluginButtons(mask);
 
     return action;
 }
@@ -210,19 +249,24 @@ ToolAction Toolbar::renderFaceTools() {
 
     if (ImGui::Button("Sketch on Face", ImVec2(-1, 30)))
         action = ToolAction::SketchOnFace;
+    tip("Start a new sketch lying on the picked face.");
     if (ImGui::Button("Push / Pull", ImVec2(-1, 30)))
         action = ToolAction::PushPull;
+    tip("Drag the face along its normal to extrude (+) or cut (−) into the body.");
     // Extrude From a face → make a new body that's the face's silhouette
     // swept along its normal. Push/Pull modifies the source body; Extrude
     // always creates a separate body. Same ToolAction the sketch toolbar
     // uses; the handler dispatches by selection type.
     if (ImGui::Button("Extrude From", ImVec2(-1, 30)))
         action = ToolAction::ExtrudeSketch;
+    tip("Make a NEW body by extruding this face's silhouette (source body unchanged).");
     if (ImGui::Button("Shell", ImVec2(-1, 30)))
         action = ToolAction::Shell;
+    tip("Hollow the body, removing the picked face. Wall thickness in the popup.");
     if (m_canEditDiameter &&
         ImGui::Button("Edit Diameter", ImVec2(-1, 30)))
         action = ToolAction::EditDiameter;
+    tip("Resize a cylindrical hole / pin to an exact diameter.");
 
     // "Edit Fillet / Chamfer" appears only when the picked face was actually
     // produced by a fillet or chamfer op. We ask each Operation via
@@ -245,6 +289,9 @@ ToolAction Toolbar::renderFaceTools() {
                                                   : nullptr;
                     if (label && ImGui::Button(label, ImVec2(-1, 30)))
                         action = ToolAction::EditFilletChamfer;
+                    tip(op->typeId() == "fillet"
+                            ? "Change this fillet's radius without re-picking edges."
+                            : "Change this chamfer's distance without re-picking edges.");
                     break;
                 }
             }
@@ -267,10 +314,13 @@ ToolAction Toolbar::renderSketchSelectedTools() {
 
     if (ImGui::Button("Edit Sketch", ImVec2(-1, 30)))
         action = ToolAction::EditSketch;
+    tip("Re-enter sketch mode to revise this sketch's geometry.");
     if (ImGui::Button("Extrude From", ImVec2(-1, 30)))
         action = ToolAction::ExtrudeSketch;
+    tip("Make a new body by extruding the sketch's closed regions.");
     if (ImGui::Button("Subtract Sketch", ImVec2(-1, 30)))
         action = ToolAction::SubtractSketch;
+    tip("Cut the extruded regions out of the body the sketch was drawn on.");
     ImGui::TextWrapped("Subtract cuts the extruded profile into the body the "
                        "sketch was drawn on (preview shown in red).");
 
@@ -293,13 +343,13 @@ ToolAction Toolbar::renderSketchRegionTools() {
     // drag to extrude/cut) — same as a body face.
     if (ImGui::Button("Push / Pull", ImVec2(-1, 30)))
         action = ToolAction::PushPull;
+    tip("Drag the arrow to extrude this region into a body, or cut it into the parent.");
 
     // Subtract: cut this region out of the body the sketch sits on, with a red
     // preview of the removed volume. Disabled when the sketch has no source body.
     if (ImGui::Button("Subtract", ImVec2(-1, 30)))
         action = ToolAction::SubtractSketch;
-    ImGui::SetItemTooltip("Cut this region into the body the sketch was drawn on "
-                          "(preview shown in red).");
+    tip("Cut this region into the body the sketch was drawn on (preview in red).");
 
     // Any remaining HasSketchRegions plugin buttons.
     renderPluginButtons(1 << static_cast<int>(SelectionContext::HasSketchRegions));
@@ -307,6 +357,7 @@ ToolAction Toolbar::renderSketchRegionTools() {
     // Edit the sketch this region belongs to — re-enter sketch mode to revise it.
     if (ImGui::Button("Edit Sketch", ImVec2(-1, 30)))
         action = ToolAction::EditSketch;
+    tip("Re-enter sketch mode to revise this region's parent sketch.");
 
     ImGui::Spacing();
     ImGui::TextWrapped("Drag positive distance to extrude, negative to cut into the body the sketch sits on.");
@@ -320,10 +371,13 @@ ToolAction Toolbar::renderEdgeTools() {
     ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Edge Ops");
     ImGui::Separator();
     if (ImGui::Button("Fillet", ImVec2(-1, 30)))  action = ToolAction::Fillet;
+    tip("Round the picked edge(s). Set radius in the popup.");
     if (ImGui::Button("Chamfer", ImVec2(-1, 30))) action = ToolAction::Chamfer;
+    tip("Bevel the picked edge(s). Set distance in the popup.");
     if (m_canEditDiameter &&
         ImGui::Button("Edit Diameter", ImVec2(-1, 30)))
         action = ToolAction::EditDiameter;
+    tip("Resize the cylindrical face this edge belongs to.");
 
     // Plugin buttons for HasEdges context
     renderPluginButtons(1 << static_cast<int>(SelectionContext::HasEdges));

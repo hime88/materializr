@@ -18,6 +18,16 @@ void PluginContext::markMeshesDirty() {
     if (m_meshesDirtyFlag) *m_meshesDirtyFlag = true;
 }
 
+void PluginContext::requestInteractiveOp(const std::string& name) {
+    m_pendingInteractiveOp = name;
+}
+
+std::string PluginContext::takeRequestedInteractiveOp() {
+    std::string taken;
+    taken.swap(m_pendingInteractiveOp);
+    return taken;
+}
+
 void PluginContext::registerToolbarButton(ToolbarContribution contrib) {
     PluginRegistry::instance().toolbarContributions().push_back(std::move(contrib));
 }

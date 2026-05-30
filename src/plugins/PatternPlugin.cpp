@@ -7,36 +7,24 @@
 #include <cstdio>
 
 REGISTER_PLUGIN(Pattern, [](materializr::PluginContext& ctx) {
+    // Both buttons hand off to Application's interactive popup, which lets the
+    // user pick axis / count / spacing (linear) or axis / count / angle / origin
+    // (radial) with a live preview, then confirm or cancel. The actual op is
+    // pushed onto history at confirm time.
     ctx.registerToolbarButton({"Linear Pattern", "Pattern",
         materializr::SelectionContext::HasBodies, 300,
         [](materializr::PluginContext& ctx) {
-            const auto& sel = ctx.selection().getSelection();
-            if (!sel.empty() && sel[0].bodyId >= 0) {
-                auto op = std::make_unique<PatternOp>();
-                op->setBody(sel[0].bodyId);
-                op->setType(PatternType::Linear);
-                op->setCount(3);
-                op->setLinearSpacing(5.0, 0.0, 0.0);
-                if (ctx.history().pushOperation(std::move(op), ctx.document())) {
-                    ctx.markMeshesDirty();
-                }
-            }
-        }, nullptr});
+            ctx.requestInteractiveOp("LinearPattern");
+        }, nullptr,
+        "Open a popup to copy the selected body along an axis a fixed distance "
+        "apart. Pick X / Y / Z, count, and spacing with a live preview."});
 
     ctx.registerToolbarButton({"Radial Pattern", "Pattern",
         materializr::SelectionContext::HasBodies, 301,
         [](materializr::PluginContext& ctx) {
-            const auto& sel = ctx.selection().getSelection();
-            if (!sel.empty() && sel[0].bodyId >= 0) {
-                auto op = std::make_unique<PatternOp>();
-                op->setBody(sel[0].bodyId);
-                op->setType(PatternType::Radial);
-                op->setCount(6);
-                op->setRadialAxis(0.0, 0.0, 1.0);
-                op->setTotalAngle(360.0);
-                if (ctx.history().pushOperation(std::move(op), ctx.document())) {
-                    ctx.markMeshesDirty();
-                }
-            }
-        }, nullptr});
+            ctx.requestInteractiveOp("RadialPattern");
+        }, nullptr,
+        "Open a popup to copy the selected body around an axis. Pick the axis "
+        "(X / Y / Z), count, total angle, and click in the viewport to pick the "
+        "axis origin with grid snapping."});
 })

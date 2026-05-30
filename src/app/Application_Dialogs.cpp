@@ -121,6 +121,14 @@ void Application::renderSettings() {
                     }
 
                     ImGui::Spacing();
+                    ImGui::SeparatorText("Interface");
+                    if (ImGui::Checkbox("Show toolbar tooltips", &m_showToolbarTooltips)) {
+                        changed = true;
+                    }
+                    ImGui::TextWrapped("Hover any toolbar button for a short description of what it does. "
+                                       "Turn off if you already know the tools and find the pop-ups distracting.");
+
+                    ImGui::Spacing();
                     ImGui::SeparatorText("Autosave");
                     if (ImGui::Checkbox("Autosave saved projects", &m_autosaveEnabled)) changed = true;
                     ImGui::TextWrapped("Periodically re-saves the project once it has been "
@@ -794,6 +802,200 @@ void Application::renderInteractionsPanel() {
     row("Dimension", "Type value + Enter");
     ImGui::SeparatorText("General");
     row("Undo / Redo", "Ctrl+Z / Ctrl+Y");
+    ImGui::End();
+}
+
+void Application::renderSketchPatternPopup() {
+    if (!m_sketchPatternActive) return;
+
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 280,
+                                    ImGui::GetWindowPos().y + 50),
+                            ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_Appearing);
+    const char* title = (m_sketchPatternKind == PatternKind::Linear)
+                            ? "Sketch Linear Pattern"
+                            : "Sketch Radial Pattern";
+    ImGui::Begin(title, nullptr,
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_AlwaysAutoResize);
+
+    if (m_sketchPatternKind == PatternKind::Linear) {
+        ImGui::TextDisabled("Copies along the sketch +X axis.");
+    } else {
+        ImGui::TextDisabled("Rotates copies around the (x, y) origin in sketch coords.");
+    }
+    ImGui::Separator();
+
+    if (m_sketchPatternFocusInput) {
+        ImGui::SetKeyboardFocusHere();
+        m_sketchPatternFocusInput = false;
+    }
+    ImGui::Text("Copies"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    ImGui::InputText("##spcount", m_sketchPatternCountBuf,
+                     sizeof(m_sketchPatternCountBuf),
+                     ImGuiInputTextFlags_CharsDecimal);
+    m_sketchPatternCount = std::max(2, std::atoi(m_sketchPatternCountBuf));
+
+    if (m_sketchPatternKind == PatternKind::Linear) {
+        ImGui::Text("Spacing"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputText("##spdist", m_sketchPatternDistanceBuf,
+                         sizeof(m_sketchPatternDistanceBuf),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::SameLine(); ImGui::Text("mm");
+        m_sketchPatternDistance = static_cast<float>(std::atof(m_sketchPatternDistanceBuf));
+    } else {
+        ImGui::Text("Sweep"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputText("##spangle", m_sketchPatternAngleBuf,
+                         sizeof(m_sketchPatternAngleBuf),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::SameLine(); ImGui::Text("°");
+        m_sketchPatternAngle = static_cast<float>(std::atof(m_sketchPatternAngleBuf));
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Origin (sketch X, Y)");
+        ImGui::SetNextItemWidth(110);
+        ImGui::InputText("X##spox", m_sketchPatternOXBuf, sizeof(m_sketchPatternOXBuf),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::InputText("Y##spoy", m_sketchPatternOYBuf, sizeof(m_sketchPatternOYBuf),
+                         ImGuiInputTextFlags_CharsDecimal);
+        m_sketchPatternOriginX = static_cast<float>(std::atof(m_sketchPatternOXBuf));
+        m_sketchPatternOriginY = static_cast<float>(std::atof(m_sketchPatternOYBuf));
+    }
+
+    ImGui::Separator();
+    bool apply  = ImGui::Button("Apply",  ImVec2(120, 0));
+    ImGui::SameLine();
+    bool cancel = ImGui::Button("Cancel", ImVec2(120, 0));
+    bool esc    = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+
+    if (apply) {
+        applySketchPattern(); // also sets m_sketchPatternActive = false
+    } else if (cancel || esc) {
+        m_sketchPatternActive = false;
+    }
+    ImGui::End();
+}
+
+void Application::renderPatternPanel() {
+    if (!m_patternActive) return;
+
+    // Same anchor-then-drag pattern as Edit Diameter — first appearance only,
+    // then the user can move the popup somewhere convenient.
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 280,
+                                    ImGui::GetWindowPos().y + 50),
+                            ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_Appearing);
+    const char* title = (m_patternKind == PatternKind::Linear)
+                            ? "Linear Pattern"
+                            : "Radial Pattern";
+    ImGui::Begin(title, nullptr,
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_AlwaysAutoResize);
+
+    // ---- Axis radio buttons (X / Y / Z) ----
+    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s",
+                       m_patternKind == PatternKind::Linear ? "Direction" : "Rotation axis");
+    const char* labels[] = { "X", "Y", "Z" };
+    bool axisChanged = false;
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) ImGui::SameLine();
+        if (ImGui::RadioButton(labels[i], m_patternAxisIdx == i)) {
+            m_patternAxisIdx = i;
+            axisChanged = true;
+        }
+    }
+    ImGui::Separator();
+
+    // ---- Count ----
+    ImGui::Text("Copies"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    if (m_patternInputFocus) {
+        ImGui::SetKeyboardFocusHere();
+        m_patternInputFocus = false;
+    }
+    bool countEnter = ImGui::InputText("##patcount", m_patternCountBuf,
+                                       sizeof(m_patternCountBuf),
+                                       ImGuiInputTextFlags_EnterReturnsTrue |
+                                       ImGuiInputTextFlags_CharsDecimal);
+    int parsedCount = std::max(2, std::atoi(m_patternCountBuf));
+    bool countChanged = parsedCount != m_patternCount;
+    if (countChanged) m_patternCount = parsedCount;
+
+    // ---- Distance (linear) or Angle (radial) ----
+    bool distChanged = false;
+    if (m_patternKind == PatternKind::Linear) {
+        ImGui::Text("Spacing"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputText("##patdist", m_patternDistanceBuf,
+                         sizeof(m_patternDistanceBuf),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::SameLine(); ImGui::Text("mm");
+        float parsed = static_cast<float>(std::atof(m_patternDistanceBuf));
+        if (std::abs(parsed - m_patternDistance) > 1e-4f) {
+            m_patternDistance = parsed; distChanged = true;
+        }
+        // Slider that mirrors the text field — quick sweep without retyping.
+        if (ImGui::SliderFloat("##patdistslider", &m_patternDistance, 0.1f, 100.0f, "%.2f mm")) {
+            std::snprintf(m_patternDistanceBuf, sizeof(m_patternDistanceBuf),
+                          "%.2f", m_patternDistance);
+            distChanged = true;
+        }
+    } else {
+        ImGui::Text("Sweep"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputText("##patangle", m_patternAngleBuf,
+                         sizeof(m_patternAngleBuf),
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::SameLine(); ImGui::Text("°");
+        float parsed = static_cast<float>(std::atof(m_patternAngleBuf));
+        if (std::abs(parsed - m_patternAngle) > 1e-3f) {
+            m_patternAngle = parsed; distChanged = true;
+        }
+        if (ImGui::SliderFloat("##patangleslider", &m_patternAngle, 5.0f, 360.0f, "%.1f°")) {
+            std::snprintf(m_patternAngleBuf, sizeof(m_patternAngleBuf),
+                          "%.1f", m_patternAngle);
+            distChanged = true;
+        }
+
+        // ---- Axis origin (radial only) ----
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Axis origin");
+        ImGui::Text("(%.2f, %.2f, %.2f)", m_patternOriginX, m_patternOriginY, m_patternOriginZ);
+        if (m_patternPickingOrigin) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                               "Pick a point in the viewport… (Esc to cancel)");
+            if (ImGui::Button("Cancel picking", ImVec2(-1, 0))) {
+                m_patternPickingOrigin = false;
+            }
+        } else {
+            if (ImGui::Button("Pick axis origin in viewport", ImVec2(-1, 0))) {
+                m_patternPickingOrigin = true;
+            }
+            ImGui::TextDisabled("Click a point in the viewport — snaps to the grid.");
+        }
+    }
+
+    // ---- Apply / Cancel ----
+    ImGui::Separator();
+    bool applyClicked  = ImGui::Button("Apply", ImVec2(120, 0));
+    ImGui::SameLine();
+    bool cancelClicked = ImGui::Button("Cancel", ImVec2(120, 0));
+    bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+
+    if (axisChanged || countChanged || distChanged) updatePattern();
+    if (countEnter || applyClicked) {
+        commitPattern();
+    } else if (cancelClicked || escPressed) {
+        cancelPattern();
+    }
+
     ImGui::End();
 }
 

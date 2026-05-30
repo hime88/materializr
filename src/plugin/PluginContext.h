@@ -1,6 +1,7 @@
 #pragma once
 #include "Contributions.h"
 #include <memory>
+#include <string>
 
 class Document;
 class History;
@@ -22,6 +23,16 @@ public:
 
     void markMeshesDirty();
 
+    // Request that the host Application start an interactive popup-driven op
+    // (which the plugin can't run on its own — those need viewport + UI plumbing
+    // that lives in Application). The caller passes a short string identifying
+    // which op; Application picks it up via takeRequestedInteractiveOp() once
+    // per frame and dispatches. Examples: "LinearPattern", "RadialPattern".
+    // Calling this from a toolbar action defers the actual popup to the next
+    // frame, which is exactly when Application checks for it.
+    void requestInteractiveOp(const std::string& name);
+    std::string takeRequestedInteractiveOp();
+
     void registerToolbarButton(ToolbarContribution contrib);
     void registerCommand(CommandContribution contrib);
     void registerMenuItem(MenuContribution contrib);
@@ -39,6 +50,7 @@ private:
     EventBus* m_eventBus = nullptr;
     Camera* m_camera = nullptr;
     bool* m_meshesDirtyFlag = nullptr;
+    std::string m_pendingInteractiveOp;
 };
 
 } // namespace materializr

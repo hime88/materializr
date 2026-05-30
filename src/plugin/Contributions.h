@@ -29,6 +29,9 @@ struct ToolbarContribution {
     int priority = 100;
     std::function<void(PluginContext&)> action;
     std::function<std::unique_ptr<InteractiveTool>()> toolFactory;
+    // Optional hover-description shown when "Show toolbar tooltips" is on.
+    // Empty = no tooltip for this button.
+    std::string tooltip;
 };
 
 struct CommandContribution {

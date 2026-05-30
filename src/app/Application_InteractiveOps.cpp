@@ -12,12 +12,15 @@
 #include "core/SelectionManager.h"
 
 #include "modeling/Sketch.h"
+#include "modeling/SketchEditOp.h"
+#include "modeling/SketchTool.h"
 #include "modeling/ExtrudeOp.h"
 #include "modeling/PushPullOp.h"
 #include "modeling/FilletOp.h"
 #include "modeling/ChamferOp.h"
 #include "modeling/ShellOp.h"
 #include "modeling/ResizeCylindricalOp.h"
+#include "modeling/PatternOp.h"
 
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
@@ -935,6 +938,240 @@ void Application::cancelPushPull() {
     m_pushPullActive = false;
     m_pushPullTargets.clear();
     m_meshesDirty = true;
+}
+
+// ─── User Z-up axis convention helpers ─────────────────────────────────────
+//
+// The world stays Y-up internally (camera, transforms, viewcube), but the
+// user-facing axis radios in tools like Pattern and Split read with 3D-
+// printer convention: X = left/right, Y = forward/back, Z = up. So when
+// the user picks "Z" we drive the rotation around the world Y axis, etc.
+// Keeping the mapping in one place means the toolbar can label its radios
+// in user terms while the modeling ops keep getting world-space vectors.
+
+glm::vec3 Application::userAxisToWorldVec(int userIdx) {
+    switch (userIdx) {
+        case 0: return glm::vec3(1.0f, 0.0f, 0.0f); // user X → world X
+        case 1: return glm::vec3(0.0f, 0.0f, 1.0f); // user Y → world Z (forward/back)
+        case 2: return glm::vec3(0.0f, 1.0f, 0.0f); // user Z → world Y (up)
+    }
+    return glm::vec3(1.0f, 0.0f, 0.0f);
+}
+
+int Application::userAxisToWorldIdx(int userIdx) {
+    switch (userIdx) { case 0: return 0; case 1: return 2; case 2: return 1; }
+    return 0;
+}
+
+// ─── Interactive Pattern (Linear / Radial) ─────────────────────────────────
+//
+// User clicks Linear Pattern or Radial Pattern in the toolbar (PatternPlugin
+// fires a requestInteractiveOp via PluginContext, which the main frame loop
+// picks up and dispatches to beginPattern). The popup lets the user adjust
+// axis / count / spacing (linear) or axis / count / angle / origin (radial)
+// with a live preview. Each parameter change re-pushes a PatternOp onto
+// history via updatePattern; commit leaves the op there, cancel undoes it.
+
+void Application::beginPattern(PatternKind kind) {
+    // Find the first selected body. PatternOp clones one source body.
+    int bodyId = -1;
+    if (m_selection) {
+        for (const auto& e : m_selection->getSelection()) {
+            if (e.type == SelectionType::Body && e.bodyId >= 0) {
+                bodyId = e.bodyId; break;
+            }
+        }
+    }
+    if (bodyId < 0) return;
+
+    m_patternKind   = kind;
+    m_patternBodyId = bodyId;
+    m_patternAxisIdx = (kind == PatternKind::Linear) ? 0 : 2; // default X for linear, Z for radial
+    m_patternCount    = (kind == PatternKind::Linear) ? 3   : 6;
+    m_patternDistance = 5.0f;
+    m_patternAngle    = 360.0f;
+    // Default radial origin = body's bbox centre — that puts the rotation
+    // axis through the body the first time so the user sees a sensible
+    // ring immediately and can re-pick the origin via the viewport.
+    m_patternOriginX = m_patternOriginY = m_patternOriginZ = 0.0f;
+    try {
+        Bnd_Box bb;
+        BRepBndLib::Add(m_document->getBody(bodyId), bb);
+        if (!bb.IsVoid()) {
+            double x0,y0,z0,x1,y1,z1; bb.Get(x0,y0,z0,x1,y1,z1);
+            m_patternOriginX = static_cast<float>((x0 + x1) * 0.5);
+            m_patternOriginY = static_cast<float>((y0 + y1) * 0.5);
+            m_patternOriginZ = static_cast<float>((z0 + z1) * 0.5);
+        }
+    } catch (...) {}
+    m_patternPickingOrigin = false;
+    m_patternPreviewPushed = false;
+    m_patternInputFocus    = true;
+    std::snprintf(m_patternCountBuf,    sizeof(m_patternCountBuf),    "%d", m_patternCount);
+    std::snprintf(m_patternDistanceBuf, sizeof(m_patternDistanceBuf), "%.2f", m_patternDistance);
+    std::snprintf(m_patternAngleBuf,    sizeof(m_patternAngleBuf),    "%.1f", m_patternAngle);
+    m_patternActive = true;
+
+    updatePattern(); // initial preview
+}
+
+void Application::updatePattern() {
+    if (!m_patternActive || m_patternBodyId < 0) return;
+
+    // Undo the previous preview op (if any) before pushing the new one — keeps
+    // history clean so the eventual commit leaves exactly one PatternOp.
+    if (m_patternPreviewPushed && m_history->canUndo()) {
+        m_history->undo(*m_document);
+        m_patternPreviewPushed = false;
+    }
+    if (m_patternCount < 2) {
+        // Nothing to preview at count=1 (a pattern of 1 is just the source).
+        m_meshesDirty = true;
+        return;
+    }
+
+    auto op = std::make_unique<PatternOp>();
+    op->setBody(m_patternBodyId);
+    glm::vec3 worldAxis = userAxisToWorldVec(m_patternAxisIdx);
+    if (m_patternKind == PatternKind::Linear) {
+        op->setType(PatternType::Linear);
+        op->setCount(m_patternCount);
+        op->setLinearSpacing(worldAxis.x * m_patternDistance,
+                             worldAxis.y * m_patternDistance,
+                             worldAxis.z * m_patternDistance);
+    } else {
+        op->setType(PatternType::Radial);
+        op->setCount(m_patternCount);
+        op->setRadialAxis(worldAxis.x, worldAxis.y, worldAxis.z);
+        op->setRadialOrigin(m_patternOriginX, m_patternOriginY, m_patternOriginZ);
+        op->setTotalAngle(m_patternAngle);
+    }
+    if (m_history->pushOperation(std::move(op), *m_document)) {
+        m_patternPreviewPushed = true;
+    }
+    m_meshesDirty = true;
+}
+
+void Application::commitPattern() {
+    // The preview op IS the final op — leave it on history at the current
+    // values. Just clear the popup state.
+    m_patternActive        = false;
+    m_patternPickingOrigin = false;
+    m_patternPreviewPushed = false;
+    m_patternBodyId        = -1;
+    m_meshesDirty = true;
+}
+
+void Application::cancelPattern() {
+    if (m_patternPreviewPushed && m_history->canUndo()) {
+        m_history->undo(*m_document);
+        m_patternPreviewPushed = false;
+    }
+    m_patternActive        = false;
+    m_patternPickingOrigin = false;
+    m_patternBodyId        = -1;
+    m_meshesDirty = true;
+}
+
+// ─── Sketch-mode Pattern (Linear / Radial) ─────────────────────────────────
+//
+// Simpler than body patterns: no live preview, just a modal popup that takes
+// count + spacing (linear) or count + angle + origin (radial), then runs an
+// inline geometry copy similar to SketchCopy and pushes a SketchEditOp.
+
+void Application::beginSketchPattern(PatternKind kind) {
+    if (!m_inSketchMode || !m_activeSketch || !m_sketchTool) return;
+    m_sketchPatternKind = kind;
+    m_sketchPatternCount    = 3;
+    m_sketchPatternDistance = 5.0f;
+    m_sketchPatternAngle    = 360.0f;
+    m_sketchPatternOriginX  = 0.0f;
+    m_sketchPatternOriginY  = 0.0f;
+    std::snprintf(m_sketchPatternCountBuf,    sizeof(m_sketchPatternCountBuf),    "%d", m_sketchPatternCount);
+    std::snprintf(m_sketchPatternDistanceBuf, sizeof(m_sketchPatternDistanceBuf), "%.2f", m_sketchPatternDistance);
+    std::snprintf(m_sketchPatternAngleBuf,    sizeof(m_sketchPatternAngleBuf),    "%.1f", m_sketchPatternAngle);
+    std::snprintf(m_sketchPatternOXBuf, sizeof(m_sketchPatternOXBuf), "%.2f", m_sketchPatternOriginX);
+    std::snprintf(m_sketchPatternOYBuf, sizeof(m_sketchPatternOYBuf), "%.2f", m_sketchPatternOriginY);
+    m_sketchPatternFocusInput = true;
+    m_sketchPatternActive = true;
+}
+
+void Application::applySketchPattern() {
+    if (!m_inSketchMode || !m_activeSketch || !m_sketchTool) return;
+    if (m_sketchPatternCount < 2) return;
+
+    // Gather involved points / lines — same selection model as SketchCopy.
+    std::set<int> involved;
+    std::set<int> selLines;
+    if (m_sketchTool->hasElementSelection()) {
+        involved.insert(m_sketchTool->getSelectedPoints().begin(),
+                        m_sketchTool->getSelectedPoints().end());
+        selLines = m_sketchTool->getSelectedLines();
+        for (int lid : selLines) {
+            for (const auto& l : m_activeSketch->getLines()) {
+                if (l.id == lid) {
+                    involved.insert(l.startPointId);
+                    involved.insert(l.endPointId);
+                    break;
+                }
+            }
+        }
+    } else {
+        for (const auto& p : m_activeSketch->getPoints()) involved.insert(p.id);
+        for (const auto& l : m_activeSketch->getLines())  selLines.insert(l.id);
+    }
+    if (involved.empty()) return;
+
+    auto before = std::make_shared<Sketch>(*m_activeSketch);
+
+    // Build one transformed copy per step i in [1..count-1]; collect new ids.
+    std::set<int> allNewPoints, allNewLines;
+    for (int step = 1; step < m_sketchPatternCount; ++step) {
+        std::unordered_map<int,int> remap;
+        for (int oldId : involved) {
+            auto* p = m_activeSketch->getPoint(oldId);
+            if (!p) continue;
+            glm::vec2 np;
+            if (m_sketchPatternKind == PatternKind::Linear) {
+                np = p->pos + glm::vec2(m_sketchPatternDistance * step, 0.0f);
+            } else {
+                float stepDeg = m_sketchPatternAngle / m_sketchPatternCount;
+                float angRad = (stepDeg * step) * static_cast<float>(M_PI) / 180.0f;
+                float dx = p->pos.x - m_sketchPatternOriginX;
+                float dy = p->pos.y - m_sketchPatternOriginY;
+                float ca = std::cos(angRad), sa = std::sin(angRad);
+                np = glm::vec2(m_sketchPatternOriginX + dx * ca - dy * sa,
+                               m_sketchPatternOriginY + dx * sa + dy * ca);
+            }
+            int newId = m_activeSketch->addPoint(np);
+            remap[oldId] = newId;
+            allNewPoints.insert(newId);
+        }
+        for (int lid : selLines) {
+            for (const auto& l : m_activeSketch->getLines()) {
+                if (l.id != lid) continue;
+                auto sIt = remap.find(l.startPointId);
+                auto eIt = remap.find(l.endPointId);
+                if (sIt != remap.end() && eIt != remap.end()) {
+                    int newLine = m_activeSketch->addLine(sIt->second, eIt->second);
+                    allNewLines.insert(newLine);
+                }
+                break;
+            }
+        }
+    }
+    // Select the new pieces so the user can immediately further-transform them.
+    if (m_sketchTool) {
+        m_sketchTool->setSelection(allNewPoints, allNewLines);
+        m_sketchTool->setMode(SketchToolMode::Select);
+    }
+    auto after = std::make_shared<Sketch>(*m_activeSketch);
+    if (before->getPoints().size() != after->getPoints().size() ||
+        before->getLines().size()  != after->getLines().size()) {
+        auto op = std::make_unique<SketchEditOp>(m_activeSketch, before, after);
+        m_history->pushExecuted(std::move(op));
+    }
+    m_sketchPatternActive = false;
 }
 
 } // namespace materializr
