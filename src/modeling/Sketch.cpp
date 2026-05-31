@@ -701,16 +701,69 @@ bool pointInPolygon2D(const std::vector<glm::vec2>& poly, glm::vec2 p) {
 std::vector<Sketch::Region> Sketch::buildRegions() const {
     std::vector<Region> regions;
 
-    // Build a planar face from every closed wire the sketch forms.
+    // Build a planar face from every closed wire the sketch forms. Each
+    // sketch face is then augmented with any holes from the source face
+    // that fall fully inside it — BOPAlgo_Builder doesn't split coplanar
+    // faces when their edges don't intersect, so a sketch drawn AROUND an
+    // existing hole would otherwise come out as a solid disk and a
+    // push/pull would yield a solid bar instead of a tube.
     auto wires = buildWires();
+    std::vector<TopoDS_Wire> sourceHoleWires;
+    TopoDS_Wire sourceOuterWire;
+    if (!m_sourceFace.IsNull()) {
+        sourceOuterWire = BRepTools::OuterWire(m_sourceFace);
+        for (TopExp_Explorer we(m_sourceFace, TopAbs_WIRE); we.More(); we.Next()) {
+            TopoDS_Wire w = TopoDS::Wire(we.Current());
+            if (!sourceOuterWire.IsNull() && !w.IsSame(sourceOuterWire)) {
+                sourceHoleWires.push_back(w);
+            }
+        }
+    }
+    // Densify a wire to 2D sketch-plane points so we can do polygon-in-polygon tests.
+    auto wireTo2D = [&](const TopoDS_Wire& w) -> std::vector<glm::vec2> {
+        std::vector<glm::vec2> poly;
+        densifyWire2D(w, m_plane, poly);
+        return poly;
+    };
+    std::vector<std::vector<glm::vec2>> holePolys;
+    holePolys.reserve(sourceHoleWires.size());
+    for (const auto& hw : sourceHoleWires) holePolys.push_back(wireTo2D(hw));
+
     std::vector<TopoDS_Face> faces;
     for (const auto& w : wires) {
         BRepBuilderAPI_MakeFace mf(m_plane, w);
-        if (mf.IsDone()) faces.push_back(mf.Face());
+        if (!mf.IsDone()) continue;
+        TopoDS_Face f = mf.Face();
+        // Subtract any source-face holes that lie fully inside this sketch face.
+        std::vector<glm::vec2> outerPoly = wireTo2D(w);
+        int grafted = 0;
+        for (size_t i = 0; i < sourceHoleWires.size(); ++i) {
+            const auto& holePoly = holePolys[i];
+            if (holePoly.empty()) continue;
+            // Sample test: every densified point of the hole must lie inside
+            // the sketch's outer polygon. (densifyWire2D produces enough
+            // samples that a clean "all inside" check is reliable.)
+            bool allInside = true;
+            for (const auto& p : holePoly) {
+                if (!pointInPolygon2D(outerPoly, p)) { allInside = false; break; }
+            }
+            if (!allInside) continue;
+            // Graft this hole into the sketch face as an inner wire.
+            BRepBuilderAPI_MakeFace addHole(f);
+            addHole.Add(TopoDS::Wire(sourceHoleWires[i].Reversed()));
+            if (addHole.IsDone()) {
+                f = addHole.Face();
+                ++grafted;
+            }
+        }
+        faces.push_back(f);
+        (void)grafted; // counter retained in case a debug log is re-added later
     }
-    // If the sketch was started on an existing face, include it so the leftover
-    // area outside the drawn shapes (but inside the host face) is also selectable.
-    if (!m_sourceFace.IsNull()) faces.push_back(m_sourceFace);
+    // Include the source face so leftover area outside the drawn shapes
+    // (but inside the host face) is also selectable.
+    if (!m_sourceFace.IsNull()) {
+        faces.push_back(m_sourceFace);
+    }
 
     if (faces.empty()) return regions;
 
