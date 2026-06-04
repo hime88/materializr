@@ -41,6 +41,9 @@
 #include "modeling/SketchTool.h"
 #include "modeling/ExtrudeOp.h"
 #include "modeling/ReplayOp.h"
+#include "modeling/ThreadOp.h"
+#include <chrono>
+#include <future>
 #include "modeling/PushPullOp.h"
 #include "modeling/TransformOp.h"
 #include "modeling/SketchTransformOp.h"
@@ -1251,6 +1254,45 @@ void Application::renderPatternPanel() {
 
 
 void Application::renderThreadPanel() {
+    // Worker-thread completion: poll the future each frame; when the cut
+    // lands, push the real op with the precomputed result (instant) and tear
+    // the popup down. A modal keeps input blocked meanwhile so the window
+    // stays responsive instead of "not responding".
+    if (m_threadComputing) {
+        if (m_threadFuture.wait_for(std::chrono::milliseconds(0)) ==
+            std::future_status::ready) {
+            TopoDS_Shape result = m_threadFuture.get();
+            m_threadComputing = false;
+            if (!result.IsNull()) {
+                auto op = makeThreadOpFromState();
+                op->setPrecomputedResult(result);
+                if (!m_history->pushOperation(std::move(op), *m_document)) {
+                    std::fprintf(stderr, "[Thread] push failed unexpectedly\n");
+                }
+            } else {
+                std::fprintf(stderr, "[Thread] failed — pitch/depth may be too "
+                                     "large for the face (or > 300 turns)\n");
+            }
+            m_threadActive = false;
+            m_threadBodyId = -1;
+            m_selection->clear();
+            m_meshesDirty = true;
+        } else {
+            ImGui::OpenPopup("Cutting thread…");
+            ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Cutting thread…", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoMove)) {
+                // Trailing-dots heartbeat so it reads as alive.
+                int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
+                ImGui::Text("Sweeping the helical groove%.*s", dots, "...");
+                ImGui::TextDisabled("A few seconds for typical threads.");
+                ImGui::EndPopup();
+            }
+            return; // suppress the parameter popup while computing
+        }
+    }
     if (!m_threadActive) return;
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 280,

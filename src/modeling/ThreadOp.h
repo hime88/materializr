@@ -28,6 +28,16 @@ public:
     void setIsHole(bool h) { m_isHole = h; }
     void setRightHanded(bool rh) { m_rightHanded = rh; }
 
+    // The heavy geometry (helix sweep + boolean cut), as a pure function of
+    // the input body — no Document access, so the popup can run it on a
+    // worker thread while the UI keeps pumping events. Returns a null shape
+    // on failure. execute() uses it directly for the synchronous paths
+    // (editStep recompute, redo).
+    TopoDS_Shape buildResult(const TopoDS_Shape& body) const;
+    // Hand execute() a result that buildResult already produced on a worker
+    // thread; consumed on the next execute() so redo/edit recompute normally.
+    void setPrecomputedResult(const TopoDS_Shape& s) { m_precomputed = s; }
+
     // Operation interface
     bool execute(Document& doc) override;
     bool undo(Document& doc) override;
@@ -51,6 +61,7 @@ private:
     bool m_rightHanded = true;
 
     TopoDS_Shape m_previousShape; // for undo
+    TopoDS_Shape m_precomputed;   // see setPrecomputedResult()
 
     // Axis components for (de)serialisation; m_axis is rebuilt from these in
     // execute() so a reloaded op recomputes identically.

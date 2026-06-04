@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <future>
 #include <vector>
 #include <functional>
 #include <string>
@@ -54,6 +55,7 @@ class PluginContext;
 class Document;
 class History;
 class SelectionManager;
+class ThreadOp;
 
 namespace materializr {
 
@@ -601,9 +603,16 @@ private:
     bool   m_threadRightHanded = true;
     char   m_threadPitchBuf[32] = "1.0";
     char   m_threadDepthBuf[32] = "0.6";
+    // Apply runs the helical sweep + boolean on a worker thread (it takes
+    // seconds) behind a modal, so the window keeps pumping events instead of
+    // going "not responding". The future carries the cut result; the main
+    // thread polls it each frame and pushes the op when ready.
+    std::future<TopoDS_Shape> m_threadFuture;
+    bool   m_threadComputing = false;
 
     void beginThread();        // copies detector output, opens the popup
-    void commitThread();       // pushes the ThreadOp
+    std::unique_ptr<ThreadOp> makeThreadOpFromState() const;
+    void commitThread();       // kicks the compute onto a worker thread
     void cancelThread();
     void renderThreadPanel();  // ImGui popup contents
 

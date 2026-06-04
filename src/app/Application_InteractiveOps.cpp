@@ -23,6 +23,7 @@
 #include "modeling/ShellOp.h"
 #include "modeling/ResizeCylindricalOp.h"
 #include "modeling/ThreadOp.h"
+#include <future>
 #include "modeling/PatternOp.h"
 #include "modeling/LoftOp.h"
 #include "modeling/ConstructionPlaneOp.h"
@@ -530,8 +531,9 @@ void Application::beginThread() {
     m_threadActive = true;
 }
 
-void Application::commitThread() {
-    if (m_threadBodyId < 0) { cancelThread(); return; }
+// Build a ThreadOp from the popup's current state. Shared by the async
+// commit (worker computes, main thread pushes) so both ops are identical.
+std::unique_ptr<ThreadOp> Application::makeThreadOpFromState() const {
     auto op = std::make_unique<ThreadOp>();
     op->setBody(m_threadBodyId);
     op->setAxis(gp_Ax2(gp_Pnt(m_threadAxis[0], m_threadAxis[1], m_threadAxis[2]),
@@ -543,14 +545,28 @@ void Application::commitThread() {
     op->setDepth(static_cast<double>(m_threadDepth));
     op->setIsHole(m_threadIsHole);
     op->setRightHanded(m_threadRightHanded);
-    if (!m_history->pushOperation(std::move(op), *m_document)) {
-        std::fprintf(stderr, "[Thread] failed — pitch/depth may be too large "
-                             "for the face (or > 300 turns)\n");
+    return op;
+}
+
+void Application::commitThread() {
+    if (m_threadBodyId < 0) { cancelThread(); return; }
+    // Kick the multi-second sweep + boolean onto a worker thread. The shape
+    // handle is copied in (OCCT handles are atomically refcounted) and the
+    // worker touches no Document state; renderThreadPanel polls the future
+    // and pushes the real op — with the precomputed result — when it lands.
+    TopoDS_Shape body;
+    try { body = m_document->getBody(m_threadBodyId); } catch (...) {}
+    if (body.IsNull()) { cancelThread(); return; }
+    auto worker = std::make_shared<ThreadOp>();
+    {
+        auto cfg = makeThreadOpFromState();
+        *worker = *cfg; // same params; worker only calls const buildResult()
     }
-    m_threadActive = false;
-    m_threadBodyId = -1;
-    m_selection->clear();
-    m_meshesDirty = true;
+    m_threadFuture = std::async(std::launch::async,
+        [worker, body]() { return worker->buildResult(body); });
+    m_threadComputing = true;
+    // Popup stays up (disabled) so the modal has an anchor; state is cleared
+    // when the future resolves.
 }
 
 void Application::cancelThread() {
