@@ -19,6 +19,12 @@ public:
 
     bool execute(Document& doc) override; // redo  -> restore the "after" state
     bool undo(Document& doc) override;     // undo  -> restore the "before" state
+    // Diff the before/after snapshots so the project save can persist what
+    // this step changed. Without this every snapshot op (revolve-rotate,
+    // multi-body transform bundles, reloaded steps on re-save) wrote an EMPTY
+    // diff — the step reloaded as a no-op and undoing it silently skipped to
+    // the previous step.
+    OperationDiff captureDiff() const override;
     std::string name() const override { return m_name; }
     std::string description() const override { return m_description; }
     void renderProperties() override;

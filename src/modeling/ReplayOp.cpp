@@ -1,5 +1,6 @@
 #include "ReplayOp.h"
 #include <imgui.h>
+#include <map>
 #include <set>
 
 ReplayOp::ReplayOp(std::string typeId, std::string name, std::string description,
@@ -36,6 +37,30 @@ bool ReplayOp::execute(Document& doc) {
 bool ReplayOp::undo(Document& doc) {
     restore(doc, m_before, /*removeUnlisted=*/m_fromReload);
     return true;
+}
+
+OperationDiff ReplayOp::captureDiff() const {
+    OperationDiff d;
+    std::map<int, const TopoDS_Shape*> before;
+    for (const auto& [id, s] : m_before) before[id] = &s;
+    std::set<int> afterIds;
+    for (const auto& [id, s] : m_after) {
+        afterIds.insert(id);
+        auto it = before.find(id);
+        if (it == before.end()) {
+            d.created.push_back(id);
+        } else if (!s.IsEqual(*it->second)) {
+            // Same body, different shape/placement (e.g. a rotate-body
+            // revolve or a batched multi-body transform). Untouched bodies
+            // that merely ride along in a full-document snapshot compare
+            // IsEqual and are skipped, so the diff stays minimal.
+            d.modifiedBefore.push_back({id, *it->second});
+        }
+    }
+    for (const auto& [id, s] : m_before) {
+        if (!afterIds.count(id)) d.deletedBefore.push_back({id, s});
+    }
+    return d;
 }
 
 void ReplayOp::renderProperties() {
