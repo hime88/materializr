@@ -88,6 +88,14 @@ public:
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool enabled) { m_enabled = enabled; }
 
+    // Maintained by History: the serialised parameter set from this op's last
+    // SUCCESSFUL execute. Used to roll a rejected edit back — the UI mutates
+    // params in place before editStep runs, so "the values that worked" must
+    // be captured at execute time, not edit time. Empty for ops without
+    // parameter serialisation (no rescue possible — they fail-and-suspend).
+    const std::string& lastGoodParams() const { return m_lastGoodParams; }
+    void rememberGoodParams() { m_lastGoodParams = serializeParams(); }
+
     // Wall-clock time this op was constructed (or restored to a stored value
     // on project load). Used by the HistoryPanel to bucket steps into
     // "Today / Yesterday / <date>" collapsible groups so a 145-step project
@@ -97,5 +105,6 @@ public:
 
 protected:
     bool m_enabled = true;
+    std::string m_lastGoodParams; // see lastGoodParams()
     std::chrono::system_clock::time_point m_timestamp = std::chrono::system_clock::now();
 };

@@ -155,6 +155,7 @@ void Application::beginInteractiveEdgeOpEdit(int historyIndex) {
 
     m_edgeOpActive        = true;
     m_edgeOpEditingIndex  = historyIndex;
+    m_edgeOpOrigValue     = m_edgeOpValue; // restored on cancel
     std::snprintf(m_edgeOpInputBuf, sizeof(m_edgeOpInputBuf), "%.1f", m_edgeOpValue);
     m_edgeOpInputFocus    = true;
 
@@ -187,9 +188,39 @@ void Application::beginInteractiveEdgeOpEdit(int historyIndex) {
     updateInteractiveEdgeOp();
 }
 
+namespace {
+// Write the previewed radius/distance into the history op being re-edited.
+void setEdgeOpParam(const Operation* opRaw, bool isFillet, float v) {
+    if (!opRaw) return;
+    if (isFillet) {
+        if (auto* op = const_cast<FilletOp*>(dynamic_cast<const FilletOp*>(opRaw)))
+            op->setRadius(static_cast<double>(v));
+    } else {
+        if (auto* op = const_cast<ChamferOp*>(dynamic_cast<const ChamferOp*>(opRaw)))
+            op->setDistance(static_cast<double>(v));
+    }
+}
+} // namespace
+
 void Application::updateInteractiveEdgeOp() {
     if (!m_edgeOpActive || m_edgeOpBodyId < 0) return;
 
+    if (m_edgeOpEditingIndex >= 0) {
+        // EDIT mode: preview through the real history replay so downstream
+        // steps (a chamfer stacked on this fillet) stay visible during the
+        // drag instead of flickering out. Geometrically impossible values
+        // are rejected inside editStep (the op snaps back to its last good
+        // parameters), so the preview can never strand the model.
+        if (m_edgeOpValue < 0.01f) return; // don't preview "remove" mid-drag
+        setEdgeOpParam(m_history->getStep(m_edgeOpEditingIndex),
+                       m_edgeOpType == EdgeOpType::Fillet,
+                       m_edgeOpValue);
+        m_history->editStep(m_edgeOpEditingIndex, *m_document);
+        m_meshesDirty = true;
+        return;
+    }
+
+    // CREATE mode: transient op against the snapshotted pre-state.
     // Restore original first, so dragging back to ~0 shows no fillet/chamfer.
     m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
     m_meshesDirty = true;
@@ -228,15 +259,24 @@ void Application::updateInteractiveEdgeOp() {
 }
 
 void Application::commitInteractiveEdgeOp() {
-    // Restore original, then do it properly through history
-    m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
+    // CREATE mode previews a transient op against the snapshot — restore it
+    // before pushing the real op. EDIT mode previews through editStep, so
+    // the document already reflects the history; clobbering the body here
+    // would just be churn.
+    if (m_edgeOpEditingIndex < 0)
+        m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
 
     // Confirming with no size set is a no-op — just cancel out. In edit mode
     // a zero value would be a "remove this fillet" — surprising semantics, so
-    // we treat that as cancel too and leave the original op intact.
+    // we treat that as cancel too: restore the ORIGINAL parameter (the live
+    // preview mutates the real op) and replay.
     if (m_edgeOpValue < 0.01f) {
-        if (m_edgeOpEditingIndex >= 0)
+        if (m_edgeOpEditingIndex >= 0) {
+            setEdgeOpParam(m_history->getStep(m_edgeOpEditingIndex),
+                           m_edgeOpType == EdgeOpType::Fillet,
+                           m_edgeOpOrigValue);
             m_history->editStep(m_edgeOpEditingIndex, *m_document);
+        }
         m_edgeOpActive = false;
         m_edgeOpEditingIndex = -1;
         m_edgeOpEdges.clear();
@@ -249,16 +289,9 @@ void Application::commitInteractiveEdgeOp() {
     if (m_edgeOpEditingIndex >= 0) {
         // Update the existing op's parameter and rerun from that point so any
         // downstream ops (cuts, fillets stacked on this one, …) recompute too.
-        const Operation* opRaw = m_history->getStep(m_edgeOpEditingIndex);
-        if (m_edgeOpType == EdgeOpType::Fillet) {
-            if (auto* op = const_cast<FilletOp*>(dynamic_cast<const FilletOp*>(opRaw))) {
-                op->setRadius(static_cast<double>(m_edgeOpValue));
-            }
-        } else {
-            if (auto* op = const_cast<ChamferOp*>(dynamic_cast<const ChamferOp*>(opRaw))) {
-                op->setDistance(static_cast<double>(m_edgeOpValue));
-            }
-        }
+        setEdgeOpParam(m_history->getStep(m_edgeOpEditingIndex),
+                       m_edgeOpType == EdgeOpType::Fillet,
+                       m_edgeOpValue);
         m_history->editStep(m_edgeOpEditingIndex, *m_document);
         std::fprintf(stdout, "%s edited to %.1f mm\n",
                      m_edgeOpType == EdgeOpType::Fillet ? "Fillet" : "Chamfer",
@@ -297,13 +330,16 @@ void Application::commitInteractiveEdgeOp() {
 }
 
 void Application::cancelInteractiveEdgeOp() {
-    if (m_edgeOpBodyId >= 0 && !m_edgeOpPreviousShape.IsNull()) {
-        m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
-    }
-    // In edit mode, replay the existing op (unchanged) so the body returns to
-    // its committed state including any downstream ops.
     if (m_edgeOpEditingIndex >= 0) {
+        // The live preview mutated the real op — restore the parameter it had
+        // when the edit began, then replay so the committed state (including
+        // downstream ops) returns.
+        setEdgeOpParam(m_history->getStep(m_edgeOpEditingIndex),
+                       m_edgeOpType == EdgeOpType::Fillet,
+                       m_edgeOpOrigValue);
         m_history->editStep(m_edgeOpEditingIndex, *m_document);
+    } else if (m_edgeOpBodyId >= 0 && !m_edgeOpPreviousShape.IsNull()) {
+        m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
     }
     m_edgeOpActive = false;
     m_edgeOpEditingIndex = -1;

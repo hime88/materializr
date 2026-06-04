@@ -14,6 +14,7 @@ bool History::pushOperation(std::unique_ptr<Operation> op, Document& doc) {
     if (!op->execute(doc)) {
         return false;
     }
+    op->rememberGoodParams();
 
     // Clear any redo stack (operations beyond current index)
     if (m_currentIndex + 1 < static_cast<int>(m_operations.size())) {
@@ -30,6 +31,7 @@ bool History::pushOperation(std::unique_ptr<Operation> op, Document& doc) {
 
 void History::pushExecuted(std::unique_ptr<Operation> op) {
     if (!op) return;
+    op->rememberGoodParams(); // already-applied params are by definition good
     if (m_currentIndex + 1 < static_cast<int>(m_operations.size())) {
         m_operations.erase(m_operations.begin() + m_currentIndex + 1, m_operations.end());
     }
@@ -86,6 +88,7 @@ bool History::redo(Document& doc) {
         return false;
     }
 
+    op->rememberGoodParams();
     if (m_failedReplayAt >= 0 && m_currentIndex >= m_failedReplayAt) {
         m_failedReplayAt = -1; // the previously-failed step recomputed fine
     }
@@ -125,9 +128,12 @@ bool History::editStep(int index, Document& doc) {
         // executing the intervening steps, instead of refusing.
         for (int i = limit + 1; i <= index; ++i) {
             Operation* op = m_operations[i].get();
-            if (op->isEnabled() && !op->execute(doc)) {
-                m_failedReplayAt = i;
-                return false;
+            if (op->isEnabled()) {
+                if (!op->execute(doc)) {
+                    m_failedReplayAt = i;
+                    return false;
+                }
+                op->rememberGoodParams();
             }
             m_currentIndex = i;
         }
@@ -136,14 +142,6 @@ bool History::editStep(int index, Document& doc) {
         }
         return true;
     }
-
-    // Snapshot the edited op's parameters: if the new values are geometrically
-    // impossible (a fillet radius larger than its host face, say), we restore
-    // these and reapply so a REJECTED edit leaves the model exactly as it was
-    // — instead of stranding the step and everything above it, where the
-    // user's next Ctrl+Z would unexpectedly hit the step below (Steve: "undo
-    // deleted the whole body").
-    std::string paramSnapshot = m_operations[index]->serializeParams();
 
     // Rebuild IN PLACE rather than clearing the document: clearing would also
     // wipe bodies that aren't operations (the base/imported bodies) and reset
@@ -159,12 +157,16 @@ bool History::editStep(int index, Document& doc) {
         Operation* op = m_operations[i].get();
         if (op->isEnabled()) {
             if (!op->execute(doc)) {
-                if (i == index && !paramSnapshot.empty() &&
-                    op->deserializeParams(paramSnapshot) && op->execute(doc)) {
-                    // The edited step rejected its NEW parameters but reapplies
-                    // cleanly with the previous ones — keep replaying the rest;
-                    // the props editor re-reads the op, so the value visibly
-                    // snaps back.
+                // If the EDITED step itself rejects its new values (e.g. a
+                // fillet radius its host geometry can't carry), restore the
+                // parameters from its last successful execute and reapply —
+                // the model stays as it was instead of stranding this step
+                // and everything above it (where the next Ctrl+Z would hit
+                // the step below: "undo deleted the whole body"). The UI
+                // re-reads the op, so the value visibly snaps back.
+                const std::string& good = op->lastGoodParams();
+                if (i == index && !good.empty() &&
+                    op->deserializeParams(good) && op->execute(doc)) {
                     editRejected = true;
                     continue;
                 }
@@ -172,6 +174,7 @@ bool History::editStep(int index, Document& doc) {
                 m_failedReplayAt = i;
                 return false;
             }
+            op->rememberGoodParams();
         }
     }
     if (editRejected) return false; // model intact, but the edit didn't apply
@@ -187,10 +190,13 @@ bool History::editStep(int index, Document& doc) {
         bool cleared = true;
         for (int i = limit + 1; i <= cap; ++i) {
             Operation* op = m_operations[i].get();
-            if (op->isEnabled() && !op->execute(doc)) {
-                m_failedReplayAt = i;
-                cleared = false;
-                break;
+            if (op->isEnabled()) {
+                if (!op->execute(doc)) {
+                    m_failedReplayAt = i;
+                    cleared = false;
+                    break;
+                }
+                op->rememberGoodParams();
             }
             m_currentIndex = i;
         }
@@ -285,6 +291,7 @@ bool History::replayAll(Document& doc) {
                 m_currentIndex = i - 1;
                 return false;
             }
+            op->rememberGoodParams();
         }
     }
 
