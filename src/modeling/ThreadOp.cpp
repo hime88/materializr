@@ -110,21 +110,56 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
         // four variants, four different wrong answers), these tools cut
         // consistently, and the ellipse tips taper to nothing, giving
         // natural thread runout at both ends.
+        // Half-ellipse wire on a cylindrical surface, SEGMENTED per turn:
+        // the long UV ellipse is trimmed into ~one-turn arcs (and the seam
+        // into matching chunks) so ThruSections lofts a row of tame patches
+        // instead of one 30-turn B-spline — the difference between booleans
+        // that cut reliably and booleans that silently remove nothing
+        // (proven via the headless volume harness on both prism-made and
+        // primitive bodies, both handednesses).
+        auto ellipseWire = [&](const Handle(Geom_CylindricalSurface)& surf,
+                               const gp_Ax2d& ax2d, double major, double minor,
+                               int nSeg) -> TopoDS_Wire {
+            Handle(Geom2d_Ellipse) ell = new Geom2d_Ellipse(ax2d, major, minor);
+            BRepBuilderAPI_MakeWire mw;
+            for (int i = 0; i < nSeg; ++i) {
+                double t0 = M_PI * i / nSeg, t1 = M_PI * (i + 1) / nSeg;
+                Handle(Geom2d_TrimmedCurve) a =
+                    new Geom2d_TrimmedCurve(ell, t0, t1);
+                TopoDS_Edge e = BRepBuilderAPI_MakeEdge(a, surf).Edge();
+                BRepLib::BuildCurves3d(e);
+                mw.Add(e);
+            }
+            gp_Pnt2d p1 = ell->Value(M_PI), p2 = ell->Value(0);
+            for (int i = 0; i < nSeg; ++i) {
+                gp_Pnt2d a(p1.X() + (p2.X() - p1.X()) * i / nSeg,
+                           p1.Y() + (p2.Y() - p1.Y()) * i / nSeg);
+                gp_Pnt2d b(p1.X() + (p2.X() - p1.X()) * (i + 1) / nSeg,
+                           p1.Y() + (p2.Y() - p1.Y()) * (i + 1) / nSeg);
+                Handle(Geom2d_TrimmedCurve) sgm = GCE2d_MakeSegment(a, b).Value();
+                TopoDS_Edge e = BRepBuilderAPI_MakeEdge(sgm, surf).Edge();
+                BRepLib::BuildCurves3d(e);
+                mw.Add(e);
+            }
+            return mw.Wire();
+        };
+
         auto buildCutter = [&](double lo, double hi) -> TopoDS_Shape {
             try {
-                // Outer surface sits a hair on the material-free side of the
-                // face so the groove detaches cleanly; the inner surface is
+                // Outer surface 0.1 mm on the material-free side of the face
+                // (clean detachment without near-tangency); inner surface at
                 // the groove apex. (For a hole, "outer" is inside the void.)
-                double rOut = m_isHole ? (m_radius - 0.02) : (m_radius + 0.02);
+                double rOut = m_isHole ? (m_radius - 0.10) : (m_radius + 0.10);
                 double rIn  = m_isHole ? (m_radius + depth) : (m_radius - depth);
                 Handle(Geom_CylindricalSurface) sOut =
                     new Geom_CylindricalSurface(ax3, rOut);
                 Handle(Geom_CylindricalSurface) sIn =
                     new Geom_CylindricalSurface(ax3, rIn);
 
-                // The thread is one long, thin ellipse in (U, V) parameter
-                // space — U angular, V axial — whose major axis runs along
-                // the helix direction. Handedness flips the U component.
+                // One long, thin ellipse in (U, V) space whose major axis runs
+                // along the helix; the U sign sets the handedness (chirality
+                // is invariant under axis flip, so u+ is right-handed for any
+                // face axis orientation).
                 double t = (hi - lo) / m_pitch;
                 double uMax = 2.0 * M_PI * t;
                 double uSign = m_rightHanded ? 1.0 : -1.0;
@@ -133,29 +168,10 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                 gp_Ax2d ax2d(centre, along);
                 double major = 0.5 * std::hypot(uMax, hi - lo);
                 double minor = std::min(0.57735 * depth, 0.45 * m_pitch);
-                Handle(Geom2d_Ellipse) eOut =
-                    new Geom2d_Ellipse(ax2d, major, minor);
-                Handle(Geom2d_Ellipse) eIn =
-                    new Geom2d_Ellipse(ax2d, major, minor * 0.25);
-                Handle(Geom2d_TrimmedCurve) arcOut =
-                    new Geom2d_TrimmedCurve(eOut, 0, M_PI);
-                Handle(Geom2d_TrimmedCurve) arcIn =
-                    new Geom2d_TrimmedCurve(eIn, 0, M_PI);
-                gp_Pnt2d tip1 = eOut->Value(0);
-                gp_Pnt2d tip2 = eOut->Value(M_PI);
-                Handle(Geom2d_TrimmedCurve) seam =
-                    GCE2d_MakeSegment(tip1, tip2).Value();
+                int nSeg = std::max(4, static_cast<int>(std::ceil(t)));
 
-                TopoDS_Edge e1 = BRepBuilderAPI_MakeEdge(arcOut, sOut).Edge();
-                TopoDS_Edge e2 = BRepBuilderAPI_MakeEdge(seam,   sOut).Edge();
-                TopoDS_Edge e3 = BRepBuilderAPI_MakeEdge(arcIn,  sIn).Edge();
-                TopoDS_Edge e4 = BRepBuilderAPI_MakeEdge(seam,   sIn).Edge();
-                BRepLib::BuildCurves3d(e1);
-                BRepLib::BuildCurves3d(e2);
-                BRepLib::BuildCurves3d(e3);
-                BRepLib::BuildCurves3d(e4);
-                TopoDS_Wire w1 = BRepBuilderAPI_MakeWire(e1, e2).Wire();
-                TopoDS_Wire w2 = BRepBuilderAPI_MakeWire(e3, e4).Wire();
+                TopoDS_Wire w1 = ellipseWire(sOut, ax2d, major, minor, nSeg);
+                TopoDS_Wire w2 = ellipseWire(sIn, ax2d, major, minor * 0.25, nSeg);
 
                 BRepOffsetAPI_ThruSections tool(Standard_True);
                 tool.AddWire(w1);
@@ -165,8 +181,7 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                 if (!tool.IsDone()) return {};
                 // NOTE: do NOT "fix" the orientation even if GProp reports a
                 // negative volume — the integrator mis-reads the helical
-                // seam, but the boolean classifies this solid correctly;
-                // reversing it makes the cut remove the complement.
+                // seam, but the boolean classifies this solid correctly.
                 return tool.Shape();
             } catch (...) { return {}; }
         };
