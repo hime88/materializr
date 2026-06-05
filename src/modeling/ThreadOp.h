@@ -4,6 +4,7 @@
 #include <TopoDS_Shape.hxx>
 #include <gp_Ax2.hxx>
 #include <string>
+#include <memory>
 
 // Cuts a helical V-groove screw thread into a cylindrical face — external
 // (boss/bolt: groove cut inward from the surface) or internal (hole/nut:
@@ -37,6 +38,17 @@ public:
     // Hand execute() a result that buildResult already produced on a worker
     // thread; consumed on the next execute() so redo/edit recompute normally.
     void setPrecomputedResult(const TopoDS_Shape& s) { m_precomputed = s; }
+
+    // Reflow propagation: a thread retargeted at a body the reflowed op
+    // created (e.g. the other half of a split). Pure parameters copy over;
+    // execution state resets so the clone recomputes fresh.
+    std::unique_ptr<Operation> cloneForBody(int bodyId) const override {
+        auto c = std::make_unique<ThreadOp>(*this);
+        c->m_bodyId = bodyId;
+        c->m_previousShape.Nullify();
+        c->m_precomputed.Nullify();
+        return c;
+    }
 
     // Operation interface
     bool execute(Document& doc) override;

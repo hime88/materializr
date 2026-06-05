@@ -88,6 +88,14 @@ public:
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool enabled) { m_enabled = enabled; }
 
+    // Clone this operation retargeted at another body. Used by the
+    // thread-last reflow to propagate a finishing pass onto bodies the
+    // inserted op created (the second half of a split gets its own thread
+    // cut). Default: not cloneable.
+    virtual std::unique_ptr<Operation> cloneForBody(int /*bodyId*/) const {
+        return nullptr;
+    }
+
     // Body ids this op will read/modify when executed — known BEFORE
     // execution for ops that carry explicit target ids. Used by the
     // thread-last reflow: an op that touches a threaded body is inserted

@@ -436,6 +436,33 @@ bool History::insertStepAndReplay(int index, std::unique_ptr<Operation> op,
         }
         s->rememberGoodParams();
     }
+
+    // Finishing passes propagate to bodies the inserted op CREATED — a split
+    // lengthwise through a bolt must leave threads on BOTH halves, not just
+    // the half that kept the original body id ("half of it is smooth").
+    // Clone each displaced thread for each created body and append the
+    // clones as real (undoable, saveable) steps.
+    if (m_failedReplayAt < 0) {
+        OperationDiff nd = m_operations[index]->captureDiff();
+        for (int createdId : nd.created) {
+            for (int i : touched) {
+                Operation* s = m_operations[i + 1].get();
+                if (s->typeId() != "thread") continue;
+                std::unique_ptr<Operation> clone = s->cloneForBody(createdId);
+                if (!clone) continue;
+                if (!clone->execute(doc)) {
+                    std::fprintf(stderr, "[History] reflow: thread clone for "
+                                         "body %d failed (span may not "
+                                         "exist on this piece)\n", createdId);
+                    continue;
+                }
+                clone->rememberGoodParams();
+                m_operations.insert(m_operations.begin() + m_currentIndex + 1,
+                                    std::move(clone));
+                m_currentIndex++;
+            }
+        }
+    }
     if (m_eventBus)
         m_eventBus->publish(materializr::HistoryStepEvent{m_currentIndex, false});
     return true;
