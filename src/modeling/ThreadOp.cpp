@@ -239,8 +239,14 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
             }
             if (res.IsNull()) return {};
             double v = shapeVol(res);
-            if (v > bodyVol + 1e-3 || v < 0.0) {
-                std::fprintf(stderr, "[Thread] cut produced invalid volume "
+            // A real groove removes meaningful material. Accept only
+            // 0 < v < body − ε: rejects growth (inverted classification) AND
+            // no-op cuts that merely imprint edges (volume unchanged — the
+            // reversed-tool retry can produce these, which read as "edges
+            // but the surface looks solid").
+            double minRemoval = std::max(1e-2, bodyVol * 1e-4);
+            if (v > bodyVol - minRemoval || v < 0.0) {
+                std::fprintf(stderr, "[Thread] cut removed nothing or grew "
                                      "(%.2f vs body %.2f) — rejecting\n",
                              v, bodyVol);
                 return {};
