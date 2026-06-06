@@ -759,7 +759,25 @@ void Application::renderTaperPanel() {
     ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Taper");
     ImGui::TextDisabled("%zu face(s) tilt about the body's base.",
                         m_taperFaces.size());
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 240.0f);
+    ImGui::TextDisabled("Tip: pick SIDE walls — a cylinder wall becomes a "
+                        "cone, box sides become a pyramid.");
+    ImGui::PopTextWrapPos();
     ImGui::Separator();
+
+    // Live status — a silently-failing preview looked like the button
+    // "wasn't doing anything".
+    if (m_taperPreviewOk) {
+        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f),
+                           "Previewing %.1f deg", m_taperAngle);
+    } else {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 240.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                           "No preview: this face can't taper along the "
+                           "current Pull axis. Try another axis, Flip base, "
+                           "or pick a side face.");
+        ImGui::PopTextWrapPos();
+    }
 
     bool changed = false;
     if (ImGui::SliderFloat("Angle", &m_taperAngle, -45.0f, 45.0f, "%.1f deg"))

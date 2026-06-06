@@ -676,9 +676,10 @@ private:
     bool m_taperActive = false;
     int  m_taperBodyId = -1;
     std::vector<TopoDS_Face> m_taperFaces;
-    float m_taperAngle = 5.0f;      // degrees
+    float m_taperAngle = 10.0f;     // degrees
     int   m_taperAxisIdx = 0;       // 0=Auto, 1=X, 2=Y, 3=Z (user convention)
     bool  m_taperFlipBase = false;  // neutral plane at the far end instead
+    bool  m_taperPreviewOk = false; // last preview execute succeeded
     TopoDS_Shape m_taperPreviousShape;
 
     void beginInteractiveTaper();

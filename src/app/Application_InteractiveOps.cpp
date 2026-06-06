@@ -834,7 +834,7 @@ void Application::beginInteractiveTaper() {
     try {
         m_taperPreviousShape = m_document->getBody(m_taperBodyId);
     } catch (...) { return; }
-    m_taperAngle = 5.0f;
+    m_taperAngle = 10.0f;
     m_taperAxisIdx = 0;
     m_taperFlipBase = false;
     m_taperActive = true;
@@ -845,6 +845,7 @@ void Application::updateInteractiveTaper() {
     if (!m_taperActive || m_taperBodyId < 0) return;
     m_document->updateBody(m_taperBodyId, m_taperPreviousShape);
     m_meshesDirty = true;
+    m_taperPreviewOk = false;
     if (std::abs(m_taperAngle) < 0.1f) return;
     glm::vec3 dir, np;
     if (!resolveTaperFrame(dir, np)) return;
@@ -855,8 +856,12 @@ void Application::updateInteractiveTaper() {
         op->setDirection(dir.x, dir.y, dir.z);
         op->setNeutralPoint(np.x, np.y, np.z);
         op->setAngleDeg(static_cast<double>(m_taperAngle));
-        if (op->execute(*m_document)) m_meshesDirty = true;
-        else m_document->updateBody(m_taperBodyId, m_taperPreviousShape);
+        if (op->execute(*m_document)) {
+            m_meshesDirty = true;
+            m_taperPreviewOk = true;
+        } else {
+            m_document->updateBody(m_taperBodyId, m_taperPreviousShape);
+        }
     } catch (...) {
         m_document->updateBody(m_taperBodyId, m_taperPreviousShape);
     }
