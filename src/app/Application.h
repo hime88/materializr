@@ -16,6 +16,9 @@
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
 
+#include "app/InteractiveOpController.h"
+#include "app/FaceOpControllers.h"
+#include <array>
 #include "modeling/ExtrudeOp.h" // for ExtrudeMode
 #include "modeling/SketchConstraints.h" // for ConstraintType (applySketchConstraint)
 
@@ -654,69 +657,21 @@ private:
     void cancelResizeCylindrical();
     void renderResizeCylindricalPanel();
 
-    // Interactive Shell (hollow a body by removing a picked face and offsetting
-    // the remaining shell inward). Same popup-with-live-preview pattern as
-    // push/pull and fillet/chamfer.
-    bool m_shellActive = false;
-    int  m_shellBodyId = -1;
-    TopoDS_Face m_shellFace;
-    float m_shellThickness = 1.0f;
-    char m_shellInputBuf[32] = "1.0";
-    bool m_shellInputFocus = true;
-    TopoDS_Shape m_shellPreviousShape;
+    // Interactive face ops (Shell / Taper / Scale Face) live in
+    // controllers now — see InteractiveOpController.h. Each owns its own
+    // state, lifecycle, and panel; the registry below drives suppression,
+    // the Esc chain, and panel rendering generically.
+    ShellController m_shellCtl;
+    TaperController m_taperCtl;
+    ScaleFaceController m_scaleFaceCtl;
+    std::array<InteractiveOpController*, 3> m_iops{
+        &m_shellCtl, &m_taperCtl, &m_scaleFaceCtl};
+    IopContext iopContext();
+    bool anyIopActive() const {
+        for (auto* c : m_iops) if (c->active()) return true;
+        return false;
+    }
 
-    void beginInteractiveShell();
-    void updateInteractiveShell();
-    void commitInteractiveShell();
-    void cancelInteractiveShell();
-    void renderShellPanel();
-
-    // Interactive Taper (draft selected faces about the body's base along a
-    // pull axis — cylinder→cone, box→pyramid). Same popup-with-live-preview
-    // pattern as Shell.
-    bool m_taperActive = false;
-    int  m_taperBodyId = -1;
-    std::vector<TopoDS_Face> m_taperFaces;
-    float m_taperAngle = 10.0f;     // degrees
-    int   m_taperAxisIdx = 0;       // 0=Auto, 1=X, 2=Y, 3=Z (user convention)
-    bool  m_taperFlipBase = false;  // neutral plane at the far end instead
-    bool  m_taperPreviewOk = false; // last preview execute succeeded
-    TopoDS_Shape m_taperPreviousShape;
-
-    void beginInteractiveTaper();
-    void updateInteractiveTaper();
-    void commitInteractiveTaper();
-    void cancelInteractiveTaper();
-    void renderTaperPanel();
-
-    // Interactive Scale Face (pinch/flare a planar END face's profile over
-    // a blend length — the winglet op). Same pattern as Taper.
-    bool m_scaleFaceActive = false;
-    int  m_scaleFaceBodyId = -1;
-    TopoDS_Face m_scaleFaceFace;
-    float m_scaleFacePctU = 30.0f;  // percent along the face's in-plane X
-    float m_scaleFacePctV = 30.0f;  // percent along the face's in-plane Y
-    bool  m_scaleFaceUniform = true;
-    float m_scaleFaceLen = 10.0f;
-    float m_scaleFaceLenMax = 100.0f; // body depth behind the face
-    int   m_scaleFaceMode = 1; // 0=Extend, 1=Pinch (default: whole body follows)
-    bool  m_scaleFacePreviewOk = false;
-    TopoDS_Shape m_scaleFacePreviousShape;
-    // 2D scale gizmo: two draggable arrow handles on the face along its
-    // in-plane axes. Drag a handle to scale that direction; the panel's
-    // Uniform checkbox links them.
-    glm::vec3 m_scaleFaceCenter{0.0f};
-    glm::vec3 m_scaleFaceAxisU{1.0f, 0.0f, 0.0f};
-    glm::vec3 m_scaleFaceAxisV{0.0f, 0.0f, 1.0f};
-    float m_scaleFaceHalfU = 10.0f; // face half-extents along each axis
-    float m_scaleFaceHalfV = 10.0f;
-    int   m_scaleFaceDragAxis = -1; // -1 none, 0=U, 1=V
-
-    void beginInteractiveScaleFace();
-    void updateInteractiveScaleFace();
-    void commitInteractiveScaleFace();
-    void cancelInteractiveScaleFace();
-    void renderScaleFacePanel();
     // Resolve the pull direction + neutral-plane point from the current
     // axis choice, the picked faces, and the body's bounds.
     bool resolveTaperFrame(glm::vec3& dirOut, glm::vec3& neutralOut) const;

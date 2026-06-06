@@ -500,6 +500,12 @@ void Application::setupCommands() {
     // Commands are now registered by plugins via PluginRegistry.
 }
 
+materializr::IopContext Application::iopContext() {
+    return materializr::IopContext{
+        *m_document, *m_history, *m_selection,
+        [this] { m_meshesDirty = true; }};
+}
+
 void Application::beginFrame() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -1300,47 +1306,17 @@ void Application::handleToolAction(int action) {
         }
 
         case ToolAction::Shell: {
-            // Pick the first selected face and shell its owning body. The
-            // popup drives thickness; ShellOp::execute() does the rest.
-            for (const auto& e : m_selection->getSelection()) {
-                if (e.type == SelectionType::Face && e.bodyId >= 0 &&
-                    !e.shape.IsNull()) {
-                    m_shellBodyId = e.bodyId;
-                    m_shellFace   = TopoDS::Face(e.shape);
-                    beginInteractiveShell();
-                    break;
-                }
-            }
+            m_shellCtl.begin(iopContext());
             break;
         }
 
         case ToolAction::Taper: {
-            // Collect every selected face on ONE body — multi-select all
-            // four sides of a box to pyramid it in one go.
-            m_taperFaces.clear();
-            m_taperBodyId = -1;
-            for (const auto& e : m_selection->getSelection()) {
-                if (e.type != SelectionType::Face || e.bodyId < 0 ||
-                    e.shape.IsNull())
-                    continue;
-                if (m_taperBodyId < 0) m_taperBodyId = e.bodyId;
-                if (e.bodyId != m_taperBodyId) continue; // one body per op
-                m_taperFaces.push_back(TopoDS::Face(e.shape));
-            }
-            if (!m_taperFaces.empty()) beginInteractiveTaper();
+            m_taperCtl.begin(iopContext());
             break;
         }
 
         case ToolAction::ScaleFace: {
-            for (const auto& e : m_selection->getSelection()) {
-                if (e.type == SelectionType::Face && e.bodyId >= 0 &&
-                    !e.shape.IsNull()) {
-                    m_scaleFaceBodyId = e.bodyId;
-                    m_scaleFaceFace = TopoDS::Face(e.shape);
-                    beginInteractiveScaleFace();
-                    break;
-                }
-            }
+            m_scaleFaceCtl.begin(iopContext());
             break;
         }
 
@@ -1624,12 +1600,9 @@ void Application::handleShortcuts() {
             m_meshesDirty = true;
         } else if (m_pushPullActive) {
             cancelPushPull();
-        } else if (m_shellActive) {
-            cancelInteractiveShell();
-        } else if (m_taperActive) {
-            cancelInteractiveTaper();
-        } else if (m_scaleFaceActive) {
-            cancelInteractiveScaleFace();
+        } else if (anyIopActive()) {
+            for (auto* c : m_iops)
+                if (c->active()) { c->cancel(iopContext()); break; }
         } else if (m_resizeCylActive) {
             cancelResizeCylindrical();
         } else if (m_edgeOpActive) {
@@ -3339,9 +3312,10 @@ void Application::run() {
             renderUpdatePopup();
             renderMultiTransformPanel();
             renderResizeCylindricalPanel();
-            renderShellPanel();
-            renderTaperPanel();
-            renderScaleFacePanel();
+            {
+                auto ctx = iopContext();
+                for (auto* c : m_iops) c->renderPanel(ctx);
+            }
             renderPatternPanel();
             renderThreadPanel();
             renderSectionPanel();

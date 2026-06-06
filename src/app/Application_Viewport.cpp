@@ -290,8 +290,7 @@ void Application::renderViewport() {
         // popups' previews, looking like an extra widget the user can grab.
         const bool anyInteractiveOpActive =
             m_inSketchMode || m_extruding || m_edgeOpActive ||
-            m_pushPullActive || m_resizeCylActive || m_shellActive ||
-            m_taperActive || m_scaleFaceActive ||
+            m_pushPullActive || m_resizeCylActive || anyIopActive() ||
             m_patternActive || m_loftActive || m_planeOpActive ||
             m_sketchPatternActive || m_revolveActive;
         bool gizmoShown = false;
@@ -413,8 +412,7 @@ void Application::renderViewport() {
         // suppress the gizmo as before.
         const bool blockedByOtherOp =
             m_inSketchMode || m_extruding || m_edgeOpActive ||
-            m_pushPullActive || m_resizeCylActive || m_shellActive ||
-            m_taperActive || m_scaleFaceActive ||
+            m_pushPullActive || m_resizeCylActive || anyIopActive() ||
             m_patternActive || m_loftActive || m_sketchPatternActive;
         // Construction-axis gizmo — Move only. Same arming pattern as
         // planes: implicit during the Construction Axis popup
@@ -883,14 +881,15 @@ void Application::renderViewport() {
             // Scale Face 2D gizmo: one arrow per in-plane axis, tip
             // tracking the live percentage. Drag a tip to scale that
             // direction (handled in the input section below).
-            if (m_scaleFaceActive) {
+            if (m_scaleFaceCtl.active()) {
+                const auto& sfc = m_scaleFaceCtl;
                 auto drawHandle = [&](const glm::vec3& axis, float halfExt,
                                       float pct, ImU32 col,
                                       const char* lbl) {
-                    glm::vec3 tipW = m_scaleFaceCenter +
+                    glm::vec3 tipW = sfc.center() +
                         axis * (halfExt * pct / 100.0f);
                     ImVec2 a, b;
-                    if (toImg(m_scaleFaceCenter, a) && toImg(tipW, b)) {
+                    if (toImg(sfc.center(), a) && toImg(tipW, b)) {
                         dl->AddLine(a, b, col, 3.0f);
                         dl->AddCircleFilled(b, 7.0f, col);
                         char hl[32];
@@ -904,11 +903,9 @@ void Application::renderViewport() {
                         dl->AddText(tp, col, hl);
                     }
                 };
-                drawHandle(m_scaleFaceAxisU, m_scaleFaceHalfU,
-                           m_scaleFacePctU,
+                drawHandle(sfc.axisU(), sfc.halfU(), sfc.pctU(),
                            IM_COL32(235, 90, 90, 255), "U");
-                drawHandle(m_scaleFaceAxisV, m_scaleFaceHalfV,
-                           m_scaleFacePctV,
+                drawHandle(sfc.axisV(), sfc.halfV(), sfc.pctV(),
                            IM_COL32(90, 150, 235, 255), "V");
             }
 
@@ -1871,10 +1868,11 @@ void Application::renderViewport() {
             // Scale Face gizmo input: press near a handle tip claims it,
             // dragging projects onto that axis and scales proportionally
             // to the face's half-extent.
-            if (m_scaleFaceActive && !camDragging) {
+            if (m_scaleFaceCtl.active() && !camDragging) {
+                auto& sfc = m_scaleFaceCtl;
                 auto tipScreen = [&](const glm::vec3& axis, float halfExt,
                                      float pct, ImVec2& out) -> bool {
-                    glm::vec3 tipW = m_scaleFaceCenter +
+                    glm::vec3 tipW = sfc.center() +
                         axis * (halfExt * pct / 100.0f);
                     glm::vec4 clip = proj * view * glm::vec4(tipW, 1.0f);
                     if (clip.w <= 1e-6f) return false;
@@ -1884,7 +1882,7 @@ void Application::renderViewport() {
                                  wp.y + (0.5f - ndc.y * 0.5f) * contentSize.y);
                     return true;
                 };
-                if (m_scaleFaceDragAxis < 0 &&
+                if (sfc.dragAxis() < 0 &&
                     ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     ImVec2 mp = ImGui::GetMousePos();
                     ImVec2 tu, tv;
@@ -1892,35 +1890,27 @@ void Application::renderViewport() {
                         float dx = a.x - mp.x, dy = a.y - mp.y;
                         return dx * dx + dy * dy < 16.0f * 16.0f;
                     };
-                    if (tipScreen(m_scaleFaceAxisU, m_scaleFaceHalfU,
-                                  m_scaleFacePctU, tu) && near2(tu))
-                        m_scaleFaceDragAxis = 0;
-                    else if (tipScreen(m_scaleFaceAxisV, m_scaleFaceHalfV,
-                                       m_scaleFacePctV, tv) && near2(tv))
-                        m_scaleFaceDragAxis = 1;
+                    if (tipScreen(sfc.axisU(), sfc.halfU(), sfc.pctU(), tu) &&
+                        near2(tu))
+                        sfc.setDragAxis(0);
+                    else if (tipScreen(sfc.axisV(), sfc.halfV(), sfc.pctV(),
+                                       tv) && near2(tv))
+                        sfc.setDragAxis(1);
                 }
-                if (m_scaleFaceDragAxis >= 0 &&
+                if (sfc.dragAxis() >= 0 &&
                     ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                     glm::vec2 md(io.MouseDelta.x, io.MouseDelta.y);
-                    const glm::vec3 axis = m_scaleFaceDragAxis == 0
-                                               ? m_scaleFaceAxisU
-                                               : m_scaleFaceAxisV;
-                    float half = m_scaleFaceDragAxis == 0 ? m_scaleFaceHalfU
-                                                          : m_scaleFaceHalfV;
-                    float dW = projectDragOntoNormal(m_scaleFaceCenter, axis,
+                    const glm::vec3 axis = sfc.dragAxis() == 0 ? sfc.axisU()
+                                                               : sfc.axisV();
+                    float half = sfc.dragAxis() == 0 ? sfc.halfU()
+                                                     : sfc.halfV();
+                    float dW = projectDragOntoNormal(sfc.center(), axis,
                                                      md, proj * view);
                     float dPct = dW / std::max(half, 1e-3f) * 100.0f;
-                    float& pct = m_scaleFaceDragAxis == 0 ? m_scaleFacePctU
-                                                          : m_scaleFacePctV;
-                    pct = std::min(200.0f, std::max(5.0f, pct + dPct));
-                    if (m_scaleFaceUniform) {
-                        m_scaleFacePctU = pct;
-                        m_scaleFacePctV = pct;
-                    }
-                    updateInteractiveScaleFace();
+                    sfc.applyHandleDrag(sfc.dragAxis(), dPct, iopContext());
                 }
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-                    m_scaleFaceDragAxis = -1;
+                    sfc.setDragAxis(-1);
             }
 
             if (m_pushPullActive && m_pushPullHasArrow && !camDragging &&
@@ -1969,7 +1959,7 @@ void Application::renderViewport() {
             // interactive op owns the left-drag: extrude, push/pull, fillet/chamfer,
             // or the pattern axis-origin picker).
             if (!m_inSketchMode && !m_extruding && !m_pushPullActive && !m_edgeOpActive &&
-                !m_scaleFaceActive &&
+                !m_scaleFaceCtl.active() &&
                 !(m_patternActive && m_patternPickingOrigin)) {
                 ImVec2 mousePos = ImGui::GetMousePos();
                 ImVec2 winPos = ImGui::GetItemRectMin();
