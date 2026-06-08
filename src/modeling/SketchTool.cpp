@@ -510,505 +510,536 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     float pointSnapThreshold = std::max(0.15f, m_gridStep * 0.4f);
     float curveSnapThreshold = pointSnapThreshold; // same band for circle/arc perimeters
 
-    // First, try snapping to existing sketch points (always-on).
-    if (m_sketch) {
-        const auto& points = m_sketch->getPoints();
-        for (const auto& pt : points) {
-            // During a drag, skip the points being moved — they'd snap to
-            // their own starting position and lock the drag in place.
-            if (m_snapExcludePoints.count(pt.id)) continue;
-            // Glyph vertices are never snap targets — a word is hundreds of
-            // points and drawing near text was impossible.
-            if (pt.fromText) continue;
-            if (glm::length(pos - pt.pos) < pointSnapThreshold) {
-                m_activeInferences.push_back({InferenceGuide::Endpoint, pt.pos, pt.pos, pt.id});
-                return pt.pos;
-            }
-        }
-        // Face-reference points (vertices and curve samples from the host
-        // face). Same endpoint inference, just sourced from the 3D geometry
-        // the sketch was started on. refId of -1 since these aren't sketch
-        // points and don't have ids the rest of the system cares about.
-        for (const auto& fp : m_sketch->getFaceReferences().points) {
-            if (glm::length(pos - fp) < pointSnapThreshold) {
-                m_activeInferences.push_back({InferenceGuide::Endpoint, fp, fp, -1});
-                return fp;
-            }
-        }
+    // Without a sketch only grid snap can apply.
+    if (!m_sketch) {
+        if (!m_snapToGridEnabled || m_gridStep <= 0.0f) return pos;
+        glm::vec2 r;
+        r.x = std::round(pos.x / m_gridStep) * m_gridStep;
+        r.y = std::round(pos.y / m_gridStep) * m_gridStep;
+        return r;
+    }
 
-        // Then, snap to the nearest point on any circle's perimeter (and arc perimeter).
-        // This lets the line tool anchor on a curved edge so a sketch made off a circle
-        // ends up topologically closed instead of leaving a sliver gap.
-        const auto& circles = m_sketch->getCircles();
-        for (const auto& c : circles) {
-            const SketchPoint* center = m_sketch->getPoint(c.centerPointId);
-            if (!center) continue;
-            glm::vec2 v = pos - center->pos;
-            float dist = glm::length(v);
-            if (dist < 1e-6f) continue;
-            float r = static_cast<float>(c.radius);
-            float perimeterDist = std::abs(dist - r);
-            if (perimeterDist < curveSnapThreshold) {
-                return center->pos + (v / dist) * r;
-            }
+    // ─── PHASE 1: Hard point snaps (each early-returns) ──────────────────────
+    // Points are unambiguous: there's a specific target to land on, nothing
+    // to combine with. Endpoint → circle/arc perimeter → midpoint → face
+    // centroid, in priority order.
+    const auto& points = m_sketch->getPoints();
+    for (const auto& pt : points) {
+        // During a drag, skip the points being moved — they'd snap to
+        // their own starting position and lock the drag in place.
+        if (m_snapExcludePoints.count(pt.id)) continue;
+        // Glyph vertices are never snap targets — a word is hundreds of
+        // points and drawing near text was impossible.
+        if (pt.fromText) continue;
+        if (glm::length(pos - pt.pos) < pointSnapThreshold) {
+            m_activeInferences.push_back({InferenceGuide::Endpoint, pt.pos, pt.pos, pt.id});
+            return pt.pos;
         }
-
-        const auto& arcs = m_sketch->getArcs();
-        for (const auto& a : arcs) {
-            const SketchPoint* center = m_sketch->getPoint(a.centerPointId);
-            if (!center) continue;
-            glm::vec2 v = pos - center->pos;
-            float dist = glm::length(v);
-            if (dist < 1e-6f) continue;
-            float r = static_cast<float>(a.radius);
-            float perimeterDist = std::abs(dist - r);
-            if (perimeterDist < curveSnapThreshold) {
-                return center->pos + (v / dist) * r;
-            }
+    }
+    // Face-reference points (vertices and curve samples from the host face).
+    // Same endpoint inference, just sourced from the 3D geometry the sketch
+    // was started on. refId of -1 since these aren't sketch points.
+    for (const auto& fp : m_sketch->getFaceReferences().points) {
+        if (glm::length(pos - fp) < pointSnapThreshold) {
+            m_activeInferences.push_back({InferenceGuide::Endpoint, fp, fp, -1});
+            return fp;
         }
+    }
+    const auto& circles = m_sketch->getCircles();
+    for (const auto& c : circles) {
+        const SketchPoint* center = m_sketch->getPoint(c.centerPointId);
+        if (!center) continue;
+        glm::vec2 v = pos - center->pos;
+        float dist = glm::length(v);
+        if (dist < 1e-6f) continue;
+        float r = static_cast<float>(c.radius);
+        if (std::abs(dist - r) < curveSnapThreshold) {
+            return center->pos + (v / dist) * r;
+        }
+    }
+    const auto& arcs = m_sketch->getArcs();
+    for (const auto& a : arcs) {
+        const SketchPoint* center = m_sketch->getPoint(a.centerPointId);
+        if (!center) continue;
+        glm::vec2 v = pos - center->pos;
+        float dist = glm::length(v);
+        if (dist < 1e-6f) continue;
+        float r = static_cast<float>(a.radius);
+        if (std::abs(dist - r) < curveSnapThreshold) {
+            return center->pos + (v / dist) * r;
+        }
+    }
+    // Line midpoints (matches the green dots drawn by the renderer).
+    const auto& lines = m_sketch->getLines();
+    for (const auto& ln : lines) {
+        if (ln.fromText) continue;
+        if (m_snapExcludePoints.count(ln.startPointId) ||
+            m_snapExcludePoints.count(ln.endPointId)) continue;
+        const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
+        const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
+        if (!p1 || !p2) continue;
+        glm::vec2 mid = 0.5f * (p1->pos + p2->pos);
+        if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) {
+            m_activeInferences.push_back({InferenceGuide::Midpoint, mid, mid, ln.id});
+            return mid;
+        }
+    }
+    // Face-reference line midpoints.
+    for (const auto& fl : m_sketch->getFaceReferences().lines) {
+        glm::vec2 mid = 0.5f * (fl.first + fl.second);
+        if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) {
+            m_activeInferences.push_back({InferenceGuide::Midpoint, mid, mid, -1});
+            return mid;
+        }
+    }
+    // Arc midpoints.
+    for (const auto& a : arcs) {
+        const SketchPoint* center = m_sketch->getPoint(a.centerPointId);
+        const SketchPoint* s = m_sketch->getPoint(a.startPointId);
+        const SketchPoint* e = m_sketch->getPoint(a.endPointId);
+        if (!center || !s || !e) continue;
+        float startA = std::atan2(s->pos.y - center->pos.y, s->pos.x - center->pos.x);
+        float endA = std::atan2(e->pos.y - center->pos.y, e->pos.x - center->pos.x);
+        const float TWO_PI = 2.0f * static_cast<float>(M_PI);
+        float sweep = endA - startA;
+        while (sweep < 0.0f) sweep += TWO_PI;
+        while (sweep >= TWO_PI) sweep -= TWO_PI;
+        float midA = startA + sweep * 0.5f;
+        glm::vec2 mid = center->pos + glm::vec2(std::cos(midA), std::sin(midA))
+                                        * static_cast<float>(a.radius);
+        if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) return mid;
+    }
+    // Host face centroid (if sketch was started on a face).
+    glm::vec2 faceCenter;
+    if (allowSnaps && m_sketch->getSourceFaceCentroid(faceCenter) &&
+        glm::length(pos - faceCenter) < pointSnapThreshold) {
+        return faceCenter;
+    }
 
-        // Snap to line midpoints (matches the green dots drawn by the renderer).
-        const auto& lines = m_sketch->getLines();
+    // ─── PHASE 2: Collect line-shaped inference candidates ───────────────────
+    // Every inference whose shape is a LINE (not a point) registers itself
+    // here rather than snapping immediately. The resolver in phase 3 picks
+    // either the intersection of two candidates or a single projection — so
+    // "perpendicular to charged point AND on edge" lands on the actual
+    // crossing instead of one displacing the other.
+    // (Steve's rule: two inferences should take hold at once when they
+    //  line up at a desirable point.)
+    struct LineCand {
+        glm::vec2 anchor;          // point on the line
+        glm::vec2 dir;             // unit direction
+        InferenceGuide::Kind kind;
+        int refId;
+        glm::vec2 visFrom;         // "from" anchor for the rendered guide line
+        bool isSegment;            // if true, t∈[0,segLen] required for snaps & intersections
+        float segLen;
+        glm::vec2 proj;            // cursor's projection onto this line
+        float perpDist;            // |proj - pos|
+        // Can fire as the LONE snap? Incidental axis-from-point is false —
+        // sketch points + face vertices are dense and a standalone guide
+        // for every drift was visual noise. Such cands still participate
+        // in pair-intersection (as one half of a useful composite).
+        bool standaloneAllowed;
+    };
+    std::vector<LineCand> cands;
+
+    const float axisThresh   = std::max(0.2f, m_gridStep * 0.3f);
+    const float onLineThresh = pointSnapThreshold * 0.7f;
+    const float extThresh    = pointSnapThreshold * 0.6f;
+    // POSITIONAL cap on directional / charged inferences: fires-checks are
+    // ANGULAR for those, so capture distance grows with segment length (3°
+    // at 100 mm = 5 mm of cursor theft). An inference may only pull the
+    // cursor a couple of millimetres from where the user actually is.
+    const float posCap       = std::max(1.5f, m_gridStep * 1.5f);
+
+    // On-line: cursor's perpendicular projection lands within an existing
+    // sketch segment.
+    if (allowSnaps) {
         for (const auto& ln : lines) {
-            if (ln.fromText) continue; // glyph edges aren't snap targets
-            // Skip lines being dragged — their midpoint is moving with them.
+            if (ln.fromText) continue;
             if (m_snapExcludePoints.count(ln.startPointId) ||
                 m_snapExcludePoints.count(ln.endPointId)) continue;
             const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
             const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
             if (!p1 || !p2) continue;
-            glm::vec2 mid = 0.5f * (p1->pos + p2->pos);
-            if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) {
-                m_activeInferences.push_back({InferenceGuide::Midpoint, mid, mid, ln.id});
-                return mid;
+            glm::vec2 ab = p2->pos - p1->pos;
+            float len = glm::length(ab);
+            if (len < 1e-6f) continue;
+            glm::vec2 dir = ab / len;
+            float t = glm::dot(pos - p1->pos, dir);
+            float tClamped = glm::clamp(t, 0.0f, len);
+            glm::vec2 proj = p1->pos + dir * tClamped;
+            float d = glm::distance(pos, proj);
+            if (d < onLineThresh) {
+                cands.push_back({p1->pos, dir, InferenceGuide::OnLine, ln.id,
+                                 proj, true, len, proj, d, true});
             }
         }
-        // Face-reference line midpoints — same idea on the host face's edges.
+        // Face-ref straight edges.
         for (const auto& fl : m_sketch->getFaceReferences().lines) {
-            glm::vec2 mid = 0.5f * (fl.first + fl.second);
-            if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) {
-                m_activeInferences.push_back({InferenceGuide::Midpoint, mid, mid, -1});
-                return mid;
+            glm::vec2 ab = fl.second - fl.first;
+            float len = glm::length(ab);
+            if (len < 1e-6f) continue;
+            glm::vec2 dir = ab / len;
+            float t = glm::dot(pos - fl.first, dir);
+            float tClamped = glm::clamp(t, 0.0f, len);
+            glm::vec2 proj = fl.first + dir * tClamped;
+            float d = glm::distance(pos, proj);
+            if (d < onLineThresh) {
+                cands.push_back({fl.first, dir, InferenceGuide::OnLine, -1,
+                                 proj, true, len, proj, d, true});
             }
         }
-        // Snap to arc midpoints.
-        for (const auto& a : arcs) {
-            const SketchPoint* center = m_sketch->getPoint(a.centerPointId);
-            const SketchPoint* s = m_sketch->getPoint(a.startPointId);
-            const SketchPoint* e = m_sketch->getPoint(a.endPointId);
-            if (!center || !s || !e) continue;
-            float startA = std::atan2(s->pos.y - center->pos.y, s->pos.x - center->pos.x);
-            float endA = std::atan2(e->pos.y - center->pos.y, e->pos.x - center->pos.x);
-            const float TWO_PI = 2.0f * static_cast<float>(M_PI);
-            float sweep = endA - startA;
-            while (sweep < 0.0f) sweep += TWO_PI;
-            while (sweep >= TWO_PI) sweep -= TWO_PI;
-            float midA = startA + sweep * 0.5f;
-            glm::vec2 mid = center->pos + glm::vec2(std::cos(midA), std::sin(midA))
-                                            * static_cast<float>(a.radius);
-            if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) return mid;
-        }
-        // Snap to host face centroid (if sketch was started on a face).
-        glm::vec2 faceCenter;
-        if (allowSnaps && m_sketch->getSourceFaceCentroid(faceCenter) &&
-            glm::length(pos - faceCenter) < pointSnapThreshold) {
-            return faceCenter;
-        }
+    }
 
-        // On-line snap: cursor lands on the perpendicular projection onto any
-        // existing line (excluding endpoints/midpoint, which are handled above).
-        // Tighter threshold than endpoint snap so it doesn't drown out the
-        // axis-from-point inferences below.
-        if (allowSnaps) {
-            const float onLineThresh = pointSnapThreshold * 0.7f;
-            const SketchLine* bestLn = nullptr;
-            glm::vec2 bestProj{0.0f};
-            float bestD = onLineThresh;
-            for (const auto& ln : lines) {
-                if (ln.fromText) continue;
-                // Skip dragged lines.
-                if (m_snapExcludePoints.count(ln.startPointId) ||
-                    m_snapExcludePoints.count(ln.endPointId)) continue;
-                const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
-                const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
-                if (!p1 || !p2) continue;
-                glm::vec2 ab = p2->pos - p1->pos;
-                float len2 = glm::dot(ab, ab);
-                if (len2 < 1e-12f) continue;
-                float t = glm::clamp(glm::dot(pos - p1->pos, ab) / len2, 0.0f, 1.0f);
-                glm::vec2 proj = p1->pos + ab * t;
-                float d = glm::distance(pos, proj);
-                if (d < bestD) {
-                    bestD = d;
-                    bestProj = proj;
-                    bestLn = &ln;
-                }
-            }
-            if (bestLn) {
-                m_activeInferences.push_back(
-                    {InferenceGuide::OnLine, bestProj, bestProj, bestLn->id});
-                return bestProj;
-            }
-            // Same on-line check against the face's straight edges.
-            glm::vec2 bestFaceProj{0.0f};
-            float bestFaceD = onLineThresh;
-            bool faceHit = false;
-            for (const auto& fl : m_sketch->getFaceReferences().lines) {
-                glm::vec2 ab = fl.second - fl.first;
-                float len2 = glm::dot(ab, ab);
-                if (len2 < 1e-12f) continue;
-                float t = glm::clamp(glm::dot(pos - fl.first, ab) / len2, 0.0f, 1.0f);
-                glm::vec2 proj = fl.first + ab * t;
-                float d = glm::distance(pos, proj);
-                if (d < bestFaceD) {
-                    bestFaceD = d;
-                    bestFaceProj = proj;
-                    faceHit = true;
-                }
-            }
-            if (faceHit) {
-                m_activeInferences.push_back(
-                    {InferenceGuide::OnLine, bestFaceProj, bestFaceProj, -1});
-                return bestFaceProj;
+    // On-line-extension: cursor lies on the infinite line through an
+    // existing segment, but OUTSIDE the segment's endpoints.
+    if (allowDirectional) {
+        for (const auto& ln : lines) {
+            if (ln.fromText) continue;
+            if (m_snapExcludePoints.count(ln.startPointId) ||
+                m_snapExcludePoints.count(ln.endPointId)) continue;
+            const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
+            const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
+            if (!p1 || !p2) continue;
+            glm::vec2 ab = p2->pos - p1->pos;
+            float len = glm::length(ab);
+            if (len < 1e-6f) continue;
+            glm::vec2 dir = ab / len;
+            float t = glm::dot(pos - p1->pos, dir);
+            if (t >= 0.0f && t <= len) continue; // in-segment handled by on-line above
+            glm::vec2 proj = p1->pos + dir * t;
+            float d = glm::distance(pos, proj);
+            if (d < extThresh) {
+                // Visual anchor: existing segment's midpoint, so the dashed
+                // "extension" overlay draws the whole infinite line cleanly
+                // through both the segment and the snapped cursor.
+                glm::vec2 visFrom = 0.5f * (p1->pos + p2->pos);
+                cands.push_back({p1->pos, dir, InferenceGuide::OnLineExtension,
+                                 ln.id, visFrom, false, 0.0f, proj, d, true});
             }
         }
+    }
 
-        // Extension-of-line: cursor lands on the infinite line through an
-        // existing segment, but outside its endpoints. Useful for aligning
-        // new geometry with the direction of a diagonal line that doesn't
-        // happen to have a point exactly where you want to draw. Renders as
-        // a dashed guide from the original segment through the snapped cursor.
-        if (allowDirectional) {
-            const float extThresh = pointSnapThreshold * 0.6f;
-            const SketchLine* bestLn = nullptr;
-            glm::vec2 bestProj{0.0f};
-            float bestD = extThresh;
-            for (const auto& ln : lines) {
-                if (ln.fromText) continue;
-                if (m_snapExcludePoints.count(ln.startPointId) ||
-                    m_snapExcludePoints.count(ln.endPointId)) continue;
-                const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
-                const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
-                if (!p1 || !p2) continue;
-                glm::vec2 ab = p2->pos - p1->pos;
-                float len2 = glm::dot(ab, ab);
-                if (len2 < 1e-12f) continue;
-                float t = glm::dot(pos - p1->pos, ab) / len2; // UNCLAMPED
-                // Only fire OUTSIDE the segment — inside it was handled by
-                // the on-line snap above.
-                if (t >= 0.0f && t <= 1.0f) continue;
-                glm::vec2 proj = p1->pos + ab * t;
-                float d = glm::distance(pos, proj);
-                if (d < bestD) {
-                    bestD = d;
-                    bestProj = proj;
-                    bestLn = &ln;
-                }
-            }
-            if (bestLn) {
-                const SketchPoint* p1 = m_sketch->getPoint(bestLn->startPointId);
-                const SketchPoint* p2 = m_sketch->getPoint(bestLn->endPointId);
-                // Source the guide line from the existing segment's midpoint
-                // (or either endpoint) so the renderer's dashed-line "extend"
-                // visual draws the whole infinite line cleanly through both
-                // the existing segment and the snapped cursor.
-                glm::vec2 from = p1 ? p1->pos : bestProj;
-                if (p1 && p2) from = 0.5f * (p1->pos + p2->pos);
-                m_activeInferences.push_back(
-                    {InferenceGuide::OnLineExtension, from, bestProj, bestLn->id});
-                return rectifyNearAxis(bestProj);
-            }
-        }
-
-        // --- Inferences (draw-time alignment, no persistent constraint) ----
-        // Axis-from-point: cursor's X / Y aligns with an existing point's X / Y.
-        // The "purple line down from point 1" interaction. Width of the snap
-        // band is the same as the grid snap so feel is consistent.
-        const float axisThresh = std::max(0.2f, m_gridStep * 0.3f);
-        // Axis references can come from either an existing sketch point OR a
-        // face-reference point — the inference treats them the same way, so
-        // store as a generic 2D position + an optional sketch point id.
-        glm::vec2 axisVPos{0.0f}, axisHPos{0.0f};
-        int axisVRefId = -1, axisHRefId = -1;
-        bool axisVFires = false, axisHFires = false;
-        // Axis-from-point only co-pilots the directional locks below, so it's
-        // gated with them: a negative seed threshold makes no candidate fire
-        // (dX/dY are ≥ 0) when directional inferences are off.
-        float bestVDist = allowDirectional ? axisThresh : -1.0f;
-        float bestHDist = allowDirectional ? axisThresh : -1.0f;
-        // Includes the chain anchor itself — drawing a horizontal or vertical
-        // line FROM the anchor is one of the most common cases, so the anchor's
-        // axis must be a candidate, not a skipped one. Dragged points are
-        // skipped (drawing a guide from a point to itself is meaningless).
+    // Axis-from-point: each near sketch / face-ref point pushes its vertical
+    // and/or horizontal guide. Multiple points contribute — cursor can be
+    // near two points' axes at once and intersect them.
+    // Marked standaloneAllowed=false: cursor is almost always incidentally
+    // aligned with SOMEONE's coord, so a lone guide for every drift was
+    // noise. They still serve as one half of a pair-intersection (the
+    // "axis-from-point + perp-to-prev" composite this code originally
+    // handled inline via applyDirLock).
+    // Includes the chain anchor itself — drawing horizontal / vertical FROM
+    // the anchor is one of the most common cases. Dragged points are
+    // skipped (a guide from a point to itself is meaningless).
+    if (allowDirectional) {
         for (const auto& pt : m_sketch->getPoints()) {
             if (m_snapExcludePoints.count(pt.id)) continue;
             if (pt.fromText) continue;
+            // Charged ref is added with bigger tolerance + standaloneAllowed
+            // by the charged block below — skip here to avoid two cands for
+            // the same line.
+            if (allowCharge && pt.id == m_chargedPointId) continue;
             float dX = std::abs(pos.x - pt.pos.x);
             float dY = std::abs(pos.y - pt.pos.y);
-            if (dX < bestVDist) {
-                bestVDist = dX; axisVPos = pt.pos; axisVRefId = pt.id; axisVFires = true;
+            if (dX < axisThresh) {
+                glm::vec2 proj(pt.pos.x, pos.y);
+                cands.push_back({pt.pos, glm::vec2(0,1), InferenceGuide::AxisVFromPoint,
+                                 pt.id, pt.pos, false, 0.0f, proj, dX, false});
             }
-            if (dY < bestHDist) {
-                bestHDist = dY; axisHPos = pt.pos; axisHRefId = pt.id; axisHFires = true;
+            if (dY < axisThresh) {
+                glm::vec2 proj(pos.x, pt.pos.y);
+                cands.push_back({pt.pos, glm::vec2(1,0), InferenceGuide::AxisHFromPoint,
+                                 pt.id, pt.pos, false, 0.0f, proj, dY, false});
             }
         }
         for (const auto& fp : m_sketch->getFaceReferences().points) {
             float dX = std::abs(pos.x - fp.x);
             float dY = std::abs(pos.y - fp.y);
-            if (dX < bestVDist) {
-                bestVDist = dX; axisVPos = fp; axisVRefId = -1; axisVFires = true;
+            if (dX < axisThresh) {
+                glm::vec2 proj(fp.x, pos.y);
+                cands.push_back({fp, glm::vec2(0,1), InferenceGuide::AxisVFromPoint,
+                                 -1, fp, false, 0.0f, proj, dX, false});
             }
-            if (dY < bestHDist) {
-                bestHDist = dY; axisHPos = fp; axisHRefId = -1; axisHFires = true;
-            }
-        }
-
-        // Hover-charged reference (Full level): project guides anchored AT the
-        // point the user dwelled on — a vertical (x=ref.x), a horizontal
-        // (y=ref.y), and a perpendicular ray through ref for each line touching
-        // it. Lets you land a vertex "vertical from point A" / "perpendicular to
-        // line 1 through A", which the previous-segment perp/parallel can't
-        // express (it anchors at the current segment's start, not an arbitrary
-        // point). Deliberate (you hovered it), so it outranks perp-to-prev.
-        if (allowCharge && m_isPlacing && m_chargedPointId >= 0 &&
-            m_mode == SketchToolMode::Line) {
-            const SketchPoint* ref = m_sketch->getPoint(m_chargedPointId);
-            if (ref) {
-                const glm::vec2 R = ref->pos;
-                struct Cand { glm::vec2 dir; InferenceGuide::Kind kind; };
-                std::vector<Cand> cands;
-                cands.push_back({glm::vec2(0.0f, 1.0f), InferenceGuide::AxisVFromPoint});
-                cands.push_back({glm::vec2(1.0f, 0.0f), InferenceGuide::AxisHFromPoint});
-                for (const auto& ln : m_sketch->getLines()) {
-                    if (ln.fromText) continue;
-                    if (ln.startPointId != m_chargedPointId &&
-                        ln.endPointId   != m_chargedPointId) continue;
-                    const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
-                    const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
-                    if (!p1 || !p2) continue;
-                    glm::vec2 e = p2->pos - p1->pos;
-                    if (glm::length(e) < 1e-6f) continue;
-                    e = glm::normalize(e);
-                    cands.push_back({glm::vec2(-e.y, e.x), InferenceGuide::PerpToRef});
-                }
-                const float posCapRef = std::max(1.5f, m_gridStep * 1.5f);
-                float bestD = posCapRef;
-                glm::vec2 bestPos = pos;
-                InferenceGuide::Kind bestKind = InferenceGuide::PerpToRef;
-                bool fired = false;
-                for (const auto& c : cands) {
-                    float t = glm::dot(pos - R, c.dir);
-                    glm::vec2 proj = R + c.dir * t;
-                    float d = glm::length(proj - pos);
-                    if (d < bestD) { bestD = d; bestPos = proj; bestKind = c.kind; fired = true; }
-                }
-                if (fired) {
-                    m_activeInferences.push_back({bestKind, R, bestPos, m_chargedPointId});
-                    return rectifyNearAxis(bestPos);
-                }
+            if (dY < axisThresh) {
+                glm::vec2 proj(pos.x, fp.y);
+                cands.push_back({fp, glm::vec2(1,0), InferenceGuide::AxisHFromPoint,
+                                 -1, fp, false, 0.0f, proj, dY, false});
             }
         }
+    }
 
-        // Perpendicular / parallel to previous: when drawing a line chain and
-        // we have a direction from the last committed segment, snap the
-        // current direction to either perp or parallel when within ~5° of it.
-        // Whichever is closer wins; they can't both fire simultaneously.
-        bool perpFires = false, parFires = false;
-        glm::vec2 perpDir(0.0f), parDir(0.0f);
-        glm::vec2 perpProj = pos, parProj = pos;
-        if (allowDirectional && m_isPlacing && m_hasPrevLineDir &&
-            m_mode == SketchToolMode::Line) {
-            perpDir = glm::vec2(-m_prevLineDir.y, m_prevLineDir.x); // 90° rotate
-            parDir  = m_prevLineDir;
-            glm::vec2 v = pos - m_firstClick;
-            float len = glm::length(v);
-            if (len > 1e-6f) {
-                float alongPerp = glm::dot(v, perpDir);
-                float alongPar  = glm::dot(v, parDir);
-                perpProj = m_firstClick + perpDir * alongPerp;
-                parProj  = m_firstClick + parDir  * alongPar;
-                float perpOffset = glm::distance(pos, perpProj);
-                float parOffset  = glm::distance(pos, parProj);
-                // Within ~5° (sin5° ≈ 0.087) of perp / parallel, OR within
-                // axisThresh in absolute world units — whichever is more
-                // generous at this segment length.
-                float angleTol = 0.087f * len;
-                float tol = std::max(axisThresh, angleTol);
-                bool perpClose = perpOffset < tol;
-                bool parClose  = parOffset  < tol;
-                if (perpClose && parClose) {
-                    if (perpOffset <= parOffset) perpFires = true;
-                    else                          parFires  = true;
-                } else if (perpClose) {
-                    perpFires = true;
-                } else if (parClose) {
-                    parFires = true;
-                }
+    // Perpendicular / parallel to previous: within ~5° of perp or parallel
+    // to the chain's last committed segment, anchored at the current first
+    // click. Geometrically mutually exclusive — whichever is closer fires.
+    if (allowDirectional && m_isPlacing && m_hasPrevLineDir &&
+        m_mode == SketchToolMode::Line) {
+        glm::vec2 perpDir(-m_prevLineDir.y, m_prevLineDir.x);
+        glm::vec2 parDir = m_prevLineDir;
+        glm::vec2 v = pos - m_firstClick;
+        float len = glm::length(v);
+        if (len > 1e-6f) {
+            glm::vec2 perpProj = m_firstClick + perpDir * glm::dot(v, perpDir);
+            glm::vec2 parProj  = m_firstClick + parDir  * glm::dot(v, parDir);
+            float perpOffset = glm::distance(pos, perpProj);
+            float parOffset  = glm::distance(pos, parProj);
+            // Within ~5° (sin5° ≈ 0.087) of perp / parallel, OR within
+            // axisThresh in absolute world units — whichever is more
+            // generous at this segment length.
+            float tol = std::max(axisThresh, 0.087f * len);
+            bool perpClose = perpOffset < tol;
+            bool parClose  = parOffset  < tol;
+            if (perpClose && (!parClose || perpOffset <= parOffset)) {
+                cands.push_back({m_firstClick, perpDir, InferenceGuide::PerpToPrev,
+                                 -1, m_firstClick, false, 0.0f, perpProj, perpOffset, true});
+            } else if (parClose) {
+                cands.push_back({m_firstClick, parDir, InferenceGuide::ParallelToPrev,
+                                 -1, m_firstClick, false, 0.0f, parProj, parOffset, true});
             }
         }
+    }
 
-        // Tangent-to-circle detection: compute direction now so the combine
-        // block below can treat it as another direction-lock candidate (so
-        // tangent + axis-from-point intersect like perp + axis does).
-        bool tangentFires = false;
-        glm::vec2 tangentDir(0.0f), tangentProj = pos;
-        int tangentRefId = -1;
-        if (allowDirectional && m_isPlacing && m_mode == SketchToolMode::Line) {
-            glm::vec2 v = pos - m_firstClick;
-            float len = glm::length(v);
-            if (len > 0.5f) {
-                float cursorAngle = std::atan2(v.y, v.x);
-                const float angTol = 3.0f * static_cast<float>(M_PI) / 180.0f;
-                auto angDiff = [](float a, float b) {
-                    const float TWO_PI = 2.0f * static_cast<float>(M_PI);
-                    float d = std::fmod(std::abs(a - b), TWO_PI);
-                    if (d > static_cast<float>(M_PI)) d = TWO_PI - d;
-                    return d;
-                };
-                auto checkTangent = [&](glm::vec2 cpos, double cradius, int refId) {
-                    glm::vec2 toC = cpos - m_firstClick;
-                    float D = glm::length(toC);
-                    if (D <= static_cast<float>(cradius) + 1e-3f) return;
-                    float baseAngle = std::atan2(toC.y, toC.x);
-                    float tangentOffset = std::asin(static_cast<float>(cradius) / D);
-                    float ang1 = baseAngle + tangentOffset;
-                    float ang2 = baseAngle - tangentOffset;
-                    float d1 = angDiff(cursorAngle, ang1);
-                    float d2 = angDiff(cursorAngle, ang2);
-                    float bestDelta = std::min(d1, d2);
-                    if (bestDelta < angTol) {
-                        float snapAng = (d1 < d2) ? ang1 : ang2;
-                        tangentDir = glm::vec2(std::cos(snapAng), std::sin(snapAng));
-                        tangentProj = m_firstClick + tangentDir * len;
-                        tangentRefId = refId;
-                        tangentFires = true;
-                    }
-                };
-                for (const auto& circle : m_sketch->getCircles()) {
-                    if (tangentFires) break;
-                    const SketchPoint* center = m_sketch->getPoint(circle.centerPointId);
-                    if (center) checkTangent(center->pos, circle.radius, circle.id);
-                }
-                for (const auto& arc : m_sketch->getArcs()) {
-                    if (tangentFires) break;
-                    const SketchPoint* center = m_sketch->getPoint(arc.centerPointId);
-                    if (center) checkTangent(center->pos, arc.radius, arc.id);
-                }
-            }
-        }
-
-        // Combine: if a direction-lock (perp / parallel / tangent) AND an
-        // axis-from-point both fire, snap to their intersection — e.g. "tangent
-        // to that circle AND on its centre's vertical axis" lands on a single
-        // unique point. Solved by parametric line / axis intersect.
-        bool snapped = false;
-        glm::vec2 result = pos;
-        // POSITIONAL cap on every directional inference: the fires-checks
-        // are ANGULAR, so on long lines their capture distance grows with
-        // length (3° at 100 mm = 5+ mm of cursor theft — "8mm away and it
-        // still wants to stick"). An inference may only move the cursor a
-        // couple of millimetres from where the user actually is.
-        const float posCap = std::max(1.5f, m_gridStep * 1.5f);
-        auto applyDirLock = [&](glm::vec2 dir, InferenceGuide::Kind dirKind,
-                                glm::vec2 projFallback, int dirRefId = -1) -> bool {
-            if (axisVFires && std::abs(dir.x) > 1e-3f) {
-                float t = (axisVPos.x - m_firstClick.x) / dir.x;
-                glm::vec2 cand = m_firstClick + dir * t;
-                if (glm::length(cand - pos) < posCap) {
-                    result = cand;
-                    m_activeInferences.push_back(
-                        {dirKind, m_firstClick, result, dirRefId});
-                    m_activeInferences.push_back(
-                        {InferenceGuide::AxisVFromPoint, axisVPos, result, axisVRefId});
-                    return true;
-                }
-            }
-            if (axisHFires && std::abs(dir.y) > 1e-3f) {
-                float t = (axisHPos.y - m_firstClick.y) / dir.y;
-                glm::vec2 cand = m_firstClick + dir * t;
-                if (glm::length(cand - pos) < posCap) {
-                    result = cand;
-                    m_activeInferences.push_back(
-                        {dirKind, m_firstClick, result, dirRefId});
-                    m_activeInferences.push_back(
-                        {InferenceGuide::AxisHFromPoint, axisHPos, result, axisHRefId});
-                    return true;
-                }
-            }
-            // No axis intersection — snap onto the locked direction if it's
-            // actually near the cursor.
-            if (glm::length(projFallback - pos) < posCap) {
-                result = projFallback;
-                m_activeInferences.push_back({dirKind, m_firstClick, result, dirRefId});
-                return true;
-            }
-            return false;
-        };
-        if (perpFires) {
-            snapped = applyDirLock(perpDir, InferenceGuide::PerpToPrev, perpProj);
-        } else if (parFires) {
-            snapped = applyDirLock(parDir, InferenceGuide::ParallelToPrev, parProj);
-        } else if (tangentFires) {
-            snapped = applyDirLock(tangentDir, InferenceGuide::TangentToCircle,
-                                   tangentProj, tangentRefId);
-        }
-        // Standalone axis-from-point (cursor aligned with any point's X or Y
-        // but no perp/parallel/tangent lock) deliberately doesn't fire — with
-        // sketch points + face vertices around, the cursor is almost always
-        // incidentally aligned with someone's coordinate, so the standalone
-        // guide became visual noise. Axis still acts as a co-pilot inside
-        // applyDirLock above (perp/parallel/tangent + axis → intersection),
-        // which is the actually-useful case. Angle snap and endpoint snap
-        // cover everything else.
-        if (snapped) return rectifyNearAxis(result);
-
-        // Angle-snap fallback: while drawing a line, if nothing above fired,
-        // check if the cursor direction from the anchor is within ~3° of a
-        // common 15° increment (0, 15, 30, 45, 60, 75, 90, …). If so, snap
-        // the angle and emit a grey guide so the user can see the lock.
-        // Skipped when the perpendicular / parallel inferences already had a
-        // chance — those are stronger semantic intents.
-        if (allowDirectional && m_isPlacing && m_mode == SketchToolMode::Line) {
-            glm::vec2 v = pos - m_firstClick;
-            float len = glm::length(v);
-            if (len > 0.5f) {
-                float a = std::atan2(v.y, v.x);
-                const float step = 15.0f * static_cast<float>(M_PI) / 180.0f;
-                float snappedA = std::round(a / step) * step;
-                float angDelta = std::abs(a - snappedA);
-                // Wrap so e.g. 179° vs −180° doesn't read as a large delta.
+    // Tangent-to-circle / arc: cursor direction from anchor within ~3° of
+    // a tangent ray to a circle/arc. First match wins (multiple curves
+    // simultaneously tangent is rare and arbitrary which to pick).
+    if (allowDirectional && m_isPlacing && m_mode == SketchToolMode::Line) {
+        glm::vec2 v = pos - m_firstClick;
+        float len = glm::length(v);
+        if (len > 0.5f) {
+            float cursorAngle = std::atan2(v.y, v.x);
+            const float angTol = 3.0f * static_cast<float>(M_PI) / 180.0f;
+            auto angDiff = [](float a, float b) {
                 const float TWO_PI = 2.0f * static_cast<float>(M_PI);
-                if (angDelta > static_cast<float>(M_PI))
-                    angDelta = TWO_PI - angDelta;
-                // ~3° tolerance — generous enough to feel sticky but small
-                // enough that off-axis lines still draw at the actual angle.
-                const float angTol = 3.0f * static_cast<float>(M_PI) / 180.0f;
-                if (angDelta < angTol) {
-                    glm::vec2 dir(std::cos(snappedA), std::sin(snappedA));
-                    glm::vec2 snappedPos = m_firstClick + dir * len;
-                    // Same positional cap as the directional locks: 3°
-                    // of a 100 mm line is 5 mm of cursor theft otherwise.
-                    if (glm::length(snappedPos - pos) <
-                        std::max(1.5f, m_gridStep * 1.5f)) {
-                        m_activeInferences.push_back(
-                            {InferenceGuide::AngleSnap, m_firstClick,
-                             snappedPos, -1});
-                        return rectifyNearAxis(snappedPos);
-                    }
+                float d = std::fmod(std::abs(a - b), TWO_PI);
+                if (d > static_cast<float>(M_PI)) d = TWO_PI - d;
+                return d;
+            };
+            bool found = false;
+            auto checkTangent = [&](glm::vec2 cpos, double cradius, int refId) {
+                if (found) return;
+                glm::vec2 toC = cpos - m_firstClick;
+                float D = glm::length(toC);
+                if (D <= static_cast<float>(cradius) + 1e-3f) return;
+                float baseAngle = std::atan2(toC.y, toC.x);
+                float tangentOffset = std::asin(static_cast<float>(cradius) / D);
+                float ang1 = baseAngle + tangentOffset;
+                float ang2 = baseAngle - tangentOffset;
+                float d1 = angDiff(cursorAngle, ang1);
+                float d2 = angDiff(cursorAngle, ang2);
+                float bestDelta = std::min(d1, d2);
+                if (bestDelta < angTol) {
+                    float snapAng = (d1 < d2) ? ang1 : ang2;
+                    glm::vec2 tDir(std::cos(snapAng), std::sin(snapAng));
+                    glm::vec2 tProj = m_firstClick + tDir * len;
+                    float perpOffset = glm::distance(tProj, pos);
+                    cands.push_back({m_firstClick, tDir, InferenceGuide::TangentToCircle,
+                                     refId, m_firstClick, false, 0.0f,
+                                     tProj, perpOffset, true});
+                    found = true;
+                }
+            };
+            for (const auto& circle : m_sketch->getCircles()) {
+                const SketchPoint* center = m_sketch->getPoint(circle.centerPointId);
+                if (center) checkTangent(center->pos, circle.radius, circle.id);
+            }
+            for (const auto& arc : m_sketch->getArcs()) {
+                const SketchPoint* center = m_sketch->getPoint(arc.centerPointId);
+                if (center) checkTangent(center->pos, arc.radius, arc.id);
+            }
+        }
+    }
+
+    // Hover-charged reference (Full level): the dwelt-on point projects
+    // vertical, horizontal, and per-touching-line perpendicular guides AT
+    // R. Wider tolerance than incidental axis-from-point (posCap, not
+    // axisThresh) — the user deliberately charged this — and
+    // standaloneAllowed=true so it can be the lone snap.
+    if (allowCharge && m_isPlacing && m_chargedPointId >= 0 &&
+        m_mode == SketchToolMode::Line) {
+        const SketchPoint* ref = m_sketch->getPoint(m_chargedPointId);
+        if (ref) {
+            const glm::vec2 R = ref->pos;
+            float dxR = std::abs(pos.x - R.x);
+            if (dxR < posCap) {
+                glm::vec2 proj(R.x, pos.y);
+                cands.push_back({R, glm::vec2(0,1), InferenceGuide::AxisVFromPoint,
+                                 m_chargedPointId, R, false, 0.0f, proj, dxR, true});
+            }
+            float dyR = std::abs(pos.y - R.y);
+            if (dyR < posCap) {
+                glm::vec2 proj(pos.x, R.y);
+                cands.push_back({R, glm::vec2(1,0), InferenceGuide::AxisHFromPoint,
+                                 m_chargedPointId, R, false, 0.0f, proj, dyR, true});
+            }
+            for (const auto& ln : m_sketch->getLines()) {
+                if (ln.fromText) continue;
+                if (ln.startPointId != m_chargedPointId &&
+                    ln.endPointId   != m_chargedPointId) continue;
+                const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
+                const SketchPoint* p2 = m_sketch->getPoint(ln.endPointId);
+                if (!p1 || !p2) continue;
+                glm::vec2 e = p2->pos - p1->pos;
+                if (glm::length(e) < 1e-6f) continue;
+                e = glm::normalize(e);
+                glm::vec2 perp(-e.y, e.x);
+                float t = glm::dot(pos - R, perp);
+                glm::vec2 proj = R + perp * t;
+                float d = glm::length(proj - pos);
+                if (d < posCap) {
+                    cands.push_back({R, perp, InferenceGuide::PerpToRef,
+                                     m_chargedPointId, R, false, 0.0f, proj, d, true});
                 }
             }
         }
     }
 
-    // Grid snap: ALWAYS round to the nearest grid increment when enabled.
-    // A fractional-threshold band (e.g. 25 % of the step) sounds reasonable
-    // but at any practical zoom level the band is sub-pixel cursor precision
-    // on BOTH axes simultaneously, so the snap silently misses and the user
-    // ends up with off-grid sketches when they explicitly asked for 1 mm
-    // precision. Inferences (endpoint / midpoint / axis-from-point / etc.)
-    // run earlier in this function and override grid snap when active, so
-    // precise-but-off-grid placements still work via those. The toolbar
-    // "Snap to grid" checkbox is the explicit opt-out for free-form drawing.
+    // ─── PHASE 3: Resolve ────────────────────────────────────────────────────
+    // (a) Pair intersection — if two cands intersect at a point within posCap
+    //     of the cursor (and within each one's segment bounds), prefer the
+    //     intersection closest to the cursor. Both guides render. This is the
+    //     "perpendicular AND on edge" composite.
+    // (b) Single-line projection — smallest perpDist among standaloneAllowed
+    //     cands.
+    // (c) Angle-snap fallback — 15° increment from the chain anchor.
+    // (d) Grid snap.
+    auto intersect2 = [](glm::vec2 a1, glm::vec2 d1, glm::vec2 a2, glm::vec2 d2,
+                         glm::vec2& out, float& outT1, float& outT2) -> bool {
+        // Cramer's on  [d1.x, -d2.x; d1.y, -d2.y] [t1; t2] = a2 - a1.
+        float det = d1.y * d2.x - d1.x * d2.y;
+        if (std::abs(det) < 1e-9f) return false; // parallel / coincident
+        glm::vec2 dp = a2 - a1;
+        outT1 = (d2.x * dp.y - d2.y * dp.x) / det;
+        outT2 = (d1.x * dp.y - d1.y * dp.x) / det;
+        out = a1 + d1 * outT1;
+        return true;
+    };
+
+    // Snap a point ON a line constraint to the grid lattice. Picks the
+    // dominant axis of the line direction (X if mostly horizontal, Y if
+    // mostly vertical, X arbitrarily at 45°), rounds that coord to the
+    // nearest grid step, and re-solves the other coord on the line. So
+    // placements along an edge / charged guide / perp ray / angle-snap
+    // land on the grid instead of wherever the cursor's perpendicular
+    // foot happened to be. Skipped when grid is off or step is 0.
+    // (Steve: any guide that uses an edge / face feature should still
+    //  adhere to the snap grid.)
+    auto gridAlongLine = [&](glm::vec2 anchor, glm::vec2 dir,
+                              bool isSegment, float segLen,
+                              glm::vec2 unsnapped) -> glm::vec2 {
+        if (!m_snapToGridEnabled || m_gridStep <= 0.0f) return unsnapped;
+        if (std::abs(dir.x) >= std::abs(dir.y) && std::abs(dir.x) > 1e-6f) {
+            float snappedX = std::round(unsnapped.x / m_gridStep) * m_gridStep;
+            float t = (snappedX - anchor.x) / dir.x;
+            if (isSegment) t = glm::clamp(t, 0.0f, segLen);
+            return anchor + dir * t;
+        }
+        if (std::abs(dir.y) > 1e-6f) {
+            float snappedY = std::round(unsnapped.y / m_gridStep) * m_gridStep;
+            float t = (snappedY - anchor.y) / dir.y;
+            if (isSegment) t = glm::clamp(t, 0.0f, segLen);
+            return anchor + dir * t;
+        }
+        return unsnapped;
+    };
+
+    // Intersection cap is WIDER than the single-line posCap: each cand only
+    // enters the list after passing its own perpDist tolerance, so a two-cand
+    // pair is already user-deliberate (both inferences fired cleanly). The
+    // intersection then sits wherever geometry puts it — for a steep edge ×
+    // charged vertical, that can be a few mm off the cursor's perpendicular
+    // path. With posCap (1.5 mm) we'd silently fall through to single-line
+    // OnLine even though "On Line + On Vertical Axis" both showed as fired,
+    // which is what Steve hit in the 18.9 mm screenshot.
+    const float intersectCap = posCap * 5.0f;
+    int bestI = -1, bestJ = -1;
+    glm::vec2 bestIsect = pos;
+    float bestIsectD = intersectCap;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        for (size_t j = i + 1; j < cands.size(); ++j) {
+            glm::vec2 isect;
+            float t1, t2;
+            if (!intersect2(cands[i].anchor, cands[i].dir,
+                            cands[j].anchor, cands[j].dir, isect, t1, t2)) continue;
+            if (cands[i].isSegment && (t1 < 0.0f || t1 > cands[i].segLen)) continue;
+            if (cands[j].isSegment && (t2 < 0.0f || t2 > cands[j].segLen)) continue;
+            float d = glm::length(isect - pos);
+            if (d < bestIsectD) {
+                bestIsectD = d;
+                bestIsect = isect;
+                bestI = static_cast<int>(i);
+                bestJ = static_cast<int>(j);
+            }
+        }
+    }
+    // The renderer reads g.from for the OnLine diamond marker (a point-
+    // marker, not a guide-line origin), so it must follow the snap point;
+    // for dashed-line kinds (axis / perp / parallel / tangent) g.from is
+    // the guide's anchor end and stays at the cand's reference. (Steve:
+    // the preview diamond was tracking the cursor's perpendicular foot
+    // instead of the grid-aligned snap.)
+    auto emitWithSnap = [&](const LineCand& c, glm::vec2 snapPos) {
+        glm::vec2 from = (c.kind == InferenceGuide::OnLine) ? snapPos : c.visFrom;
+        m_activeInferences.push_back({c.kind, from, snapPos, c.refId});
+    };
+    if (bestI >= 0) {
+        emitWithSnap(cands[bestI], bestIsect);
+        emitWithSnap(cands[bestJ], bestIsect);
+        return rectifyNearAxis(bestIsect);
+    }
+
+    int bestK = -1;
+    float bestPerp = posCap;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (!cands[i].standaloneAllowed) continue;
+        if (cands[i].perpDist < bestPerp) {
+            bestPerp = cands[i].perpDist;
+            bestK = static_cast<int>(i);
+        }
+    }
+    if (bestK >= 0) {
+        const auto& c = cands[bestK];
+        glm::vec2 snapped = gridAlongLine(c.anchor, c.dir, c.isSegment, c.segLen, c.proj);
+        emitWithSnap(c, snapped);
+        return rectifyNearAxis(snapped);
+    }
+
+    // Angle-snap fallback: cursor direction from anchor within ~3° of a
+    // 15° increment. Only fires when nothing above did — the perp /
+    // parallel inferences are stronger semantic intents.
+    if (allowDirectional && m_isPlacing && m_mode == SketchToolMode::Line) {
+        glm::vec2 v = pos - m_firstClick;
+        float len = glm::length(v);
+        if (len > 0.5f) {
+            float a = std::atan2(v.y, v.x);
+            const float step = 15.0f * static_cast<float>(M_PI) / 180.0f;
+            float snappedA = std::round(a / step) * step;
+            float angDelta = std::abs(a - snappedA);
+            const float TWO_PI = 2.0f * static_cast<float>(M_PI);
+            if (angDelta > static_cast<float>(M_PI))
+                angDelta = TWO_PI - angDelta;
+            const float angTol = 3.0f * static_cast<float>(M_PI) / 180.0f;
+            if (angDelta < angTol) {
+                glm::vec2 dir(std::cos(snappedA), std::sin(snappedA));
+                glm::vec2 snappedPos = m_firstClick + dir * len;
+                if (glm::length(snappedPos - pos) < posCap) {
+                    // Grid-along-line so the 15° ray's endpoint lands on
+                    // a lattice step instead of sub-grid drift.
+                    snappedPos = gridAlongLine(m_firstClick, dir, false,
+                                                0.0f, snappedPos);
+                    m_activeInferences.push_back(
+                        {InferenceGuide::AngleSnap, m_firstClick,
+                         snappedPos, -1});
+                    return rectifyNearAxis(snappedPos);
+                }
+            }
+        }
+    }
+
+    // Grid snap: always round to the nearest grid increment when enabled. A
+    // fractional-threshold band sounds reasonable but at any practical zoom
+    // level is sub-pixel cursor precision on BOTH axes simultaneously, so
+    // the snap silently misses and the user ends up with off-grid sketches
+    // when they explicitly asked for 1 mm precision. The toolbar "Snap to
+    // grid" checkbox is the explicit opt-out for free-form drawing.
     if (!m_snapToGridEnabled || m_gridStep <= 0.0f) return pos;
     glm::vec2 result;
     result.x = std::round(pos.x / m_gridStep) * m_gridStep;
