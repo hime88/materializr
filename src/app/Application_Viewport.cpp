@@ -886,20 +886,22 @@ void Application::renderViewport() {
 
             // Scale Face 2D gizmo: one arrow per in-plane axis, tip
             // tracking the live percentage. Drag a tip to scale that
-            // direction (handled in the input section below).
+            // direction (handled in the input section below). Arrows are
+            // labelled by COLOUR (red / blue) matching the panel's per-
+            // axis sliders — the old "U" / "V" letters meant nothing to
+            // the user.
             if (m_scaleFaceCtl.active()) {
                 const auto& sfc = m_scaleFaceCtl;
                 auto drawHandle = [&](const glm::vec3& axis, float halfExt,
-                                      float pct, ImU32 col,
-                                      const char* lbl) {
+                                      float pct, ImU32 col) {
                     glm::vec3 tipW = sfc.center() +
                         axis * (halfExt * pct / 100.0f);
                     ImVec2 a, b;
                     if (toImg(sfc.center(), a) && toImg(tipW, b)) {
                         dl->AddLine(a, b, col, 3.0f);
                         dl->AddCircleFilled(b, 7.0f, col);
-                        char hl[32];
-                        std::snprintf(hl, sizeof(hl), "%s %.0f%%", lbl, pct);
+                        char hl[16];
+                        std::snprintf(hl, sizeof(hl), "%.0f%%", pct);
                         ImVec2 ts = ImGui::CalcTextSize(hl);
                         ImVec2 tp(b.x + 10.0f, b.y - ts.y * 0.5f);
                         dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2),
@@ -910,9 +912,9 @@ void Application::renderViewport() {
                     }
                 };
                 drawHandle(sfc.axisU(), sfc.halfU(), sfc.pctU(),
-                           IM_COL32(235, 90, 90, 255), "U");
+                           IM_COL32(235, 90, 90, 255));
                 drawHandle(sfc.axisV(), sfc.halfV(), sfc.pctV(),
-                           IM_COL32(90, 150, 235, 255), "V");
+                           IM_COL32(90, 150, 235, 255));
             }
 
             char dbuf[40];
@@ -1847,7 +1849,14 @@ void Application::renderViewport() {
             // the same button the gizmo and picker use. Without suppression, a
             // gizmo-handle drag would also yank the camera, so the gizmo and
             // picker block the camera-drag while they own the interaction.
-            bool gizmoOwnsDrag = m_gizmoDragging;
+            // Scale Face joins gizmoOwnsDrag the moment its click handler
+            // claims an axis (sets dragAxis on the down-frame). Without
+            // this, trackpad mode — left-orbit, left-pan — would steal the
+            // subsequent drag-threshold frame and run orbit instead of the
+            // axis drag, so the gizmo "felt unclickable". (Steve: every
+            // other interactive op already handles this correctly.)
+            bool gizmoOwnsDrag = m_gizmoDragging ||
+                                 m_scaleFaceCtl.dragAxis() >= 0;
             if (!gizmoOwnsDrag && ImGui::IsMouseDragging(m_orbitButton)) {
                 ImVec2 delta = io.MouseDelta;
                 if (io.KeyShift) cam.pan(delta.x, delta.y);
@@ -1985,11 +1994,8 @@ void Application::renderViewport() {
             // to the face's half-extent.
             if (m_scaleFaceCtl.active() && !camDragging) {
                 auto& sfc = m_scaleFaceCtl;
-                auto tipScreen = [&](const glm::vec3& axis, float halfExt,
-                                     float pct, ImVec2& out) -> bool {
-                    glm::vec3 tipW = sfc.center() +
-                        axis * (halfExt * pct / 100.0f);
-                    glm::vec4 clip = proj * view * glm::vec4(tipW, 1.0f);
+                auto toScreen = [&](const glm::vec3& w, ImVec2& out) -> bool {
+                    glm::vec4 clip = proj * view * glm::vec4(w, 1.0f);
                     if (clip.w <= 1e-6f) return false;
                     glm::vec3 ndc = glm::vec3(clip) / clip.w;
                     ImVec2 wp = ImGui::GetItemRectMin();
@@ -2000,17 +2006,39 @@ void Application::renderViewport() {
                 if (sfc.dragAxis() < 0 &&
                     ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     ImVec2 mp = ImGui::GetMousePos();
-                    ImVec2 tu, tv;
-                    auto near2 = [&](const ImVec2& a) {
-                        float dx = a.x - mp.x, dy = a.y - mp.y;
-                        return dx * dx + dy * dy < 16.0f * 16.0f;
+                    // Click anywhere along the arrow line (center → tip), not
+                    // just the 7-px dot at the tip. The old 16-px tip disk
+                    // made the visible arrow shaft look clickable but it
+                    // wasn't. (Steve: "the gizmo is not clickable".)
+                    glm::vec3 centerW = sfc.center();
+                    glm::vec3 tipUW = centerW + sfc.axisU() *
+                                          (sfc.halfU() * sfc.pctU() / 100.0f);
+                    glm::vec3 tipVW = centerW + sfc.axisV() *
+                                          (sfc.halfV() * sfc.pctV() / 100.0f);
+                    ImVec2 cs, tu, tv;
+                    bool gotC = toScreen(centerW, cs);
+                    bool gotU = toScreen(tipUW,   tu);
+                    bool gotV = toScreen(tipVW,   tv);
+                    auto distToSeg = [&](ImVec2 a, ImVec2 b) {
+                        float dx = b.x - a.x, dy = b.y - a.y;
+                        float len2 = dx * dx + dy * dy;
+                        float qx, qy;
+                        if (len2 < 1e-6f) {
+                            qx = mp.x - a.x; qy = mp.y - a.y;
+                        } else {
+                            float t = ((mp.x - a.x) * dx +
+                                       (mp.y - a.y) * dy) / len2;
+                            t = std::max(0.0f, std::min(1.0f, t));
+                            qx = mp.x - (a.x + t * dx);
+                            qy = mp.y - (a.y + t * dy);
+                        }
+                        return std::sqrt(qx * qx + qy * qy);
                     };
-                    if (tipScreen(sfc.axisU(), sfc.halfU(), sfc.pctU(), tu) &&
-                        near2(tu))
-                        sfc.setDragAxis(0);
-                    else if (tipScreen(sfc.axisV(), sfc.halfV(), sfc.pctV(),
-                                       tv) && near2(tv))
-                        sfc.setDragAxis(1);
+                    float du = (gotC && gotU) ? distToSeg(cs, tu) : 1e9f;
+                    float dv = (gotC && gotV) ? distToSeg(cs, tv) : 1e9f;
+                    const float pick = 12.0f; // generous, matches trackpad feel
+                    if (du < pick && du <= dv)       sfc.setDragAxis(0);
+                    else if (dv < pick)              sfc.setDragAxis(1);
                 }
                 if (sfc.dragAxis() >= 0 &&
                     ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {

@@ -90,12 +90,13 @@ void Camera::orbitLevel(float yawDelta, float pitchDelta)
 
 void Camera::orbit(float deltaX, float deltaY)
 {
+    const float s = m_orbitSpeed * m_mouseSensitivity;
     if (m_levelOrbit) {
-        orbitLevel(deltaX * m_orbitSpeed, deltaY * m_orbitSpeed);
+        orbitLevel(deltaX * s, deltaY * s);
     } else {
         m_orthographic = false;
         trackballRotate(m_position, m_target, m_up,
-                        -deltaX * m_orbitSpeed, -deltaY * m_orbitSpeed);
+                        -deltaX * s, -deltaY * s);
     }
 }
 
@@ -119,7 +120,7 @@ void Camera::pan(float deltaX, float deltaY)
     // track that instead — otherwise panning at distance 0.1 looks frozen while
     // panning at distance 100 throws the model off-screen.
     float scaleRef = m_orthographic ? m_orthoSize : glm::length(m_target - m_position);
-    float panScale = scaleRef * m_panSpeed;
+    float panScale = scaleRef * m_panSpeed * m_mouseSensitivity;
 
     glm::vec3 offset = -right * deltaX * panScale + up * deltaY * panScale;
     m_position += offset;
@@ -128,10 +129,11 @@ void Camera::pan(float deltaX, float deltaY)
 
 void Camera::zoom(float delta)
 {
+    const float s = m_zoomSpeed * m_mouseSensitivity;
     if (m_orthographic) {
         // In ortho, "zoom" scales the visible extents rather than moving the camera.
         // Multiplicative step keeps the feel consistent across scales.
-        float factor = 1.0f - delta * m_zoomSpeed;
+        float factor = 1.0f - delta * s;
         factor = glm::clamp(factor, 0.1f, 10.0f);
         m_orthoSize = std::max(0.01f, m_orthoSize * factor);
         return;
@@ -141,7 +143,7 @@ void Camera::zoom(float delta)
     float distance = glm::length(direction);
 
     // Scale zoom by current distance for consistent feel
-    float zoomAmount = delta * m_zoomSpeed * distance;
+    float zoomAmount = delta * s * distance;
 
     // Prevent zooming through the target
     float newDistance = distance - zoomAmount;
@@ -158,7 +160,7 @@ void Camera::zoomToward(const glm::vec3& focus, float delta)
     // subsequent orbits pivot around the new target — which is now near the
     // thing the user was zooming on. This eliminates the "I have to pan to
     // re-aim before zoom feels right" dance for off-origin parts.
-    float factor = 1.0f - delta * m_zoomSpeed;
+    float factor = 1.0f - delta * m_zoomSpeed * m_mouseSensitivity;
     factor = glm::clamp(factor, 0.1f, 10.0f);
     if (m_orthographic) {
         // In ortho, both the camera/target slide AND the view extent scale —

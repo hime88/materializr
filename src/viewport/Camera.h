@@ -96,6 +96,14 @@ public:
     void setLevelOrbit(bool level) { m_levelOrbit = level; }
     bool isLevelOrbit() const { return m_levelOrbit; }
 
+    /// Uniform multiplier on orbit / pan / zoom input deltas — one user-facing
+    /// sensitivity knob, so a slow trackpad doesn't whip the camera around at
+    /// the same time as the desktop mouse cursor stays slow. 1.0 = the
+    /// hard-coded baseline (m_orbitSpeed / m_panSpeed / m_zoomSpeed); below 1
+    /// is calmer, above 1 is snappier. Persisted via AppSettings.
+    void setMouseSensitivity(float s) { m_mouseSensitivity = s; }
+    float getMouseSensitivity() const { return m_mouseSensitivity; }
+
 private:
     glm::vec3 m_position;
     glm::vec3 m_target;
@@ -114,6 +122,8 @@ private:
     float m_orbitSpeed;
     float m_panSpeed;
     float m_zoomSpeed;
+    // User-facing sensitivity multiplier (see setMouseSensitivity).
+    float m_mouseSensitivity = 1.0f;
 };
 
 } // namespace materializr

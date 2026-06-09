@@ -531,9 +531,17 @@ void ScaleFaceController::panelBody(const IopContext&, bool& changed) {
             changed = true;
         }
     } else {
-        if (ImGui::SliderFloat("Scale U", &m_pctU, 5.0f, 200.0f, "%.0f %%"))
+        // Each slider's text label is shown ABOVE the bar in the colour of
+        // the matching face-gizmo arrow, with a hidden "##" slider label.
+        // (Steve: "U" and "V" mean nothing here, and the narrow panel was
+        //  truncating "Scale U" / "Scale V" to just "S" at the right edge.)
+        const ImVec4 redCol (0.92f, 0.35f, 0.35f, 1.0f); // matches the red arrow
+        const ImVec4 blueCol(0.35f, 0.59f, 0.92f, 1.0f); // matches the blue arrow
+        ImGui::TextColored(redCol, "Red line");
+        if (ImGui::SliderFloat("##scaleU", &m_pctU, 5.0f, 200.0f, "%.0f %%"))
             changed = true;
-        if (ImGui::SliderFloat("Scale V", &m_pctV, 5.0f, 200.0f, "%.0f %%"))
+        ImGui::TextColored(blueCol, "Blue line");
+        if (ImGui::SliderFloat("##scaleV", &m_pctV, 5.0f, 200.0f, "%.0f %%"))
             changed = true;
     }
     ImGui::TextDisabled("Or drag the two arrows on the face.");

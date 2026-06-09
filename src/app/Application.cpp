@@ -905,6 +905,7 @@ AppSettings Application::currentSettings() const {
     s.orbitButton = m_orbitButton;
     s.panButton = m_panButton;
     s.levelOrbit = m_viewport->getCamera().isLevelOrbit();
+    s.mouseSensitivity = m_viewport->getCamera().getMouseSensitivity();
     s.autosaveEnabled = m_autosaveEnabled;
     s.autosaveIntervalSec = static_cast<int>(m_autosaveIntervalSec);
     s.invertCubeDrag = m_invertCubeDrag;
@@ -942,6 +943,7 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_settingsOrbitButton = s.orbitButton;
     m_settingsPanButton = s.panButton;
     m_viewport->getCamera().setLevelOrbit(s.levelOrbit);
+    m_viewport->getCamera().setMouseSensitivity(s.mouseSensitivity);
     m_autosaveEnabled = s.autosaveEnabled;
     m_autosaveIntervalSec = static_cast<float>(s.autosaveIntervalSec);
     m_invertCubeDrag = s.invertCubeDrag;

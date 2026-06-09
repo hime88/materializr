@@ -56,6 +56,7 @@ void applyKv(const std::map<std::string, std::string>& kv, AppSettings& s) {
     readInt (kv, "orbitButton",          s.orbitButton);
     readInt (kv, "panButton",            s.panButton);
     readBool(kv, "levelOrbit",           s.levelOrbit);
+    readFloat(kv, "mouseSensitivity",    s.mouseSensitivity);
     readBool(kv, "autosaveEnabled",      s.autosaveEnabled);
     readInt (kv, "autosaveIntervalSec",  s.autosaveIntervalSec);
     readBool(kv, "invertCubeDrag",       s.invertCubeDrag);
@@ -211,6 +212,7 @@ bool SettingsIO::save(const std::string& path, const AppSettings& s) {
     ofs << "orbitButton = "         << s.orbitButton         << "\n";
     ofs << "panButton = "           << s.panButton           << "\n";
     ofs << "levelOrbit = "          << (s.levelOrbit ? "true" : "false") << "\n";
+    ofs << "mouseSensitivity = "    << s.mouseSensitivity    << "\n";
     ofs << "autosaveEnabled = "     << (s.autosaveEnabled ? "true" : "false") << "\n";
     ofs << "autosaveIntervalSec = " << s.autosaveIntervalSec << "\n";
     ofs << "invertCubeDrag = "      << (s.invertCubeDrag ? "true" : "false") << "\n";
@@ -251,6 +253,7 @@ bool SettingsIO::exportJson(const std::string& path, const AppSettings& s) {
     ofs << "  \"orbitButton\": "             << s.orbitButton           << ",\n";
     ofs << "  \"panButton\": "               << s.panButton             << ",\n";
     ofs << "  \"levelOrbit\": "              << b(s.levelOrbit)         << ",\n";
+    ofs << "  \"mouseSensitivity\": "        << s.mouseSensitivity      << ",\n";
     ofs << "  \"autosaveEnabled\": "         << b(s.autosaveEnabled)    << ",\n";
     ofs << "  \"autosaveIntervalSec\": "     << s.autosaveIntervalSec   << ",\n";
     ofs << "  \"invertCubeDrag\": "          << b(s.invertCubeDrag)     << ",\n";

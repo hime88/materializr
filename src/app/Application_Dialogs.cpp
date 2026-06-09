@@ -295,6 +295,26 @@ void Application::renderSettings() {
                                           "on a trackpad. Default 0.30 s.");
 
                     ImGui::Spacing();
+                    ImGui::SeparatorText("Mouse sensitivity");
+                    // One uniform multiplier on orbit / pan / zoom input deltas
+                    // — so a trackpad that's already slow at the OS level
+                    // doesn't whip the camera around. Applied live (the camera
+                    // multiplies it onto each delta on the next mouse event).
+                    {
+                        float sens = m_viewport->getCamera().getMouseSensitivity();
+                        if (ImGui::SliderFloat("Mouse sensitivity", &sens,
+                                               0.10f, 3.00f, "%.2fx")) {
+                            m_viewport->getCamera().setMouseSensitivity(sens);
+                            changed = true;
+                        }
+                        ImGui::TextWrapped("Scales orbit, pan, and zoom uniformly. "
+                                           "Lower it if a trackpad feels too fast "
+                                           "compared to desktop cursor speed; "
+                                           "raise it for a snappier feel with a mouse. "
+                                           "1.00x is the default baseline.");
+                    }
+
+                    ImGui::Spacing();
                     ImGui::SeparatorText("Orbit behaviour");
                     // Level (turntable) orbit toggle — applied live.
                     bool level = m_viewport->getCamera().isLevelOrbit();
