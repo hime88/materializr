@@ -4,6 +4,8 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Trsf.hxx>
 #include <vector>
 #include <string>
 
@@ -19,10 +21,24 @@ public:
     MoveFaceOp() = default;
     ~MoveFaceOp() override = default;
 
+    // The face transform this op applies — same loft engine, different motion:
+    //   Translate: slide the face in its plane (Move).
+    //   Rotate:    tilt the face about an in-plane axis through its centre (Taper).
+    //   Scale:     grow/shrink the face about its centre (Scale Face).
+    enum class Kind { Translate, Rotate, Scale };
+
     void setBody(int bodyId) { m_bodyId = bodyId; }
     void setFace(const TopoDS_Face& f) { m_face = f; }
-    // The full translation (direction * distance) applied to the face.
+    void setKind(Kind k) { m_kind = k; }
+    // The full translation (direction * distance) applied to the face (Translate).
     void setMoveVector(const gp_Vec& v) { m_move = v; }
+    // Rotate: tilt axis direction (in the face plane) + angle (radians), pivoting
+    // at the face centre.
+    void setRotation(const gp_Dir& axisDir, double angleRad) {
+        m_rotAxis = axisDir; m_rotAngle = angleRad;
+    }
+    // Scale: uniform factor about the face centre.
+    void setScaleFactor(double f) { m_scaleFactor = f; }
     // Sketches lying ON the moved face — they slide with it (translated by the
     // in-plane move vector) as part of the same atomic op.
     void setSketchIds(std::vector<int> ids) { m_sketchIds = std::move(ids); }
@@ -59,12 +75,16 @@ public:
 private:
     int m_bodyId = -1;
     TopoDS_Face m_face;
+    Kind m_kind = Kind::Translate;
     gp_Vec m_move{0.0, 0.0, 0.0};
+    gp_Dir m_rotAxis{1.0, 0.0, 0.0};
+    double m_rotAngle = 0.0;       // radians (Rotate)
+    double m_scaleFactor = 1.0;    // uniform (Scale)
     std::vector<int> m_sketchIds; // sketches that ride along (translated by m_move)
     bool m_moveOuter = true;            // does the face outline slide?
     std::vector<bool> m_holeSlant;     // per-hole: top ring follows (slant)
     std::vector<bool> m_holeVertical;  // per-hole: both rings follow (straight tube)
-    gp_Vec m_appliedMove{0.0, 0.0, 0.0}; // in-plane move actually applied (for undo)
+    gp_Trsf m_appliedXform; // transform applied to on-face sketches (for undo)
     TopoDS_Shape m_previousShape; // for undo
     TopoDS_Shape m_resultShape;
     // Ordinal index of m_face within the pre-op body shape, for reload

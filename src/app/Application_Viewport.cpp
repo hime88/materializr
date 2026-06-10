@@ -503,15 +503,27 @@ void Application::renderViewport() {
             m_gizmo->render(view, proj);
         }
 
-        // Move Face: two yellow in-plane arrows (the move gizmo's arrow mesh,
-        // minus the out-of-plane axis). The latched arrow brightens.
+        // Face gizmo: Move/Scale show two in-plane arrows; Rotate shows two
+        // rings (about the face centre) so a tilt reads as a rotation. The
+        // latched handle brightens.
         if (m_moveFaceActive) {
             glm::vec3 hot(1.0f, 0.92f, 0.25f);   // bright yellow
             glm::vec3 dim(0.78f, 0.66f, 0.12f);  // dimmer yellow
-            m_gizmo->renderArrowAlong(view, proj, m_moveFaceP0, m_moveFaceAxisA,
-                                      m_moveFaceGrab == 0 ? hot : dim);
-            m_gizmo->renderArrowAlong(view, proj, m_moveFaceP0, m_moveFaceAxisB,
-                                      m_moveFaceGrab == 1 ? hot : dim);
+            if (m_faceXformKind == FaceXform::Rotate) {
+                // grab 0 tilts about axis B (RED ring), grab 1 about axis A
+                // (GREEN ring) — matched to the colored controls in the panel.
+                glm::vec3 red0  = m_moveFaceGrab == 0 ? glm::vec3(1.0f, 0.32f, 0.32f)
+                                                      : glm::vec3(0.72f, 0.22f, 0.22f);
+                glm::vec3 grn1  = m_moveFaceGrab == 1 ? glm::vec3(0.35f, 0.95f, 0.40f)
+                                                      : glm::vec3(0.24f, 0.66f, 0.28f);
+                m_gizmo->renderRingAbout(view, proj, m_moveFacePivot, m_moveFaceAxisB, red0);
+                m_gizmo->renderRingAbout(view, proj, m_moveFacePivot, m_moveFaceAxisA, grn1);
+            } else {
+                m_gizmo->renderArrowAlong(view, proj, m_moveFaceP0, m_moveFaceAxisA,
+                                          m_moveFaceGrab == 0 ? hot : dim);
+                m_gizmo->renderArrowAlong(view, proj, m_moveFaceP0, m_moveFaceAxisB,
+                                          m_moveFaceGrab == 1 ? hot : dim);
+            }
         }
 
         // Render all stored sketches (visible only) plus the active sketch
@@ -2183,16 +2195,34 @@ void Application::renderViewport() {
                         m_moveFaceGrab = (dA <= dB) ? 0 : 1;
                         m_moveFaceDragStart = hit;
                         m_moveFaceBase = m_moveFaceVec;
+                        m_moveFaceAngleBase = m_moveFaceAngle;
+                        m_moveFaceScaleBase = m_moveFaceScale;
                         m_moveFaceDragging = true;
                     }
                     glm::vec3 axis = (m_moveFaceGrab == 0) ? m_moveFaceAxisA : m_moveFaceAxisB;
                     float along = glm::dot(hit - m_moveFaceDragStart, axis);
-                    // Snap the slide distance to whole grid steps when the grid
-                    // is on, so a Move Face lands on the lattice like everything
-                    // else (the body shear + sketch follow inherit it).
-                    if (m_snapToGrid && m_sketchGridStep > 0.0f)
-                        along = std::round(along / m_sketchGridStep) * m_sketchGridStep;
-                    m_moveFaceVec = m_moveFaceBase + axis * along;
+                    if (m_faceXformKind == FaceXform::Translate) {
+                        // Snap the slide to whole grid steps when the grid is on.
+                        if (m_snapToGrid && m_sketchGridStep > 0.0f)
+                            along = std::round(along / m_sketchGridStep) * m_sketchGridStep;
+                        m_moveFaceVec = m_moveFaceBase + axis * along;
+                    } else if (m_faceXformKind == FaceXform::Rotate) {
+                        // Tilt about the PERPENDICULAR in-plane axis, so dragging
+                        // the grabbed arrow lifts that edge. Angle scales with the
+                        // face size (drag ~half-extent ≈ 1 rad).
+                        float ext = std::max(m_moveFaceHalfExtent, 1e-3f);
+                        m_moveFaceRotAxis = (m_moveFaceGrab == 0) ? m_moveFaceAxisB
+                                                                  : m_moveFaceAxisA;
+                        m_moveFaceAngle = m_moveFaceAngleBase + along / ext;
+                        if (m_moveFaceRotSnap) { // snap to 15° increments
+                            float step = 15.0f / 57.2957795f;
+                            m_moveFaceAngle = std::round(m_moveFaceAngle / step) * step;
+                        }
+                    } else { // Scale
+                        float ext = std::max(m_moveFaceHalfExtent, 1e-3f);
+                        m_moveFaceScale = std::max(0.1f,
+                            m_moveFaceScaleBase + along / ext);
+                    }
                     // Deferred: don't rebuild the body mid-drag — only the ghost
                     // silhouette moves (drawn below). Flag a rebuild for release.
                     m_moveFacePendingRebuild = true;
@@ -2208,12 +2238,12 @@ void Application::renderViewport() {
                 m_moveFaceGrab = -1;
             }
 
-            // Ghost silhouette: each face loop drawn as a yellow outline,
-            // translated by the current slide ONLY if that loop is flagged to
-            // move (outline = loop 0, holes = 1..N). During a drag this is the
-            // only thing that moves; the body rebuilds on release.
+            // Ghost silhouette: each moving face loop drawn as a yellow outline,
+            // transformed by the current gesture (slide / tilt / scale). During
+            // a drag this is the only thing that moves; the body rebuilds on
+            // release.
             if (m_moveFaceActive && !m_moveFaceSilhouetteLoops.empty() &&
-                glm::length(m_moveFaceVec) > 1e-5f) {
+                faceXformNontrivial()) {
                 ImVec2 wp = ImGui::GetItemRectMin();
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 auto pr = [&](const glm::vec3& w, ImVec2& out) -> bool {
@@ -2223,21 +2253,36 @@ void Application::renderViewport() {
                                  wp.y + (1.0f - (c.y / c.w * 0.5f + 0.5f)) * contentSize.y);
                     return true;
                 };
+                // Apply the current gesture transform to a ghost point.
+                auto xf = [&](const glm::vec3& p) -> glm::vec3 {
+                    if (m_faceXformKind == FaceXform::Translate)
+                        return p + m_moveFaceVec;
+                    if (m_faceXformKind == FaceXform::Scale)
+                        return m_moveFacePivot + (p - m_moveFacePivot) * m_moveFaceScale;
+                    // Rodrigues rotation of (p-pivot) about the tilt axis.
+                    glm::vec3 a = glm::normalize(m_moveFaceRotAxis);
+                    glm::vec3 d = p - m_moveFacePivot;
+                    float c = std::cos(m_moveFaceAngle), s = std::sin(m_moveFaceAngle);
+                    glm::vec3 r = d * c + glm::cross(a, d) * s + a * glm::dot(a, d) * (1.0f - c);
+                    return m_moveFacePivot + r;
+                };
                 const ImU32 col = IM_COL32(255, 235, 64, 230);
                 for (size_t k = 0; k < m_moveFaceSilhouetteLoops.size(); ++k) {
                     // These are the TOP rings. Outline moves with the face; a
                     // hole's top ring moves only if that hole slants or is a
                     // vertical tube (else it stays put, undrawn).
+                    bool holeRides = m_moveFaceMoveOuter &&
+                                     m_faceXformKind == FaceXform::Rotate;
                     bool moves = (k == 0)
                         ? m_moveFaceMoveOuter
-                        : ((k - 1 < m_moveFaceHoleSlant.size() && m_moveFaceHoleSlant[k - 1]) ||
+                        : (holeRides ||
+                           (k - 1 < m_moveFaceHoleSlant.size() && m_moveFaceHoleSlant[k - 1]) ||
                            (k - 1 < m_moveFaceHoleVertical.size() && m_moveFaceHoleVertical[k - 1]));
                     if (!moves) continue; // a static loop stays at rest, undrawn
-                    glm::vec3 off = m_moveFaceVec;
                     ImVec2 prev, first; bool havePrev = false, haveFirst = false;
                     for (const auto& p : m_moveFaceSilhouetteLoops[k]) {
                         ImVec2 s;
-                        if (!pr(p + off, s)) { havePrev = false; continue; }
+                        if (!pr(xf(p), s)) { havePrev = false; continue; }
                         if (!haveFirst) { first = s; haveFirst = true; }
                         if (havePrev) dl->AddLine(prev, s, col, 2.0f);
                         prev = s; havePrev = true;
@@ -4639,13 +4684,17 @@ void Application::renderViewport() {
         ImGui::End();
     }
 
-    // Move Face: slide-in-plane instructions + commit/cancel. The body shears
-    // live as the user drags; this panel just confirms or bails.
+    // Move / Tilt / Scale Face: instructions + commit/cancel. The body follows
+    // (loft) on release; this panel just confirms or bails.
     if (m_moveFaceActive) {
+        const bool isRot = m_faceXformKind == FaceXform::Rotate;
+        const bool isScl = m_faceXformKind == FaceXform::Scale;
         ImGui::SetCursorPos(ImVec2(10, 30));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.5f, 1.0f));
-        ImGui::Text("MOVE FACE - drag the face to slide it in its plane. "
-                    "Enter to confirm, Escape to cancel.");
+        ImGui::Text("%s - drag a handle. Enter to confirm, Escape to cancel.",
+                    isRot ? "TILT FACE (about its centre)"
+                          : isScl ? "SCALE FACE (about its centre)"
+                                  : "MOVE FACE (slide in plane)");
         ImGui::PopStyleColor();
 
         ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260,
@@ -4655,11 +4704,40 @@ void Application::renderViewport() {
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("Slide (mm)");
-        ImGui::Separator();
-        float mag = glm::length(m_moveFaceVec);
-        ImGui::Text("(%.1f, %.1f, %.1f)  |%.1f|",
-                    m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z, mag);
+        if (isRot) {
+            // Colour the label to the active ring (red = axis B, green = A).
+            ImVec4 lc = (m_moveFaceGrab == 1) ? ImVec4(0.4f, 0.95f, 0.45f, 1.0f)
+                                              : ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+            ImGui::TextColored(lc, "Tilt (deg)"); ImGui::Separator();
+            float deg = m_moveFaceAngle * 57.2957795f;
+            bool ch = false;
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::SliderFloat("##tilt", &deg, -90.0f, 90.0f, "%.1f")) ch = true;
+            ImGui::SetNextItemWidth(90);
+            if (ImGui::InputFloat("deg", &deg, 1.0f, 5.0f, "%.1f")) ch = true;
+            ImGui::Checkbox("Snap 15", &m_moveFaceRotSnap);
+            if (ch) {
+                if (m_moveFaceRotSnap) deg = std::round(deg / 15.0f) * 15.0f;
+                m_moveFaceAngle = deg / 57.2957795f;
+                if (glm::length(m_moveFaceRotAxis) < 0.5f)
+                    m_moveFaceRotAxis = m_moveFaceAxisB;
+                updateMoveFace();
+            }
+        } else if (isScl) {
+            ImGui::Text("Scale (%%)"); ImGui::Separator();
+            float pct = m_moveFaceScale * 100.0f;
+            bool ch = false;
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::SliderFloat("##scl", &pct, 10.0f, 400.0f, "%.0f")) ch = true;
+            ImGui::SetNextItemWidth(90);
+            if (ImGui::InputFloat("%", &pct, 5.0f, 25.0f, "%.0f")) ch = true;
+            if (ch) { m_moveFaceScale = std::max(0.1f, pct / 100.0f); updateMoveFace(); }
+        } else {
+            ImGui::Text("Slide (mm)"); ImGui::Separator();
+            ImGui::Text("(%.1f, %.1f, %.1f)  |%.1f|",
+                        m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z,
+                        glm::length(m_moveFaceVec));
+        }
 
         // Read-out of what the SELECTION will do (the selection IS the control
         // now). A hole stays put unless you also pick its top edge (slants) or

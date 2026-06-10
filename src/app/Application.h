@@ -22,6 +22,9 @@
 #include "modeling/ExtrudeOp.h" // for ExtrudeMode
 #include "modeling/SketchConstraints.h" // for ConstraintType (applySketchConstraint)
 
+// Global (non-namespaced) op, forward-declared for configureFaceOp's signature.
+class MoveFaceOp;
+
 namespace materializr {
 
 struct AppSettings;
@@ -207,8 +210,16 @@ private:
     void updatePushPull();
     void commitPushPull();
     void cancelPushPull();
-    // ── Move Face (in-plane slide → whole-body shear; see MoveFaceOp) ──
-    void beginMoveFace();
+    // ── Move Face (face transform → body follows via loft; see MoveFaceOp) ──
+    // The face transform this gesture applies (Move / Rotate / Scale share the
+    // same loft engine + deferred silhouette; only the gizmo + drag math differ).
+    enum class FaceXform { Translate, Rotate, Scale };
+    void beginMoveFace(FaceXform kind = FaceXform::Translate);
+    // Configure a MoveFaceOp with the current gesture's kind + params, and test
+    // whether the gesture has anything to apply (defined in the .cpp where the
+    // op type is complete).
+    void configureFaceOp(MoveFaceOp& op) const;
+    bool faceXformNontrivial() const;
     void updateMoveFace();   // live shear preview against the snapshot
     void commitMoveFace();
     void cancelMoveFace();
@@ -227,6 +238,15 @@ private:
     glm::vec3 m_moveFaceAxisA{1.0f, 0.0f, 0.0f};
     glm::vec3 m_moveFaceAxisB{0.0f, 1.0f, 0.0f};
     int  m_moveFaceGrab = -1;
+    FaceXform m_faceXformKind = FaceXform::Translate;
+    glm::vec3 m_moveFacePivot{0.0f};  // face centroid (rotate/scale pivot)
+    float m_moveFaceAngle = 0.0f;     // accumulated tilt (radians, Rotate)
+    float m_moveFaceAngleBase = 0.0f; // tilt banked before the current drag
+    float m_moveFaceScale = 1.0f;     // accumulated factor (Scale)
+    float m_moveFaceScaleBase = 1.0f;
+    glm::vec3 m_moveFaceRotAxis{1.0f, 0.0f, 0.0f}; // tilt axis latched this drag
+    float m_moveFaceHalfExtent = 1.0f; // face size, maps drag distance → angle/scale
+    bool  m_moveFaceRotSnap = false;   // snap tilt to 15° increments
     // DEFERRED REBUILD: the body rebuild is deferred to mouse-release, so the
     // drag only moves ghost SILHOUETTES of the face's loops. Loop 0 = outer
     // outline, 1..N = hole loops (same order as the op enumerates them). Each is

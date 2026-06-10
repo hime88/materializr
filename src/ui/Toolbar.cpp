@@ -514,10 +514,8 @@ ToolAction Toolbar::renderFaceTools() {
     if (ImGui::Button("Push / Pull", ImVec2(-1, 30)))
         action = ToolAction::PushPull;
     tip("Drag the face along its normal to extrude (+) or cut (−) into the body.");
-    if (ImGui::Button("Move Face", ImVec2(-1, 30)))
-        action = ToolAction::MoveFace;
-    tip("Slide the face within its own plane (up/down, side to side); the body "
-        "shears to follow. Not push/pull — the face stays in its plane.");
+    // (Move Face / Taper / Scale Face moved onto the Transform buttons —
+    // with a face selected, Move = slide, Rotate = tilt, Scale = scale face.)
     // Extrude From a face → make a new body that's the face's silhouette
     // swept along its normal. Push/Pull modifies the source body; Extrude
     // always creates a separate body. Same ToolAction the sketch toolbar
@@ -528,16 +526,6 @@ ToolAction Toolbar::renderFaceTools() {
     if (ImGui::Button("Shell", ImVec2(-1, 30)))
         action = ToolAction::Shell;
     tip("Hollow the body, removing the picked face. Wall thickness in the popup.");
-    if (ImGui::Button("Taper", ImVec2(-1, 30)))
-        action = ToolAction::Taper;
-    tip("Tilt the picked face(s) by an angle about the body's base - "
-        "a cylinder wall becomes a cone, box sides become a pyramid. "
-        "Angle and pull axis in the popup.");
-    if (ImGui::Button("Scale Face", ImVec2(-1, 30)))
-        action = ToolAction::ScaleFace;
-    tip("Pinch or flare the body toward a scaled copy of this END face - "
-        "shrink a wing tip profile into a winglet taper. Scale, blend "
-        "length and extend/pinch mode in the popup.");
     if (ImGui::Button("Projection", ImVec2(-1, 30)))
         action = ToolAction::ProjectSketch;
     tip("Project a sketch onto this face along the sketch's normal, then "

@@ -39,6 +39,10 @@ public:
     // m_position / m_visible / m_mode.
     void renderArrowAlong(const glm::mat4& view, const glm::mat4& projection,
                           glm::vec3 position, glm::vec3 dir, glm::vec3 color);
+    // A rotation ring at `position` whose axis is `axisDir` (the ring lies in
+    // the plane perpendicular to it). Used for the face-tilt gizmo.
+    void renderRingAbout(const glm::mat4& view, const glm::mat4& projection,
+                         glm::vec3 position, glm::vec3 axisDir, glm::vec3 color);
 
     GizmoResult handleInput(float mouseX, float mouseY,
                             float vpWidth, float vpHeight,

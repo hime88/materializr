@@ -13,6 +13,9 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp_Face.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <gp_Ax1.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
 #include <Geom_Surface.hxx>
@@ -21,13 +24,18 @@
 #include <TopAbs.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Wire.hxx>
+#include <cmath>
 #include <gp_Pnt.hxx>
 #include <Standard_ErrorHandler.hxx>
 #include <Standard_Failure.hxx>
 #include <algorithm>
 
 bool MoveFaceOp::execute(Document& doc) {
-    if (m_bodyId < 0 || m_face.IsNull() || m_move.Magnitude() < 1e-6) return false;
+    if (m_bodyId < 0 || m_face.IsNull()) return false;
+    // Nothing-to-do guard, per kind.
+    if (m_kind == Kind::Translate && m_move.Magnitude() < 1e-6) return false;
+    if (m_kind == Kind::Rotate    && std::abs(m_rotAngle) < 1e-6) return false;
+    if (m_kind == Kind::Scale     && std::abs(m_scaleFactor - 1.0) < 1e-6) return false;
 
     try {
         OCC_CATCH_SIGNALS // turn an OCCT kernel fault here into a catch below
@@ -45,9 +53,31 @@ bool MoveFaceOp::execute(Document& doc) {
         gp_Vec N = nv.Normalized();
         gp_Vec P0(c.X(), c.Y(), c.Z());
 
-        // Keep the move strictly in the face's plane (slide, never push/pull).
-        gp_Vec V = m_move - N * m_move.Dot(N);
-        if (V.Magnitude() < 1e-6) return false; // nothing to slide
+        // Pivot = the face's area centroid (the "invisible point in the middle"
+        // that Rotate/Scale turn/scale about).
+        gp_Pnt pivot;
+        {
+            GProp_GProps gp; BRepGProp::SurfaceProperties(m_face, gp);
+            pivot = gp.CentreOfMass();
+        }
+
+        // The single transform applied to the moving (top) loops — translate,
+        // rotate-about-pivot, or scale-about-pivot. Everything downstream (loft,
+        // sketch follow, undo) just applies this one gp_Trsf.
+        gp_Vec V = m_move - N * m_move.Dot(N); // in-plane slide (Translate)
+        gp_Trsf topT;
+        switch (m_kind) {
+            case Kind::Translate:
+                if (V.Magnitude() < 1e-6) return false;
+                topT.SetTranslation(V);
+                break;
+            case Kind::Rotate:
+                topT.SetRotation(gp_Ax1(pivot, m_rotAxis), m_rotAngle);
+                break;
+            case Kind::Scale:
+                topT.SetScale(pivot, m_scaleFactor);
+                break;
+        }
 
         // LOFT REBUILD (replaces the old whole-body gp_GTrsf shear, which made
         // OCCT NURBS-convert the entire body and segfault on freeform/boolean
@@ -105,9 +135,8 @@ bool MoveFaceOp::execute(Document& doc) {
         collect(baseFace, baseOuter, baseInners);
         if (topOuter.IsNull() || baseOuter.IsNull()) return false;
 
-        gp_Trsf slideT; slideT.SetTranslation(V);
         auto moved = [&](const TopoDS_Wire& w) {
-            return TopoDS::Wire(BRepBuilderAPI_Transform(w, slideT, Standard_True).Shape());
+            return TopoDS::Wire(BRepBuilderAPI_Transform(w, topT, Standard_True).Shape());
         };
         auto loftSolid = [](TopoDS_Wire a, TopoDS_Wire b, TopoDS_Shape& out) -> bool {
             BRepOffsetAPI_ThruSections ts(Standard_True /*solid*/, Standard_True /*ruled*/);
@@ -138,7 +167,12 @@ bool MoveFaceOp::execute(Document& doc) {
             const TopoDS_Wire& tw = topInners[hi];
             bool slant    = (hi < m_holeSlant.size())    && m_holeSlant[hi];
             bool vertical = (hi < m_holeVertical.size()) && m_holeVertical[hi];
-            bool topSlides = slant || vertical; // hole stays put unless opted in
+            // On a TILT the top ring is part of the rotating face — it must ride
+            // it (stay coplanar) or the face can't close (the "half cover" bug);
+            // the hole then continues as a slanted tube. On Move/Scale the ring
+            // can stay put (three-state), so opt-in only.
+            bool topRidesFace = m_moveOuter && m_kind == Kind::Rotate;
+            bool topSlides = topRidesFace || slant || vertical;
             bool botSlides = vertical;
             gp_Pnt tc = centroid(tw);
             int best = -1; double bd = 1e300;
@@ -168,17 +202,15 @@ bool MoveFaceOp::execute(Document& doc) {
         m_resultShape = result;
         doc.updateBody(m_bodyId, result);
 
-        // Slide on-face sketches by the same in-plane move (translate their
-        // plane), so they stay glued to the moved face instead of floating.
-        // Only when the face OUTLINE moves — sketches ride the face, not a hole.
-        m_appliedMove = m_moveOuter ? V : gp_Vec(0, 0, 0);
-        gp_Trsf slide;
-        slide.SetTranslation(m_appliedMove);
+        // Move on-face sketches by the SAME transform (slide / tilt / scale), so
+        // they stay glued to the face — but only when the face OUTLINE moves
+        // (sketches ride the face, not a hole). Stored for undo.
+        m_appliedXform = m_moveOuter ? topT : gp_Trsf();
         if (m_moveOuter)
         for (int sid : m_sketchIds) {
             if (auto sk = doc.getSketch(sid)) {
                 gp_Pln pln = sk->getPlane();
-                pln.Transform(slide);
+                pln.Transform(m_appliedXform);
                 sk->setPlane(pln);
                 // The cached host face is used to build the sketch's regions —
                 // move it too (copy=true forces a fresh TShape so the region
@@ -186,7 +218,7 @@ bool MoveFaceOp::execute(Document& doc) {
                 // highlights at the OLD position when the region is clicked.
                 TopoDS_Face sf = sk->getSourceFace();
                 if (!sf.IsNull()) {
-                    TopoDS_Shape mv = BRepBuilderAPI_Transform(sf, slide, Standard_True).Shape();
+                    TopoDS_Shape mv = BRepBuilderAPI_Transform(sf, m_appliedXform, Standard_True).Shape();
                     if (!mv.IsNull() && mv.ShapeType() == TopAbs_FACE)
                         sk->setSourceFace(TopoDS::Face(mv));
                 }
@@ -202,9 +234,8 @@ bool MoveFaceOp::undo(Document& doc) {
     if (m_bodyId < 0 || m_previousShape.IsNull()) return false;
     try {
         doc.updateBody(m_bodyId, m_previousShape);
-        // Slide the on-face sketches back to where they were.
-        gp_Trsf back;
-        back.SetTranslation(m_appliedMove.Reversed());
+        // Move the on-face sketches back by the inverse transform.
+        gp_Trsf back = m_appliedXform.Inverted();
         for (int sid : m_sketchIds) {
             if (auto sk = doc.getSketch(sid)) {
                 gp_Pln pln = sk->getPlane();

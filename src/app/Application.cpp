@@ -1493,11 +1493,13 @@ void Application::handleToolAction(int action) {
             break;
         }
         case ToolAction::Rotate: {
-            // A selected face turns Rotate into Taper (angular change to a face
-            // == the body's rotate, to the user).
-            if (m_selection->primaryType() == SelectionType::Face) {
-                beginIop(m_taperCtl);
-                break;
+            // A selected face turns Rotate into a face TILT (the loft engine
+            // with a rotation about the face centre — same mechanic as Move).
+            {
+                bool faceSel = false;
+                for (const auto& e : m_selection->getSelection())
+                    if (e.type == SelectionType::Face && !e.shape.IsNull()) { faceSel = true; break; }
+                if (faceSel) { beginMoveFace(FaceXform::Rotate); break; }
             }
             // Axis doesn't get Rotate — an infinite line has no meaningful
             // rotation handle. Rotate is body / sketch / plane only.
@@ -1525,10 +1527,13 @@ void Application::handleToolAction(int action) {
             break;
         }
         case ToolAction::Scale: {
-            // A selected face turns Scale into Scale Face.
-            if (m_selection->primaryType() == SelectionType::Face) {
-                beginIop(m_scaleFaceCtl);
-                break;
+            // A selected face turns Scale into a face scale (the loft engine,
+            // scaling the top about the face centre).
+            {
+                bool faceSel = false;
+                for (const auto& e : m_selection->getSelection())
+                    if (e.type == SelectionType::Face && !e.shape.IsNull()) { faceSel = true; break; }
+                if (faceSel) { beginMoveFace(FaceXform::Scale); break; }
             }
             // Scale-on-sketch is a no-op (the plane is 2D-infinite), so we
             // keep this body-only.

@@ -1492,39 +1492,46 @@ void Application::cancelPushPull() {
 
 // ─── Move Face (in-plane slide → whole-body shear) ──────────────────────────
 
-void Application::beginMoveFace() {
+void Application::beginMoveFace(FaceXform kind) {
     cancelAllInteractivePreviews();
     m_moveFaceActive = false;
     m_moveFaceBodyId = -1;
     m_moveFaceFace.Nullify();
+    m_faceXformKind = kind;
     m_moveFaceVec = glm::vec3(0.0f);
     m_moveFaceBase = glm::vec3(0.0f);
+    m_moveFaceAngle = m_moveFaceAngleBase = 0.0f;
+    m_moveFaceScale = m_moveFaceScaleBase = 1.0f;
     m_moveFaceDragging = false;
 
-    // Sort the selection: the PLANAR face is the one that slides; CYLINDRICAL
-    // faces are hole walls picked to move as straight tubes; selected EDGES are
-    // hole top rings picked to slant. (Faces/edges, mapped to hole loops below.)
-    std::vector<TopoDS_Face> selectedCylinders;
+    // Sort the selection: the first PLANAR face slides (the moving face); every
+    // OTHER selected face is a candidate hole WALL (move that hole as a straight
+    // tube); selected EDGES are hole top rings (slant). Walls are matched to
+    // hole loops by shared edges below — NOT by surface type, because after any
+    // face op the wall is a ruled loft surface, not an analytic cylinder.
+    std::vector<TopoDS_Face> selectedFaces;
     std::vector<TopoDS_Edge> selectedEdges;
     for (const auto& e : m_selection->getSelection()) {
         if (e.shape.IsNull()) continue;
         if (e.type == SelectionType::Face) {
             TopoDS_Face f = TopoDS::Face(e.shape);
             Handle(Geom_Surface) s = BRep_Tool::Surface(f);
-            if (!s.IsNull() && s->IsKind(STANDARD_TYPE(Geom_Plane))) {
-                if (m_moveFaceFace.IsNull()) {
-                    m_moveFaceBodyId = e.bodyId;
-                    m_moveFaceFace = f;
-                }
-            } else if (!s.IsNull() &&
-                       s->IsKind(STANDARD_TYPE(Geom_CylindricalSurface))) {
-                selectedCylinders.push_back(f);
+            if (m_moveFaceFace.IsNull() && !s.IsNull() &&
+                s->IsKind(STANDARD_TYPE(Geom_Plane))) {
+                m_moveFaceBodyId = e.bodyId;
+                m_moveFaceFace = f;
+            } else {
+                selectedFaces.push_back(f); // potential hole wall
             }
         } else if (e.type == SelectionType::Edge) {
             selectedEdges.push_back(TopoDS::Edge(e.shape));
         }
     }
     if (m_moveFaceBodyId < 0 || m_moveFaceFace.IsNull()) return;
+    // Drop the chosen moving face from the wall candidates if it slipped in.
+    std::vector<TopoDS_Face> selectedCylinders;
+    for (const auto& f : selectedFaces)
+        if (!f.IsSame(m_moveFaceFace)) selectedCylinders.push_back(f);
 
     // Move Face only makes sense on a FLAT face (the shear pins one plane and
     // slides another). A curved face (cylinder side, fillet, sphere) has no
@@ -1558,6 +1565,10 @@ void Application::beginMoveFace() {
         n.Normalize();
         m_moveFaceP0 = glm::vec3(c.X(), c.Y(), c.Z());
         m_moveFaceN  = glm::vec3(n.X(), n.Y(), n.Z());
+        // Pivot for Rotate/Scale = the face's area centroid (its "middle").
+        GProp_GProps gp; BRepGProp::SurfaceProperties(m_moveFaceFace, gp);
+        gp_Pnt ctr = gp.CentreOfMass();
+        m_moveFacePivot = glm::vec3(ctr.X(), ctr.Y(), ctr.Z());
     } catch (...) { return; }
 
     // Two in-plane arrow axes: project the world axis least aligned with N into
@@ -1574,6 +1585,7 @@ void Application::beginMoveFace() {
         m_moveFaceAxisB = glm::normalize(glm::cross(N, m_moveFaceAxisA));
     }
     m_moveFaceGrab = -1;
+    m_moveFaceRotAxis = m_moveFaceAxisB; // default tilt axis until a ring is grabbed
 
     // Sketches sitting ON this face slide along with it. Coincident = plane
     // parallel to the face AND lying on it (same offset). Snapshot their planes
@@ -1662,6 +1674,16 @@ void Application::beginMoveFace() {
         m_moveFaceHoleVertical.clear();
     }
 
+    // Face half-extent (max distance pivot→outline) so a drag of ~that length
+    // maps to ≈1 rad of tilt / a unit of scale — a size-independent feel.
+    m_moveFaceHalfExtent = 1.0f;
+    if (!m_moveFaceSilhouetteLoops.empty()) {
+        float mx = 0.0f;
+        for (const auto& p : m_moveFaceSilhouetteLoops[0])
+            mx = std::max(mx, glm::length(p - m_moveFacePivot));
+        if (mx > 1e-3f) m_moveFaceHalfExtent = mx;
+    }
+
     m_moveFaceActive = true;
 }
 
@@ -1679,23 +1701,51 @@ void Application::moveFaceSlideSketches(const glm::vec3& v) {
     }
 }
 
+// Configure an op with the current gesture (Move / Rotate / Scale) + hole flags.
+void Application::configureFaceOp(MoveFaceOp& op) const {
+    switch (m_faceXformKind) {
+        case FaceXform::Translate:
+            op.setKind(MoveFaceOp::Kind::Translate);
+            op.setMoveVector(gp_Vec(m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z));
+            break;
+        case FaceXform::Rotate:
+            op.setKind(MoveFaceOp::Kind::Rotate);
+            op.setRotation(gp_Dir(m_moveFaceRotAxis.x, m_moveFaceRotAxis.y, m_moveFaceRotAxis.z),
+                           m_moveFaceAngle);
+            break;
+        case FaceXform::Scale:
+            op.setKind(MoveFaceOp::Kind::Scale);
+            op.setScaleFactor(m_moveFaceScale);
+            break;
+    }
+    op.setLoopMotion(m_moveFaceMoveOuter, m_moveFaceHoleSlant, m_moveFaceHoleVertical);
+}
+
+bool Application::faceXformNontrivial() const {
+    switch (m_faceXformKind) {
+        case FaceXform::Translate: return glm::length(m_moveFaceVec) > 1e-4f;
+        case FaceXform::Rotate:    return std::abs(m_moveFaceAngle) > 1e-4f;
+        case FaceXform::Scale:     return std::abs(m_moveFaceScale - 1.0f) > 1e-4f;
+    }
+    return false;
+}
+
 void Application::updateMoveFace() {
     if (!m_moveFaceActive || m_moveFaceBodyId < 0) return;
-    // Always preview from the original snapshot so the shear isn't compounded.
+    // Always preview from the original snapshot so transforms don't compound.
     m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
     m_meshesDirty = true;
-    if (glm::length(m_moveFaceVec) < 1e-4f) { moveFaceSlideSketches(glm::vec3(0.0f)); return; }
+    if (!faceXformNontrivial()) { moveFaceSlideSketches(glm::vec3(0.0f)); return; }
     try {
         auto op = std::make_unique<MoveFaceOp>();
         op->setBody(m_moveFaceBodyId);
         op->setFace(m_moveFaceFace);
-        op->setMoveVector(gp_Vec(m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z));
-        op->setLoopMotion(m_moveFaceMoveOuter, m_moveFaceHoleSlant, m_moveFaceHoleVertical);
-        // No sketch ids on the preview op — the sketches are slid separately
-        // below so they restore-then-translate each frame instead of compounding.
+        configureFaceOp(*op);
         if (!op->execute(*m_document))
             m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
-        moveFaceSlideSketches(m_moveFaceVec);
+        // Sketch follow in the preview is translate-only for now (rotate/scale
+        // sketches still follow on commit via the op's own transform).
+        if (m_faceXformKind == FaceXform::Translate) moveFaceSlideSketches(m_moveFaceVec);
         m_meshesDirty = true;
     } catch (...) {
         m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
@@ -1710,18 +1760,16 @@ void Application::commitMoveFace() {
         m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
     moveFaceSlideSketches(glm::vec3(0.0f)); // restore sketches to snapshot
 
-    if (glm::length(m_moveFaceVec) > 1e-3f && m_moveFaceBodyId >= 0 &&
-        !m_moveFaceFace.IsNull()) {
+    if (faceXformNontrivial() && m_moveFaceBodyId >= 0 && !m_moveFaceFace.IsNull()) {
         auto op = std::make_unique<MoveFaceOp>();
         op->setBody(m_moveFaceBodyId);
         op->setFace(m_moveFaceFace);
-        op->setMoveVector(gp_Vec(m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z));
-        op->setLoopMotion(m_moveFaceMoveOuter, m_moveFaceHoleSlant, m_moveFaceHoleVertical);
+        configureFaceOp(*op);
         op->setSketchIds(m_moveFaceSketchIds); // on-face sketches ride along
         if (m_history->pushOperation(std::move(op), *m_document))
-            std::fprintf(stdout, "Move Face committed (%.2f, %.2f, %.2f), %d sketch(es)\n",
-                         m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z,
-                         static_cast<int>(m_moveFaceSketchIds.size()));
+            std::fprintf(stdout, "Face %s committed\n",
+                         m_faceXformKind == FaceXform::Rotate ? "tilt"
+                         : m_faceXformKind == FaceXform::Scale ? "scale" : "move");
     }
     m_moveFaceSketchIds.clear();
     m_moveFaceSketchPlanes0.clear();

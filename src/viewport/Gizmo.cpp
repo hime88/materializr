@@ -279,6 +279,40 @@ void Gizmo::renderArrowAlong(const glm::mat4& view, const glm::mat4& projection,
     glBindVertexArray(0);
 }
 
+void Gizmo::renderRingAbout(const glm::mat4& view, const glm::mat4& projection,
+                            glm::vec3 position, glm::vec3 axisDir, glm::vec3 color) {
+    if (!m_program || !m_ringVao) return;
+    glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
+    float scale = glm::length(camPos - position) * 0.15f;
+    if (scale < 0.01f) scale = 0.01f;
+
+    // The ring mesh lies in the XY plane (axis +Z); rotate +Z onto axisDir so it
+    // sits in the plane perpendicular to the tilt axis.
+    glm::vec3 d = glm::normalize(axisDir);
+    glm::vec3 z(0.0f, 0.0f, 1.0f);
+    glm::vec3 ax = glm::cross(z, d);
+    float axl = glm::length(ax);
+    float c = glm::clamp(glm::dot(z, d), -1.0f, 1.0f);
+    glm::mat4 rot(1.0f);
+    if (axl < 1e-6f) {
+        if (c < 0.0f) rot = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f),
+                                        glm::vec3(1.0f, 0.0f, 0.0f));
+    } else {
+        rot = glm::rotate(glm::mat4(1.0f), std::acos(c), ax / axl);
+    }
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), position)
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(scale)) * rot;
+    glm::mat4 mvp = projection * view * model;
+
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(m_program);
+    glUniformMatrix4fv(m_locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+    glUniform3fv(m_locColor, 1, glm::value_ptr(color));
+    glBindVertexArray(m_ringVao);
+    glDrawArrays(GL_TRIANGLES, 0, m_ringVertCount);
+    glBindVertexArray(0);
+}
+
 void Gizmo::render(const glm::mat4& view, const glm::mat4& projection) {
     if (!m_visible || !m_program) return;
 
