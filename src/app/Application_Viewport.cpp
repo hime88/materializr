@@ -1956,7 +1956,8 @@ void Application::renderViewport() {
             // when the cursor is near the visible arrow line.
             bool gizmoOwnsDrag = m_gizmoDragging ||
                                  m_scaleFaceCtl.dragAxis() >= 0 ||
-                                 m_edgeOpDragging;
+                                 m_edgeOpDragging ||
+                                 m_pushPullSticky;
             if (!gizmoOwnsDrag && ImGui::IsMouseDragging(m_orbitButton)) {
                 ImVec2 delta = io.MouseDelta;
                 if (io.KeyShift) cam.pan(delta.x, delta.y);
@@ -2164,6 +2165,32 @@ void Application::renderViewport() {
                 m_pushPullDistance = m_pushPullDistanceRaw; // snapped in updatePushPull
                 std::snprintf(m_pushPullInputBuf, sizeof(m_pushPullInputBuf), "%.1f", m_pushPullDistance);
                 updatePushPull();
+            }
+
+            // Trackpad-mode click→click sticky drag (orbit and pan both on
+            // LMB). A single click in the viewport flips the sticky flag;
+            // while sticky, every frame's MouseDelta feeds the arrow no
+            // button held. Suppressed in non-trackpad mode (mouse users get
+            // the traditional click+drag above). Clicks consumed by ImGui
+            // widgets don't count — WantCaptureMouse is the signal.
+            const bool trackpadInput = (m_orbitButton == ImGuiMouseButton_Left &&
+                                         m_panButton  == ImGuiMouseButton_Left);
+            if (m_pushPullActive && m_pushPullHasArrow && trackpadInput &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                !io.WantCaptureMouse) {
+                m_pushPullSticky = !m_pushPullSticky;
+            }
+            if (m_pushPullActive && m_pushPullHasArrow && m_pushPullSticky) {
+                glm::vec2 md(io.MouseDelta.x, io.MouseDelta.y);
+                if (md.x != 0.0f || md.y != 0.0f) {
+                    m_pushPullDistanceRaw += projectDragOntoNormal(
+                        m_pushPullOrigin, m_pushPullNormal, md, proj * view);
+                    m_pushPullDistance = m_pushPullDistanceRaw;
+                    std::snprintf(m_pushPullInputBuf,
+                                  sizeof(m_pushPullInputBuf),
+                                  "%.1f", m_pushPullDistance);
+                    updatePushPull();
+                }
             }
 
             // Move Face: intersect the cursor ray with the face's plane, latch
@@ -4229,6 +4256,19 @@ void Application::renderViewport() {
                     if (!wasOrbiting && m_sketchTool->hasElementSelection()) {
                         m_sketchCtxMenuPending = true;
                     }
+                } else if (m_sketchTool->getMode() == SketchToolMode::Spline &&
+                           m_sketchTool->isPlacing() &&
+                           ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    // Double-click anywhere ends the in-progress spline
+                    // placement (commits with the points already placed)
+                    // without leaving sketch mode. The existing "click the
+                    // last control point again" exit works but only when the
+                    // user lands within 0.4 mm of the previous click —
+                    // double-clicking is the universal "I'm done" gesture
+                    // (Inkscape / SketchUp / etc.). (Steve: "ending splines
+                    // is awkward — click, Enter, click instead of just
+                    // clicking the same point twice".)
+                    recordSketchMutation([&]{ m_sketchTool->onConfirm(); });
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                            !m_dimEditingClickedThisFrame) {
                     // m_dimEditingClickedThisFrame is set when a click landed

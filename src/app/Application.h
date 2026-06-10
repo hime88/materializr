@@ -455,6 +455,15 @@ private:
     glm::vec3 m_pushPullOrigin{0.0f};
     glm::vec3 m_pushPullNormal{0.0f, 0.0f, 1.0f};
     bool m_pushPullHasArrow = false;
+    // Trackpad-mode sticky drag (orbitButton == panButton == LMB): a single
+    // click in the viewport while the arrow is up enters this state, mouse
+    // moves then drive the distance frame-by-frame without a button held,
+    // and a second click exits. Same shape as the Sketch Circle tool's
+    // click-move-click pattern — gives users a way to "drag" the arrow
+    // when their primary click is already bound to orbit. While true,
+    // gizmoOwnsDrag suppresses orbit so the cursor isn't fighting the
+    // camera. (Steve: "let click then click act like click and hold".)
+    bool m_pushPullSticky = false;
     // Dense-body drag protection: when any target body has >250 faces (a
     // threaded rod), the per-frame preview shows a tinted GHOST of the tool
     // volume instead of running the real boolean (which would also trigger

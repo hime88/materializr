@@ -60,6 +60,10 @@ bool FilletOp::execute(Document& doc) {
         // kill this op. Fails (loudly, via editStep) only when an edge was
         // genuinely consumed by the upstream change.
         if (!SubShapeIndex::rebindEdges(m_previousShape, m_edges)) {
+            std::fprintf(stderr,
+                "[Fillet] rebindEdges failed (R=%.2f, %zu edges) — "
+                "selected edge isn't in the current body's edge map.\n",
+                m_radius, m_edges.size());
             return false;
         }
 
@@ -72,6 +76,10 @@ bool FilletOp::execute(Document& doc) {
 
         fillet.Build();
         if (!fillet.IsDone()) {
+            std::fprintf(stderr,
+                "[Fillet] BRepFilletAPI.IsDone() returned false (R=%.2f) "
+                "— OCCT refused to build the fillet at this radius.\n",
+                m_radius);
             return false;
         }
 
@@ -80,23 +88,28 @@ bool FilletOp::execute(Document& doc) {
         // OCCT's fillet API is permissive — IsDone() returns true even when
         // the radius exceeds what the geometry can support, and the result
         // is then a self-intersecting / overlapping mess instead of a clean
-        // refusal. Three cheap sanity checks reject those before the preview
-        // ever shows them:
-        //   • BRepCheck_Analyzer: per-shape topology check (catches some,
-        //     not all, of the garbled cases).
-        //   • Bounding box: a fillet must never GROW the bbox; if it did,
-        //     the result blew up past the input volume.
-        //   • Volume: must be > 0 (degenerate result) and ≤ input volume +
-        //     a small slop (a fillet shaves material, doesn't add).
-        // (Steve: filleting all 12 edges of a 20 mm cube at 15.8 mm produced
-        //  increasingly garbled output instead of failing.)
+        // refusal. Two narrow sanity checks reject those without flagging
+        // legitimate concave fillets (which ADD material and so make the
+        // upper-bound volume check we used to have backwards):
+        //   • Bounding box: a fillet should never GROW the body's bbox by
+        //     more than a hair. Garbled-cube case (radius > half-extent)
+        //     produces inverted shells whose bbox blows out — that's the
+        //     signal we catch.
+        //   • Volume: must be strictly > 0. Truly degenerate output (zero
+        //     or negative volume) is the other failure mode.
+        // (Steve: a coffee-cup rim could only fillet to 1.5 mm on the
+        //  inside, and not at all on the outside — the old "volume must
+        //  not exceed input × 1.01" rule rejected the inside concave
+        //  fillets even when geometrically fine.)
         {
-            BRepCheck_Analyzer analyzer(candidate);
-            if (!analyzer.IsValid()) return false;
-
+            // AddOptimal walks the actual geometry rather than the looser
+            // tolerance-padded extents the plain Add uses. Shelled bodies
+            // tend to land in OCCT with face seams at ~1e-3 tolerance,
+            // which inflated the result bbox by ~8 mm on a 100 mm cup and
+            // tripped the growth gate even on 0.1 mm fillets.
             Bnd_Box bbIn, bbOut;
-            BRepBndLib::Add(m_previousShape, bbIn);
-            BRepBndLib::Add(candidate,       bbOut);
+            BRepBndLib::AddOptimal(m_previousShape, bbIn);
+            BRepBndLib::AddOptimal(candidate,       bbOut);
             if (!bbIn.IsVoid() && !bbOut.IsVoid()) {
                 Standard_Real ix0, iy0, iz0, ix1, iy1, iz1;
                 Standard_Real ox0, oy0, oz0, ox1, oy1, oz1;
@@ -106,15 +119,22 @@ bool FilletOp::execute(Document& doc) {
                 if (ox1 - ox0 > (ix1 - ix0) * slop ||
                     oy1 - oy0 > (iy1 - iy0) * slop ||
                     oz1 - oz0 > (iz1 - iz0) * slop) {
+                    std::fprintf(stderr,
+                        "[Fillet] bbox grew past slop (R=%.2f): "
+                        "%.2fx%.2fx%.2f -> %.2fx%.2fx%.2f mm.\n",
+                        m_radius,
+                        ix1 - ix0, iy1 - iy0, iz1 - iz0,
+                        ox1 - ox0, oy1 - oy0, oz1 - oz0);
                     return false;
                 }
             }
 
-            GProp_GProps gpIn, gpOut;
-            BRepGProp::VolumeProperties(m_previousShape, gpIn);
-            BRepGProp::VolumeProperties(candidate,       gpOut);
-            if (gpOut.Mass() < 1e-6 ||
-                gpOut.Mass() > gpIn.Mass() * 1.01) {
+            GProp_GProps gpOut;
+            BRepGProp::VolumeProperties(candidate, gpOut);
+            if (gpOut.Mass() < 1e-6) {
+                std::fprintf(stderr,
+                    "[Fillet] result volume ~= 0 (R=%.2f mm).\n",
+                    m_radius);
                 return false;
             }
         }

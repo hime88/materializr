@@ -1468,6 +1468,7 @@ void Application::commitPushPull() {
     m_pushPullLiveOp.reset();
     m_pushPullPreviewApplied = false;
     m_pushPullActive = false;
+    m_pushPullSticky = false;
     m_pushPullTargets.clear();
     m_meshesDirty = true;
     m_selection->clear();
@@ -1486,6 +1487,7 @@ void Application::cancelPushPull() {
     m_pushPullLiveOp.reset();
     m_pushPullPreviewApplied = false;
     m_pushPullActive = false;
+    m_pushPullSticky = false;
     m_pushPullTargets.clear();
     m_meshesDirty = true;
 }

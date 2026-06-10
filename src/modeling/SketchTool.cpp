@@ -587,8 +587,11 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     const bool allowCharge      = (m_inferenceLevel == InferenceLevel::Full);
 
     // Point snap radius scales with grid step so it remains useful at 10 mm grids
-    // and isn't overaggressive at 0.1 mm grids.
-    float pointSnapThreshold = std::max(0.15f, m_gridStep * 0.4f);
+    // and isn't overaggressive at 0.1 mm grids. (Steve: closing splines onto
+    // existing line/polygon endpoints was awkward — the old 0.4× / 0.15 mm
+    // floor was too tight to reliably grab the corner when you're drawing
+    // freehand toward it. Bumped to 0.6× / 0.25 mm.)
+    float pointSnapThreshold = std::max(0.25f, m_gridStep * 0.6f);
     float curveSnapThreshold = pointSnapThreshold; // same band for circle/arc perimeters
 
     // Without a sketch only grid snap can apply.
@@ -1806,24 +1809,33 @@ static int pickSketchElement(const Sketch& sketch, glm::vec2 pos, float threshol
             if (dsq < bestDistSq) { bestDistSq = dsq; bestId = ar.id; pickType = "arc"; }
         }
     }
-    // Splines / polygons: bounding-box hit only (no precise picking) — fall back to
-    // simple proximity to control points or vertices.
+    // Splines: walk the densified curve so a click on the visible green stroke
+    // picks the spline, not just clicks landing on a control-point square.
+    // (Steve: couldn't trim/delete a spline by clicking on the curve — old
+    // picker only checked proximity to control points, so clicking between
+    // them missed entirely.)
     for (const auto& sp : sketch.getSplines()) {
-        for (int pid : sp.controlPointIds) {
-            const SketchPoint* p = sketch.getPoint(pid);
-            if (!p) continue;
-            glm::vec2 v = pos - p->pos;
-            float dsq = glm::dot(v, v);
-            if (dsq < bestDistSq) { bestDistSq = dsq; bestId = sp.id; pickType = "spline"; }
+        std::vector<glm::vec2> samp = sketch.sampleSpline2D(sp, 24);
+        for (size_t i = 0; i + 1 < samp.size(); ++i) {
+            float dsq = distSqPointSegment(pos, samp[i], samp[i + 1]);
+            if (dsq < bestDistSq) {
+                bestDistSq = dsq; bestId = sp.id; pickType = "spline";
+            }
         }
     }
+    // Polygons: walk the edges between consecutive vertices (closed loop) so a
+    // click on a polygon side picks it, not only clicks at the vertex squares.
     for (const auto& po : sketch.getPolygons()) {
-        for (int pid : po.vertexPointIds) {
-            const SketchPoint* p = sketch.getPoint(pid);
-            if (!p) continue;
-            glm::vec2 v = pos - p->pos;
-            float dsq = glm::dot(v, v);
-            if (dsq < bestDistSq) { bestDistSq = dsq; bestId = po.id; pickType = "polygon"; }
+        const auto& ids = po.vertexPointIds;
+        size_t n = ids.size();
+        for (size_t i = 0; i < n; ++i) {
+            const SketchPoint* a = sketch.getPoint(ids[i]);
+            const SketchPoint* b = sketch.getPoint(ids[(i + 1) % n]);
+            if (!a || !b) continue;
+            float dsq = distSqPointSegment(pos, a->pos, b->pos);
+            if (dsq < bestDistSq) {
+                bestDistSq = dsq; bestId = po.id; pickType = "polygon";
+            }
         }
     }
     return bestId;

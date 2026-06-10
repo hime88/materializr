@@ -42,12 +42,15 @@ double faceArea(const TopoDS_Shape& s) {
 TopoDS_Wire projectNearest(const TopoDS_Wire& w, const TopoDS_Face& f,
                            const gp_Dir& dir, const gp_Pnt& sketchOrigin) {
     TopoDS_Wire best;
+    int total = 0, closedCount = 0;
     try {
         BRepProj_Projection proj(w, f, dir);
         double bestD = 1e100;
         for (; proj.More(); proj.Next()) {
             TopoDS_Wire c = proj.Current();
+            ++total;
             if (!BRep_Tool::IsClosed(c)) continue;
+            ++closedCount;
             GProp_GProps g;
             BRepGProp::LinearProperties(c, g);
             gp_Vec d(sketchOrigin, g.CentreOfMass());
@@ -55,6 +58,12 @@ TopoDS_Wire projectNearest(const TopoDS_Wire& w, const TopoDS_Face& f,
             if (t < bestD) { bestD = t; best = c; }
         }
     } catch (...) {}
+    if (best.IsNull()) {
+        std::fprintf(stderr,
+            "[ProjectSketch]   projection produced %d wire(s), %d closed "
+            "— need at least one closed wire to stamp.\n",
+            total, closedCount);
+    }
     return best;
 }
 
@@ -172,6 +181,9 @@ bool ProjectSketchOp::execute(Document& doc) {
                 if (!wanted) continue;
             }
             const auto& reg = regions[ri];
+            std::fprintf(stderr,
+                "[ProjectSketch] region %zu: projecting outer wire onto face.\n",
+                ri);
             TopoDS_Wire outer =
                 projectNearest(reg.outerWire, m_targetFace, dir, org);
             if (outer.IsNull()) { skipped++; continue; }

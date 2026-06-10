@@ -3,6 +3,8 @@
 **Open-source parametric 3D CAD for makers** — constraint sketches, solid
 modeling, threads, SVG & text engraving, STL/STEP export.
 
+![Materializr modeling a coffee mug with filleted rim, handle, and embossed logo wrapped around the cylindrical face](docs/hero-mug.png)
+
 ## Download
 
 **[⬇ Get the latest release](https://github.com/materializr-cad/materializr/releases/latest)**

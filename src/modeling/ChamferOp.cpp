@@ -127,18 +127,16 @@ bool ChamferOp::execute(Document& doc) {
 
         TopoDS_Shape candidate = chamfer.Shape();
 
-        // Same defence as FilletOp::execute: OCCT's chamfer API returns
-        // garbled / self-intersecting geometry instead of failing when the
-        // distance exceeds what the body can support. Reject via BRepCheck
-        // + bounding-box-must-not-grow + volume-must-be-≤-input-volume so
-        // the live preview shows nothing instead of a broken body.
+        // Same narrow defence as FilletOp::execute: bbox-must-not-grow
+        // and volume must be strictly > 0. The old volume-cap (output ≤
+        // input × 1.01) wrongly rejected concave chamfers which add a
+        // sliver of material in the corner.
         {
-            BRepCheck_Analyzer analyzer(candidate);
-            if (!analyzer.IsValid()) return false;
-
+            // AddOptimal walks the actual geometry rather than tolerance-
+            // padded extents — see FilletOp::execute for the full story.
             Bnd_Box bbIn, bbOut;
-            BRepBndLib::Add(m_previousShape, bbIn);
-            BRepBndLib::Add(candidate,       bbOut);
+            BRepBndLib::AddOptimal(m_previousShape, bbIn);
+            BRepBndLib::AddOptimal(candidate,       bbOut);
             if (!bbIn.IsVoid() && !bbOut.IsVoid()) {
                 Standard_Real ix0, iy0, iz0, ix1, iy1, iz1;
                 Standard_Real ox0, oy0, oz0, ox1, oy1, oz1;
@@ -152,13 +150,9 @@ bool ChamferOp::execute(Document& doc) {
                 }
             }
 
-            GProp_GProps gpIn, gpOut;
-            BRepGProp::VolumeProperties(m_previousShape, gpIn);
-            BRepGProp::VolumeProperties(candidate,       gpOut);
-            if (gpOut.Mass() < 1e-6 ||
-                gpOut.Mass() > gpIn.Mass() * 1.01) {
-                return false;
-            }
+            GProp_GProps gpOut;
+            BRepGProp::VolumeProperties(candidate, gpOut);
+            if (gpOut.Mass() < 1e-6) return false;
         }
 
         // Record the chamfer faces generated from each input edge so a later
