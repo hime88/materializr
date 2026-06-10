@@ -19,12 +19,15 @@
 #include <TopoDS.hxx>
 #include <gp_GTrsf.hxx>
 #include <gp_Pnt.hxx>
+#include <Standard_ErrorHandler.hxx>
+#include <Standard_Failure.hxx>
 #include <algorithm>
 
 bool MoveFaceOp::execute(Document& doc) {
     if (m_bodyId < 0 || m_face.IsNull() || m_move.Magnitude() < 1e-6) return false;
 
     try {
+        OCC_CATCH_SIGNALS // turn an OCCT kernel fault here into a catch below
         m_previousShape = doc.getBody(m_bodyId);
         if (m_previousShape.IsNull()) return false;
 

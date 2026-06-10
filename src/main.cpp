@@ -1,6 +1,8 @@
 #include "app/Application.h"
 #include "core/Verbose.h"
 
+#include <OSD.hxx>
+
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -88,6 +90,12 @@ int main(int argc, char* argv[]) {
                       << " (continuing with stderr to terminal)" << std::endl;
         }
     }
+    // Convert OCCT internal faults (SIGSEGV/SIGFPE inside the kernel — e.g. a
+    // NURBS-convert on degenerate geometry) into catchable Standard_Failure
+    // exceptions, so an op's try/catch (with OCC_CATCH_SIGNALS) refuses the
+    // operation instead of taking the whole app down.
+    OSD::SetSignal(Standard_False);
+
     try {
         materializr::Application app(opts.safeMode);
         app.run();

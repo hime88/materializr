@@ -2193,11 +2193,47 @@ void Application::renderViewport() {
                     if (m_snapToGrid && m_sketchGridStep > 0.0f)
                         along = std::round(along / m_sketchGridStep) * m_sketchGridStep;
                     m_moveFaceVec = m_moveFaceBase + axis * along;
-                    updateMoveFace();
+                    // Deferred: don't rebuild the body mid-drag — only the ghost
+                    // silhouette moves (drawn below). Flag a rebuild for release.
+                    m_moveFacePendingRebuild = true;
                 }
             } else if (m_moveFaceActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                // Released: now run the (single) rebuild so the body catches up
+                // to where the silhouette was dragged.
+                if (m_moveFacePendingRebuild) {
+                    updateMoveFace();
+                    m_moveFacePendingRebuild = false;
+                }
                 m_moveFaceDragging = false; // released — next drag re-latches
                 m_moveFaceGrab = -1;
+            }
+
+            // Ghost silhouette: the captured face outline translated by the
+            // current slide, drawn as a yellow loop. During a drag this is the
+            // ONLY thing that moves (the body rebuilds on release), so the user
+            // sees the target without paying the per-frame shear.
+            if (m_moveFaceActive && !m_moveFaceSilhouette.empty() &&
+                glm::length(m_moveFaceVec) > 1e-5f) {
+                ImVec2 wp = ImGui::GetItemRectMin();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const glm::vec3 off = m_moveFaceVec;
+                auto pr = [&](const glm::vec3& w, ImVec2& out) -> bool {
+                    glm::vec4 c = proj * view * glm::vec4(w + off, 1.0f);
+                    if (c.w <= 1e-6f) return false;
+                    out = ImVec2(wp.x + (c.x / c.w * 0.5f + 0.5f) * contentSize.x,
+                                 wp.y + (1.0f - (c.y / c.w * 0.5f + 0.5f)) * contentSize.y);
+                    return true;
+                };
+                const ImU32 col = IM_COL32(255, 235, 64, 230);
+                ImVec2 prev, first; bool havePrev = false, haveFirst = false;
+                for (const auto& p : m_moveFaceSilhouette) {
+                    ImVec2 s;
+                    if (!pr(p, s)) { havePrev = false; continue; }
+                    if (!haveFirst) { first = s; haveFirst = true; }
+                    if (havePrev) dl->AddLine(prev, s, col, 2.0f);
+                    prev = s; havePrev = true;
+                }
+                if (haveFirst && havePrev) dl->AddLine(prev, first, col, 2.0f);
             }
 
             // Fillet/Chamfer claim: on left-down, if the cursor is within
@@ -3044,11 +3080,31 @@ void Application::renderViewport() {
                         // the region. The region wins only when STRICTLY
                         // nearer; everything demoted is one same-spot
                         // click away via cycling.
-                        const bool regionStrictlyNearer =
-                            sketchD < bodyD - tol;
-                        const bool pickRegion =
-                            onHostFace || forced == 1 ||
-                            (forced == -1 && regionStrictlyNearer);
+                        // SKETCH-FIRST (Steve's call, reversing the old "ties go
+                        // to the face"): the FIRST click takes the sketch region
+                        // whenever it's coplanar-or-in-front of the face; the slow
+                        // same-spot SECOND click cycles to the face below it. The
+                        // face only wins the first click when it's STRICTLY in
+                        // front (the sketch genuinely sits behind a body), and
+                        // even then the sketch is one same-spot click away.
+                        const bool faceStrictlyNearer =
+                            bodyD < sketchD - tol;
+                        bool pickRegion;
+                        if (dbl) {
+                            // Fast double-click is for the BODY — the region
+                            // (even an on-host one) must step aside so the
+                            // body-select branch below fires.
+                            pickRegion = false;
+                        } else if (forced == 1) {
+                            pickRegion = true;          // cycle → region
+                        } else if (forced == 0) {
+                            pickRegion = false;         // cycle → face (overrides onHostFace)
+                        } else {
+                            // Default first click: sketch-first. onHostFace and a
+                            // coplanar/in-front sketch both take the region; the
+                            // face only wins when it's strictly in front.
+                            pickRegion = onHostFace || !faceStrictlyNearer;
+                        }
                         if (!pickRegion) {
                             regionHit.sketchId = -1;
                             regionHit.regionIndex = -1;

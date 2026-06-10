@@ -34,11 +34,16 @@
 #include "modeling/ConstructionPlaneOp.h"
 #include "modeling/ConstructionAxisOp.h"
 #include <Geom_Plane.hxx>
+#include <Geom_BSplineSurface.hxx>
+#include <Geom_BezierSurface.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <Geom2d_BezierCurve.hxx>
 #include <Geom_Surface.hxx>
 
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <TopoDS_Wire.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp_Face.hxx>
@@ -1519,6 +1524,41 @@ void Application::beginMoveFace() {
     try { m_moveFacePreviousShape = m_document->getBody(m_moveFaceBodyId); }
     catch (...) { return; }
 
+    // The shear (gp_GTrsf) forces OCCT to NURBS-convert the WHOLE body, and that
+    // conversion SEGFAULTS on freeform geometry — not just BSpline/Bezier
+    // SURFACES (threads), but also the BSpline PCURVES that booleans / chamfers
+    // leave behind on otherwise-analytic faces. The fault can't be caught on
+    // this OCCT build (longjmp error model), so refuse up front whenever the
+    // body carries any such geometry. Move Face then runs only where the shear
+    // is safe (clean analytic bodies — boxes, prisms, plain cylinders).
+    auto bodyIsShearSafe = [](const TopoDS_Shape& shape) -> bool {
+        for (TopExp_Explorer fx(shape, TopAbs_FACE); fx.More(); fx.Next()) {
+            TopoDS_Face f = TopoDS::Face(fx.Current());
+            Handle(Geom_Surface) s = BRep_Tool::Surface(f);
+            if (!s.IsNull() &&
+                (s->IsKind(STANDARD_TYPE(Geom_BSplineSurface)) ||
+                 s->IsKind(STANDARD_TYPE(Geom_BezierSurface))))
+                return false;
+            for (TopExp_Explorer ex(f, TopAbs_EDGE); ex.More(); ex.Next()) {
+                Standard_Real f0, l0;
+                Handle(Geom2d_Curve) pc =
+                    BRep_Tool::CurveOnSurface(TopoDS::Edge(ex.Current()), f, f0, l0);
+                if (!pc.IsNull() &&
+                    (pc->IsKind(STANDARD_TYPE(Geom2d_BSplineCurve)) ||
+                     pc->IsKind(STANDARD_TYPE(Geom2d_BezierCurve))))
+                    return false;
+            }
+        }
+        return true;
+    };
+    if (!bodyIsShearSafe(m_moveFacePreviousShape)) {
+        std::fprintf(stderr, "[MoveFace] declined: body has freeform geometry "
+                             "(unsafe for the shear)\n");
+        showToast("Move Face only works on clean box-like bodies. This one has "
+                  "curved or boolean-cut faces the shear can't handle.");
+        return;
+    }
+
     // Face plane (orientation-corrected outward normal + a point on it).
     try {
         BRepGProp_Face prop(m_moveFaceFace);
@@ -1568,6 +1608,26 @@ void Application::beginMoveFace() {
             m_moveFaceSketchPlanes0.push_back(sp);
         }
     }
+
+    // Outer-wire outline as a world-space polyline, for the drag-time ghost
+    // silhouette. The drag moves only this outline; the body rebuilds once on
+    // release (deferred — no per-frame shear).
+    m_moveFaceSilhouette.clear();
+    m_moveFacePendingRebuild = false;
+    try {
+        TopoDS_Wire ow = BRepTools::OuterWire(m_moveFaceFace);
+        if (!ow.IsNull()) {
+            for (TopExp_Explorer ex(ow, TopAbs_EDGE); ex.More(); ex.Next()) {
+                BRepAdaptor_Curve crv(TopoDS::Edge(ex.Current()));
+                double f = crv.FirstParameter(), l = crv.LastParameter();
+                const int Nseg = 12;
+                for (int i = 0; i < Nseg; ++i) {
+                    gp_Pnt p = crv.Value(f + (l - f) * (double(i) / Nseg));
+                    m_moveFaceSilhouette.emplace_back(p.X(), p.Y(), p.Z());
+                }
+            }
+        }
+    } catch (...) { m_moveFaceSilhouette.clear(); }
 
     m_moveFaceActive = true;
 }
@@ -1637,6 +1697,8 @@ void Application::commitMoveFace() {
     m_moveFaceVec = glm::vec3(0.0f);
     m_moveFaceBase = glm::vec3(0.0f);
     m_moveFaceDragging = false;
+    m_moveFaceSilhouette.clear();
+    m_moveFacePendingRebuild = false;
     m_meshesDirty = true;
 }
 
@@ -1654,6 +1716,8 @@ void Application::cancelMoveFace() {
     m_moveFaceVec = glm::vec3(0.0f);
     m_moveFaceBase = glm::vec3(0.0f);
     m_moveFaceDragging = false;
+    m_moveFaceSilhouette.clear();
+    m_moveFacePendingRebuild = false;
     m_meshesDirty = true;
 }
 

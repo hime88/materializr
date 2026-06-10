@@ -227,6 +227,12 @@ private:
     glm::vec3 m_moveFaceAxisA{1.0f, 0.0f, 0.0f};
     glm::vec3 m_moveFaceAxisB{0.0f, 1.0f, 0.0f};
     int  m_moveFaceGrab = -1;
+    // DEFERRED REBUILD: the body shear is expensive (and fragile), so the drag
+    // only moves a ghost SILHOUETTE of the face outline; the real rebuild runs
+    // once on mouse-release. m_moveFaceSilhouette is the face's outer-wire
+    // polyline (world space, at rest), drawn translated by m_moveFaceVec.
+    std::vector<glm::vec3> m_moveFaceSilhouette;
+    bool m_moveFacePendingRebuild = false;
     // Sketches sitting ON the moved face — they slide with it. Original planes
     // snapshotted so the live preview / cancel can restore them.
     std::vector<int>    m_moveFaceSketchIds;
