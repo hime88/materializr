@@ -42,8 +42,10 @@
 
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <TopoDS_Wire.hxx>
+#include <TopoDS_Edge.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp_Face.hxx>
@@ -1524,21 +1526,11 @@ void Application::beginMoveFace() {
     try { m_moveFacePreviousShape = m_document->getBody(m_moveFaceBodyId); }
     catch (...) { return; }
 
-    // The loft rebuild needs the moved face to be a single closed loop — it
-    // can't carry inner (hole) loops yet, so refuse those up front with a clear
-    // message. (Everything else — freeform / boolean bodies that crashed the
-    // old shear — is now handled safely: the op lofts local wires and simply
-    // refuses on release if the body isn't a clean prism, no crash.)
-    {
-        int nwires = 0;
-        for (TopExp_Explorer wx(m_moveFaceFace, TopAbs_WIRE); wx.More(); wx.Next()) ++nwires;
-        if (nwires > 1) {
-            std::fprintf(stderr, "[MoveFace] declined: face has holes\n");
-            showToast("Move Face can't move a face with holes in it yet - "
-                      "moving holes is coming.");
-            return;
-        }
-    }
+    // (The loft rebuild now lofts the outer loop AND subtracts a loft of each
+    // hole loop, so holed faces are allowed. Freeform / boolean bodies that
+    // crashed the old shear are handled safely too: the op only lofts local
+    // wires and refuses gracefully on release if the body isn't a clean prism —
+    // no crash.)
 
     // Face plane (orientation-corrected outward normal + a point on it).
     try {
@@ -1598,9 +1590,14 @@ void Application::beginMoveFace() {
     try {
         TopoDS_Wire ow = BRepTools::OuterWire(m_moveFaceFace);
         if (!ow.IsNull()) {
-            for (TopExp_Explorer ex(ow, TopAbs_EDGE); ex.More(); ex.Next()) {
-                BRepAdaptor_Curve crv(TopoDS::Edge(ex.Current()));
+            // Walk edges in CONNECTED order (WireExplorer), respecting each
+            // edge's orientation — TopExp_Explorer returns them in arbitrary
+            // order, which made the silhouette polyline zig-zag into a bowtie.
+            for (BRepTools_WireExplorer we(ow); we.More(); we.Next()) {
+                const TopoDS_Edge& e = we.Current();
+                BRepAdaptor_Curve crv(e);
                 double f = crv.FirstParameter(), l = crv.LastParameter();
+                if (e.Orientation() == TopAbs_REVERSED) std::swap(f, l);
                 const int Nseg = 12;
                 for (int i = 0; i < Nseg; ++i) {
                     gp_Pnt p = crv.Value(f + (l - f) * (double(i) / Nseg));

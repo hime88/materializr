@@ -10,6 +10,7 @@
 
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRep_Tool.hxx>
@@ -51,21 +52,13 @@ bool MoveFaceOp::execute(Document& doc) {
         // LOFT REBUILD (replaces the old whole-body gp_GTrsf shear, which made
         // OCCT NURBS-convert the entire body and segfault on freeform/boolean
         // geometry). A prism is bounded by the selected face and an OPPOSITE
-        // PARALLEL face; lofting a capped solid between that base wire and the
-        // MOVED top wire rebuilds the sheared prism with ruled walls — purely
-        // local geometry, no whole-body convert. Bodies that aren't a clean
-        // single-profile prism (no matching opposite face, or the face has
-        // holes) simply refuse here instead of crashing.
-        if (m_face.NbChildren() > 0) {
-            // OuterWire-only loft can't carry inner (hole) loops yet.
-            TopoDS_Wire ow = BRepTools::OuterWire(m_face);
-            int nwires = 0;
-            for (TopExp_Explorer wx(m_face, TopAbs_WIRE); wx.More(); wx.Next()) ++nwires;
-            if (nwires > 1) {
-                std::fprintf(stderr, "[MoveFace] refused: face has holes (not yet supported)\n");
-                return false;
-            }
-        }
+        // PARALLEL face. We loft a capped solid between the base OUTER wire and
+        // the moved top outer wire, then subtract a loft of each HOLE loop
+        // (base inner -> moved top inner). Every loop moves by V here (the whole
+        // face slides, holes included); per-loop control (move a hole on its
+        // own) layers on top later. All geometry is local wires — no whole-body
+        // convert, so it survives bodies the shear crashed on. Non-prism bodies
+        // refuse here instead of crashing.
 
         // Find the opposite parallel planar face (the prism's far cap).
         TopoDS_Face baseFace;
@@ -88,26 +81,69 @@ bool MoveFaceOp::execute(Document& doc) {
             return false;
         }
 
-        TopoDS_Wire wBase = BRepTools::OuterWire(baseFace);
-        TopoDS_Wire wTop  = BRepTools::OuterWire(m_face);
-        if (wBase.IsNull() || wTop.IsNull()) return false;
+        // Split each cap into its outer wire + inner (hole) loops.
+        auto collect = [](const TopoDS_Face& f, TopoDS_Wire& outer,
+                          std::vector<TopoDS_Wire>& inners) {
+            outer = BRepTools::OuterWire(f);
+            for (TopExp_Explorer wx(f, TopAbs_WIRE); wx.More(); wx.Next()) {
+                TopoDS_Wire w = TopoDS::Wire(wx.Current());
+                if (!w.IsSame(outer)) inners.push_back(w);
+            }
+        };
+        auto centroid = [](const TopoDS_Wire& w) {
+            gp_XYZ acc(0, 0, 0); int n = 0;
+            for (TopExp_Explorer vx(w, TopAbs_VERTEX); vx.More(); vx.Next()) {
+                acc += BRep_Tool::Pnt(TopoDS::Vertex(vx.Current())).XYZ(); ++n;
+            }
+            if (n) acc /= n;
+            return gp_Pnt(acc);
+        };
 
-        // Move the top wire by V; reverse the base wire so both run the same way
-        // viewed from +N (the two caps' outer wires are oppositely oriented).
+        TopoDS_Wire topOuter, baseOuter;
+        std::vector<TopoDS_Wire> topInners, baseInners;
+        collect(m_face, topOuter, topInners);
+        collect(baseFace, baseOuter, baseInners);
+        if (topOuter.IsNull() || baseOuter.IsNull()) return false;
+
         gp_Trsf slideT; slideT.SetTranslation(V);
-        TopoDS_Wire wTopMoved =
-            TopoDS::Wire(BRepBuilderAPI_Transform(wTop, slideT, Standard_True).Shape());
-        wBase.Reverse();
+        auto moved = [&](const TopoDS_Wire& w) {
+            return TopoDS::Wire(BRepBuilderAPI_Transform(w, slideT, Standard_True).Shape());
+        };
+        auto loftSolid = [](TopoDS_Wire a, TopoDS_Wire b, TopoDS_Shape& out) -> bool {
+            BRepOffsetAPI_ThruSections ts(Standard_True /*solid*/, Standard_True /*ruled*/);
+            ts.AddWire(a); ts.AddWire(b); ts.Build();
+            if (!ts.IsDone()) return false;
+            out = ts.Shape();
+            return !out.IsNull();
+        };
 
-        BRepOffsetAPI_ThruSections loft(Standard_True /*solid*/, Standard_True /*ruled*/);
-        loft.AddWire(wBase);
-        loft.AddWire(wTopMoved);
-        loft.Build();
-        if (!loft.IsDone()) {
-            std::fprintf(stderr, "[MoveFace] loft failed — refusing\n");
+        // Outer prism: base outer (reversed to match orientation) -> moved top.
+        TopoDS_Wire bO = baseOuter; bO.Reverse();
+        TopoDS_Shape result;
+        if (!loftSolid(bO, moved(topOuter), result)) {
+            std::fprintf(stderr, "[MoveFace] outer loft failed — refusing\n");
             return false;
         }
-        TopoDS_Shape result = loft.Shape();
+
+        // Subtract a loft for each hole (match base hole to top hole by the
+        // in-plane distance between their centroids — holes run straight down).
+        for (const auto& tw : topInners) {
+            gp_Pnt tc = centroid(tw);
+            int best = -1; double bd = 1e300;
+            for (size_t i = 0; i < baseInners.size(); ++i) {
+                gp_Pnt bc = centroid(baseInners[i]);
+                gp_Vec dv(bc.X() - tc.X(), bc.Y() - tc.Y(), bc.Z() - tc.Z());
+                double d = (dv - N * dv.Dot(N)).Magnitude(); // in-plane only
+                if (d < bd) { bd = d; best = static_cast<int>(i); }
+            }
+            if (best < 0) continue;
+            TopoDS_Wire bi = baseInners[best]; bi.Reverse();
+            TopoDS_Shape holeSolid;
+            if (!loftSolid(bi, moved(tw), holeSolid)) continue;
+            BRepAlgoAPI_Cut cut(result, holeSolid);
+            if (cut.IsDone() && !cut.Shape().IsNull()) result = cut.Shape();
+        }
+
         if (result.IsNull() || !BRepCheck_Analyzer(result).IsValid()) {
             std::fprintf(stderr, "[MoveFace] lofted result invalid — refusing\n");
             return false;
