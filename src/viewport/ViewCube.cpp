@@ -33,8 +33,15 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
     const float pad     = 10.0f;
     const float cubeR   = 19.0f;   // half-extent of cube projection (px)
     const float widgetR = 38.0f;   // accessory placement radius
+    float topOffset = 42.0f;       // push below the window title bar
+#if defined(__ANDROID__)
+    // The docked "Viewport" tab bar is ~2x tall on touch, so the Home button
+    // (60 px above the cube centre) hid behind it. Drop the whole widget so the
+    // top accessories clear it.
+    topOffset = 74.0f;
+#endif
     ImVec2 center(wp.x + ws.x - pad - widgetR - 26.0f,
-                  wp.y + pad + widgetR + 42.0f);
+                  wp.y + pad + widgetR + topOffset);
 
     // --- Camera view-rotation matrix (no translation), so the cube spins with
     //     the camera's orientation.

@@ -31,7 +31,12 @@ void StatusBar::setMessage(const std::string& msg) {
 void StatusBar::render() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-    const float height = 24.0f;
+    float height = 24.0f;
+#if defined(__ANDROID__)
+    // The touch UI renders the font at ~2x, but a fixed 24 px bar clipped the
+    // bottom of those glyphs. Size the bar to the actual font so descenders fit.
+    height = ImGui::GetFontSize() + 12.0f;
+#endif
     ImVec2 pos(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height);
     ImVec2 size(viewport->WorkSize.x, height);
 
