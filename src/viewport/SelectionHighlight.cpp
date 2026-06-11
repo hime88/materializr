@@ -332,8 +332,27 @@ void SelectionHighlight::renderBody(const TopoDS_Shape& bodyShape, const glm::ma
 
 void SelectionHighlight::drawThickLines(const std::vector<float>& verts, const glm::mat4& vp,
                                         const glm::vec3& color, float halfWidthPx) {
-    if (verts.empty() || !m_lineProgram) return;
+    if (verts.empty()) return;
 
+    glBindVertexArray(m_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+
+#if defined(__ANDROID__)
+    // GL ES 3.0 has no geometry shader, so there's no screen-space line widening
+    // (m_lineProgram is 0). Fall back to plain GL_LINES with the basic program —
+    // the selection outline renders, just at hardware line width rather than the
+    // antialiased ribbon. (void halfWidthPx; line width is fixed.)
+    (void)halfWidthPx;
+    glUseProgram(m_program);
+    glUniformMatrix4fv(m_locMVP, 1, GL_FALSE, glm::value_ptr(vp));
+    glUniform4f(m_locColor, color.r, color.g, color.b, 1.0f);
+    glDisable(GL_DEPTH_TEST);
+    glLineWidth(2.0f);
+    glDrawArrays(GL_LINES, 0, static_cast<int>(verts.size() / 3));
+    glEnable(GL_DEPTH_TEST);
+#else
+    if (!m_lineProgram) { glBindVertexArray(0); return; }
     GLint viewport[4] = {0, 0, 1, 1};
     glGetIntegerv(GL_VIEWPORT, viewport);
     float vw = static_cast<float>(viewport[2] > 0 ? viewport[2] : 1);
@@ -345,13 +364,10 @@ void SelectionHighlight::drawThickLines(const std::vector<float>& verts, const g
     glUniform2f(m_locViewport, vw, vh);
     glUniform1f(m_locHalfWidth, std::max(0.5f, halfWidthPx));
 
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
-
     glDisable(GL_DEPTH_TEST);
     glDrawArrays(GL_LINES, 0, static_cast<int>(verts.size() / 3));
     glEnable(GL_DEPTH_TEST);
+#endif
 
     glBindVertexArray(0);
     glUseProgram(0);

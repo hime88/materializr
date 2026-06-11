@@ -3571,7 +3571,16 @@ void Application::renderViewport() {
                                 // click to one of its own boundary edges (every interior pixel
                                 // is within 8 px of an edge when the face is itself only 16 px
                                 // across).
-                                float edgeThresh = std::min(8.0f, result.faceScreenSize * 0.25f);
+#if defined(__ANDROID__)
+                                // A fingertip is far less precise than a cursor,
+                                // so widen the edge-promotion radius (8 px ~ 0.85 mm
+                                // at 240 dpi is unhittable). Still clamped to ¼ of
+                                // the face so small faces keep their interior.
+                                const float edgeBase = 24.0f;
+#else
+                                const float edgeBase = 8.0f;
+#endif
+                                float edgeThresh = std::min(edgeBase, result.faceScreenSize * 0.25f);
                                 if (result.edgeScreenDist < edgeThresh && !result.nearestEdge.IsNull()) {
                                     entry.type = SelectionType::Edge;
                                     entry.bodyId = result.bodyId;
