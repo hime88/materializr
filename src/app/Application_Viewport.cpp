@@ -1971,12 +1971,18 @@ void Application::renderViewport() {
             // centroid movement pans, pinch zooms. Applied here so they share the
             // viewport-hovered gate and gizmo-ownership suppression above.
             if (m_window) {
-                float tdx, tdy, tdz;
+                float tdx = 0.0f, tdy = 0.0f, tdz = 0.0f;
+                // Pan: damped, with a small deadzone so two-finger jitter doesn't
+                // creep the view.
                 if (!gizmoOwnsDrag && m_window->consumeTouchPan(tdx, tdy)) {
-                    cam.pan(tdx, tdy);
+                    if (std::fabs(tdx) > 0.5f || std::fabs(tdy) > 0.5f) {
+                        cam.pan(tdx * 0.55f, tdy * 0.55f);
+                    }
                 }
+                // Pinch zoom: continuous (fires every frame), so a fraction of a
+                // wheel tick. Deadzoned to keep a pure pan from zooming.
                 if (m_window->consumeTouchZoom(tdz)) {
-                    cam.zoom(tdz * 0.02f);   // pinch pixels -> zoom units
+                    if (std::fabs(tdz) > 1.5f) cam.zoom(tdz * 0.006f);
                 }
             }
 #endif

@@ -63,6 +63,11 @@ public:
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
     bool getSnapToGrid() const { return m_snapToGrid; }
 
+    // HiDPI/touch scale for button heights (1.0 on desktop). Without this the
+    // fixed-height buttons stay 30px tall while the font scales up on a tablet,
+    // so the labels overlap. bh() scales a base height by it.
+    void setUiScale(float s) { m_uiScale = s; }
+
     // Set each frame by Application from a cheap face/body inspection: shows
     // the "Edit Diameter" button in Face Operations when the picked face is a
     // cylinder on a recognized cylinder-or-tube body.
@@ -113,6 +118,10 @@ public:
     void setShowTooltips(bool b) { m_showTooltips = b; }
 
 private:
+    // Scale a base button height by the UI scale (1.0 on desktop).
+    float bh(float h) const { return h * m_uiScale; }
+    float m_uiScale = 1.0f;
+
     const SelectionManager* m_selection = nullptr;
     const ::History* m_history = nullptr;
     PluginContext* m_pluginCtx = nullptr;

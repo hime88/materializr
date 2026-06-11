@@ -191,6 +191,9 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
     m_toolbar->setSelectionManager(m_selection.get());
     m_toolbar->setHistory(m_history.get());
     m_toolbar->setPluginContext(m_pluginContext.get());
+    // Scale the Tools-panel button heights to match the HiDPI font (Android),
+    // otherwise 30px buttons under a 2x font overlap. 1.0 on desktop.
+    if (m_window) m_toolbar->setUiScale(m_window->uiScale());
     m_history->setThreadsLastDeclineCallback([this]{ showThreadsLastToast(); });
     m_historyPanel->setHistory(m_history.get());
     m_historyPanel->setDocument(m_document.get());
