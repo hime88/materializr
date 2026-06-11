@@ -22,7 +22,7 @@ modeling, threads, SVG & text engraving, STL/STEP export.
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![CMake](https://img.shields.io/badge/CMake-3.20%2B-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
+![License](https://img.shields.io/badge/License-GPLv3-blue)
 
 Built on the [OpenCASCADE](https://dev.opencascade.org/) geometry kernel —
 real B-rep solids, not meshes — with a Dear ImGui interface. Sketch on any
@@ -86,7 +86,8 @@ panel, and **Help → Check for Updates**.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU GPLv3 — see [LICENSE](LICENSE). (Releases through 0.9.7.1 were MIT; the
+project is GPLv3 from here on.)
 
 ## Contributing
 

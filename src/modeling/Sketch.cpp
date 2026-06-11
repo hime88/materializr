@@ -988,14 +988,22 @@ TopoDS_Shape Sketch::buildProfileShape() const {
     std::vector<std::vector<bool>> inside(n, std::vector<bool>(n, false));
     std::vector<int> depth(n, 0);
     for (size_t i = 0; i < n; ++i) {
-        if (polys[i].empty()) continue;
-        const glm::vec2 rep = polys[i][0];
+        if (polys[i].size() < 3) continue;
+        const size_t stepI = std::max<size_t>(1, polys[i].size() / 24);
         for (size_t j = 0; j < n; ++j) {
             if (i == j || polys[j].size() < 3) continue;
-            if (pointInPolygon2D(polys[j], rep)) {
-                inside[i][j] = true;
-                depth[i]++;
+            // i ⊂ j  iff MOST of i's boundary points lie inside j. The old test
+            // used a single vertex (polys[i][0]), which flips on float luck when
+            // a counter grazes its glyph's edge — that's why A/R counters were
+            // detected inconsistently. Sampling many points is robust, and keeps
+            // concentric rings right (an outer ring's points sit OUTSIDE its
+            // own counter, so it's never nested in its own hole).
+            size_t in = 0, tested = 0;
+            for (size_t k = 0; k < polys[i].size(); k += stepI) {
+                ++tested;
+                if (pointInPolygon2D(polys[j], polys[i][k])) ++in;
             }
+            if (tested && in * 2 > tested) { inside[i][j] = true; depth[i]++; }
         }
     }
     // Direct parent of an odd-depth wire: its container one level up.

@@ -3282,9 +3282,17 @@ void Application::renderViewport() {
                         // to cycling.
                         const bool dbl =
                             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                        // When the intent is clearly to TOGGLE regions in a
+                        // multi-selection — during Project Sketch, or with Ctrl
+                        // held — a same-spot re-click must stay on the region so
+                        // it deselects, NOT cycle down to the face behind it
+                        // (which cleared the selection / stole the click).
+                        const bool stickToRegion =
+                            m_projectSketchCtl.active() || ImGui::GetIO().KeyCtrl;
                         int forced = -1; // -1 none, 0 face, 1 region
                         if (!dbl && sameSpot && m_pickCycleLast == 0) forced = 1;
-                        else if (!dbl && sameSpot && m_pickCycleLast == 1) forced = 0;
+                        else if (!dbl && sameSpot && m_pickCycleLast == 1 &&
+                                 !stickToRegion) forced = 0;
                         // DEFAULT = the ORIGINAL pre-saga semantics:
                         // region wins on ties / when nearer, face wins only
                         // when the body surface is CLEARLY in front. Every
@@ -3357,11 +3365,13 @@ void Application::renderViewport() {
                         entry.type = SelectionType::SketchRegion;
                         entry.sketchId = regionHit.sketchId;
                         entry.subShapeIndex = regionHit.regionIndex;
-                        if (io.KeyCtrl) {
+                        if (io.KeyCtrl || m_projectSketchCtl.active()) {
                             // Toggle: Ctrl+clicking an already-selected
                             // region deselects it — fixing a bad pick in a
                             // multi-region selection shouldn't mean starting
-                            // the whole selection over.
+                            // the whole selection over. During Project Sketch
+                            // every click toggles, so building up the set of
+                            // regions to project needs no modifier held.
                             m_selection->toggleSelection(entry);
                         } else {
                             m_selection->select(entry);
@@ -3686,15 +3696,22 @@ void Application::renderViewport() {
                             // clearing immediately. The release handler below decides
                             // whether to multi-select bodies (drag had area) or treat
                             // it as a plain click and clear.
+                            // During Project Sketch an empty-space click is
+                            // almost always a near-miss on a tiny region (e.g.
+                            // where the aperture rings converge). Do NOTHING —
+                            // don't clear the region set, don't box-select. The
+                            // "Clear" button is the deliberate reset.
+                            const bool projecting = m_projectSketchCtl.active();
                             bool boxEligible = !m_inSketchMode && !m_extruding &&
                                 !m_pushPullActive && !m_edgeOpActive && !m_gizmoDragging &&
+                                !projecting &&
                                 m_orbitButton != ImGuiMouseButton_Left &&
                                 m_panButton  != ImGuiMouseButton_Left;
                             if (boxEligible && m_boxSelect) {
                                 ImVec2 mp = ImGui::GetMousePos();
                                 ImVec2 wp = ImGui::GetItemRectMin();
                                 m_boxSelect->begin(glm::vec2(mp.x - wp.x, mp.y - wp.y));
-                            } else if (!io.KeyCtrl) {
+                            } else if (!io.KeyCtrl && !projecting) {
                                 m_selection->clear();
                             }
                         }

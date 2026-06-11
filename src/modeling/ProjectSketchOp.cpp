@@ -8,7 +8,22 @@
 #include <vector>
 #include <BRepProj_Projection.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <BRepLib.hxx>
+#include <GCPnts_QuasiUniformDeflection.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <Geom2d_Line.hxx>
+#include <gp_Pnt2d.hxx>
+#include <gp_Dir2d.hxx>
+#include <gp_Vec2d.hxx>
+#include <gp_Ax3.hxx>
+#include <algorithm>
+#include <vector>
+#include <cmath>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -72,19 +87,96 @@ TopoDS_Wire projectNearest(const TopoDS_Wire& w, const TopoDS_Face& f,
 // surfaces; a clockwise-wound wire shows up as negative area, in which
 // case one reversed retry fixes it.
 TopoDS_Face singleWireFace(const Handle(Geom_Surface)& surf, TopoDS_Wire w) {
+    // On a PERIODIC surface (cylinder) a closed wire bounds two faces: the small
+    // region AND its giant complement (the rest of the wrap-around). "First
+    // valid" can grab the complement — fine for the outer, fatal for a hole
+    // (the cut then removes everything-but-the-hole). So on periodic surfaces
+    // keep the SMALLER of the two valid faces. The wrapped wires are clean
+    // (no projection slivers), so smallest-area is safe here. Planar faces are
+    // bounded — no complement — so they keep the original first-valid behaviour.
+    const bool periodic = surf->IsUPeriodic() || surf->IsVPeriodic();
+    TopoDS_Face best;
+    double bestArea = 1e300;
     for (int attempt = 0; attempt < 2; ++attempt) {
         BRepBuilderAPI_MakeFace mf(surf, w);
-        if (!mf.IsDone()) return TopoDS_Face();
-        ShapeFix_Face fix(mf.Face());
-        fix.FixOrientationMode() = 1;
-        fix.FixWireMode() = 1;
-        fix.Perform();
-        TopoDS_Face cand = fix.Face();
-        if (faceArea(cand) > 0.0 && BRepCheck_Analyzer(cand).IsValid())
-            return cand;
+        if (mf.IsDone()) {
+            ShapeFix_Face fix(mf.Face());
+            fix.FixOrientationMode() = 1;
+            fix.FixWireMode() = 1;
+            fix.Perform();
+            TopoDS_Face cand = fix.Face();
+            double a = faceArea(cand);
+            if (a > 0.0 && BRepCheck_Analyzer(cand).IsValid()) {
+                if (!periodic) return cand;
+                if (a < bestArea) { bestArea = a; best = cand; }
+            }
+        }
         w.Reverse();
     }
-    return TopoDS_Face();
+    return best;
+}
+
+// Wrap a sketch wire onto a CYLINDER, label-style: the flat horizontal maps to
+// arc-angle (u), the axial position to height (v). The loop is built directly in
+// the surface's (u,v) parameter space with CONTINUOUS u (no wrap into [0,2π]),
+// so it never splits at the silhouette or seam the way ray-projection does —
+// a wide logo wraps cleanly all the way around. `uO` is the angle of the front
+// (where the sketch faces), so the sketch origin lands centred there.
+TopoDS_Wire wrapWireOnCylinder(const TopoDS_Wire& w,
+                               const Handle(Geom_CylindricalSurface)& cyl,
+                               const gp_Pnt& O, const gp_Dir& sketchX,
+                               double uO) {
+    const gp_Ax3& ax = cyl->Position();
+    const gp_Pnt P = ax.Location();
+    const gp_Dir Z = ax.Direction();
+    const double r = cyl->Radius();
+    if (r < 1e-9) return TopoDS_Wire();
+
+    // Sample the wire into an ordered point list.
+    std::vector<gp_Pnt> pts;
+    try {
+        for (BRepTools_WireExplorer ex(w); ex.More(); ex.Next()) {
+            BRepAdaptor_Curve c(ex.Current());
+            GCPnts_QuasiUniformDeflection d(c, 0.05);
+            if (!d.IsDone() || d.NbPoints() < 2) continue;
+            std::vector<gp_Pnt> seg;
+            for (int i = 1; i <= d.NbPoints(); ++i) seg.push_back(d.Value(i));
+            if (ex.Current().Orientation() == TopAbs_REVERSED)
+                std::reverse(seg.begin(), seg.end());
+            for (size_t i = pts.empty() ? 0 : 1; i < seg.size(); ++i)
+                pts.push_back(seg[i]);
+        }
+    } catch (...) { return TopoDS_Wire(); }
+    if (pts.size() < 3) return TopoDS_Wire();
+
+    // Map to (u, v): u = uO + horizontal/r (continuous), v = axial height.
+    std::vector<gp_Pnt2d> uv;
+    uv.reserve(pts.size() + 1);
+    for (const auto& pt : pts) {
+        double s = gp_Vec(O, pt).Dot(gp_Vec(sketchX));
+        double h = gp_Vec(P, pt).Dot(gp_Vec(Z));
+        // -s: the cylinder's u winds opposite the sketch's X, so without this the
+        // wrapped logo comes out mirrored.
+        uv.emplace_back(uO - s / r, h);
+    }
+    if (uv.front().Distance(uv.back()) > 1e-9) uv.push_back(uv.front());
+
+    // Build pcurve line segments on the cylinder, assemble into a wire.
+    try {
+        BRepBuilderAPI_MakeWire mw;
+        for (size_t i = 0; i + 1 < uv.size(); ++i) {
+            const gp_Pnt2d& a = uv[i];
+            const gp_Pnt2d& b = uv[i + 1];
+            double len = a.Distance(b);
+            if (len < 1e-12) continue;
+            Handle(Geom2d_Line) ln = new Geom2d_Line(a, gp_Dir2d(gp_Vec2d(a, b)));
+            TopoDS_Edge e = BRepBuilderAPI_MakeEdge(ln, cyl, 0.0, len);
+            BRepLib::BuildCurve3d(e);
+            mw.Add(e);
+        }
+        if (mw.IsDone()) return mw.Wire();
+    } catch (...) {}
+    return TopoDS_Wire();
 }
 
 // Region face on the target surface: outer wire face MINUS hole wire
@@ -164,6 +256,29 @@ bool ProjectSketchOp::execute(Document& doc) {
         gp_Vec toFace(org, fg.CentreOfMass());
         if (toFace.Dot(gp_Vec(dir)) < 0.0) dir.Reverse();
 
+        // If the target is a CYLINDER, wrap the sketch around it (label-style)
+        // rather than ray-projecting: ray projection can't reach past the
+        // silhouette, so wide logos lost their edge regions. Flat / other faces
+        // keep the ray projection.
+        Handle(Geom_Surface) tsurf = BRep_Tool::Surface(m_targetFace);
+        Handle(Geom_CylindricalSurface) cyl =
+            Handle(Geom_CylindricalSurface)::DownCast(tsurf);
+        const gp_Dir sketchX = pln.XAxis().Direction();
+        double uO = 0.0;
+        if (!cyl.IsNull()) {
+            const gp_Ax3& cax = cyl->Position();
+            // Front = where the outward normal faces the sketch (equals -dir),
+            // in the cylinder's cross-section basis.
+            double nx = -gp_Vec(dir).Dot(gp_Vec(cax.XDirection()));
+            double ny = -gp_Vec(dir).Dot(gp_Vec(cax.YDirection()));
+            uO = std::atan2(ny, nx);
+        }
+        auto projectWire = [&](const TopoDS_Wire& wir) -> TopoDS_Wire {
+            return cyl.IsNull()
+                ? projectNearest(wir, m_targetFace, dir, org)
+                : wrapWireOnCylinder(wir, cyl, org, sketchX, uO);
+        };
+
         // One stamp tool per region: project outer + hole wires, rebuild as
         // a face on the target surface, sweep along the projection direction
         // with a small overlap past the surface so the boolean never sees a
@@ -184,13 +299,12 @@ bool ProjectSketchOp::execute(Document& doc) {
             std::fprintf(stderr,
                 "[ProjectSketch] region %zu: projecting outer wire onto face.\n",
                 ri);
-            TopoDS_Wire outer =
-                projectNearest(reg.outerWire, m_targetFace, dir, org);
+            TopoDS_Wire outer = projectWire(reg.outerWire);
             if (outer.IsNull()) { skipped++; continue; }
             std::vector<TopoDS_Wire> holes;
             bool holesOk = true;
             for (const auto& hw : reg.holeWires) {
-                TopoDS_Wire ph = projectNearest(hw, m_targetFace, dir, org);
+                TopoDS_Wire ph = projectWire(hw);
                 if (ph.IsNull()) { holesOk = false; break; }
                 holes.push_back(ph);
             }

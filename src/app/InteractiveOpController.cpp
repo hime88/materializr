@@ -23,6 +23,16 @@ bool InteractiveOpController::begin(const IopContext& ctx) {
 
 void InteractiveOpController::update(const IopContext& ctx) {
     if (!m_active || m_bodyId < 0) return;
+    if (!wantsLivePreview(ctx)) {
+        // Live preview suppressed (recomputing it per change would freeze the
+        // UI). Keep the snapshot shown and mark preview "ok" so Confirm still
+        // computes + pushes the op once. pushOperation re-runs execute() and
+        // refuses on failure, so a heavy commit that fails just does nothing.
+        ctx.doc.updateBody(m_bodyId, m_snapshot);
+        ctx.markMeshesDirty();
+        m_previewOk = true;
+        return;
+    }
     // Reset to the snapshot, then run a fresh op against it so the live
     // preview tracks the current values exactly without compounding edits.
     ctx.doc.updateBody(m_bodyId, m_snapshot);

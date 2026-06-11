@@ -4,8 +4,29 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
+#include <utility>
+
+#include <Font_BRepFont.hxx>
+#include <Font_BRepTextBuilder.hxx>
+#include <Font_FontAspect.hxx>
+#include <NCollection_String.hxx>
+#include <TCollection_AsciiString.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <GeomAbs_JoinType.hxx>
+#include <GCPnts_QuasiUniformDeflection.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Ax3.hxx>
 
 #define NANOSVG_IMPLEMENTATION
 #include "../third_party/nanosvg.h"
@@ -212,6 +233,396 @@ void sampleCubic(std::vector<glm::vec2>& out, const float* p, float ref) {
     }
 }
 
+// ─── CSS class inlining ─────────────────────────────────────────────────────
+// Many SVGs (Illustrator "Internal CSS", Wikimedia, plenty of downloaded art)
+// keep fills/strokes in a <style> block keyed by class rather than as
+// presentation attributes:
+//   <style>.cls-1{fill:#000}</style> ... <path class="cls-1" d="…"/>
+// nanosvg's CSS support is thin, so those paths arrive with NO fill and get
+// dropped or left open. We resolve the simple rules (.class / #id / tag, the
+// common single-token selectors) and stamp the matching fill/stroke onto each
+// element as a presentation attribute — only where the element doesn't already
+// set it inline — before nanosvg parses. A text-level approximation of the CSS
+// cascade, enough for the "I grabbed this off the internet" case without a real
+// CSS engine.
+
+bool isRelevantCssProp(const std::string& p) {
+    static const char* keep[] = {
+        "fill", "stroke", "stroke-width", "fill-rule", "fill-opacity",
+        "stroke-opacity", "opacity", "stroke-linecap", "stroke-linejoin",
+        "stroke-miterlimit", "stroke-dasharray"};
+    for (auto k : keep) if (p == k) return true;
+    return false;
+}
+
+std::string cssTrim(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+void inlineSvgCss(std::string& svg) {
+    // 1. Gather every <style> block's text.
+    std::string css;
+    size_t sp = 0;
+    while ((sp = svg.find("<style", sp)) != std::string::npos) {
+        size_t gt = svg.find('>', sp);
+        if (gt == std::string::npos) break;
+        size_t end = svg.find("</style>", gt);
+        if (end == std::string::npos) break;
+        css += svg.substr(gt + 1, end - (gt + 1));
+        css += "\n";
+        sp = end + 8;
+    }
+    if (css.empty()) return;
+    // Strip /* */ comments and CDATA wrappers.
+    for (size_t c; (c = css.find("/*")) != std::string::npos; ) {
+        size_t e = css.find("*/", c + 2);
+        if (e == std::string::npos) { css.erase(c); break; }
+        css.erase(c, e + 2 - c);
+    }
+    for (const char* tok : {"<![CDATA[", "]]>"})
+        for (size_t t; (t = css.find(tok)) != std::string::npos; )
+            css.erase(t, std::strlen(tok));
+
+    // 2. Parse "selectors { decls }" rules into class / id / tag buckets.
+    using Decls = std::vector<std::pair<std::string, std::string>>;
+    std::unordered_map<std::string, Decls> classR, idR, tagR;
+    for (size_t i = 0; i < css.size(); ) {
+        size_t brace = css.find('{', i);
+        if (brace == std::string::npos) break;
+        size_t close = css.find('}', brace);
+        if (close == std::string::npos) break;
+        std::string selectors = cssTrim(css.substr(i, brace - i));
+        std::string declBlock = css.substr(brace + 1, close - brace - 1);
+        i = close + 1;
+        Decls props;
+        for (size_t d = 0; d < declBlock.size(); ) {
+            size_t semi = declBlock.find(';', d);
+            std::string one = declBlock.substr(d,
+                (semi == std::string::npos ? declBlock.size() : semi) - d);
+            d = (semi == std::string::npos) ? declBlock.size() : semi + 1;
+            size_t colon = one.find(':');
+            if (colon == std::string::npos) continue;
+            std::string prop = cssTrim(one.substr(0, colon));
+            std::string val = cssTrim(one.substr(colon + 1));
+            size_t imp = val.find('!');
+            if (imp != std::string::npos) val = cssTrim(val.substr(0, imp));
+            if (!prop.empty() && !val.empty() && isRelevantCssProp(prop))
+                props.emplace_back(prop, val);
+        }
+        if (props.empty()) continue;
+        for (size_t s2 = 0; s2 < selectors.size(); ) {
+            size_t comma = selectors.find(',', s2);
+            std::string sel = cssTrim(selectors.substr(s2,
+                (comma == std::string::npos ? selectors.size() : comma) - s2));
+            s2 = (comma == std::string::npos) ? selectors.size() : comma + 1;
+            if (sel.empty()) continue;
+            if (sel.find_first_of(" >+~[:") != std::string::npos) continue; // simple only
+            Decls* bucket = (sel[0] == '.') ? &classR[sel.substr(1)]
+                          : (sel[0] == '#') ? &idR[sel.substr(1)]
+                                            : &tagR[sel];
+            for (auto& pv : props) bucket->push_back(pv);
+        }
+    }
+    if (classR.empty() && idR.empty() && tagR.empty()) return;
+
+    // 3. Walk elements, inject any missing presentation attributes.
+    std::string out;
+    out.reserve(svg.size() + 1024);
+    int injected = 0;
+    for (size_t k = 0; k < svg.size(); ) {
+        if (svg[k] != '<' || k + 1 >= svg.size() ||
+            svg[k + 1] == '/' || svg[k + 1] == '!' || svg[k + 1] == '?') {
+            out += svg[k++]; continue;
+        }
+        size_t gt = svg.find('>', k);
+        if (gt == std::string::npos) { out += svg.substr(k); break; }
+        std::string tagStr = svg.substr(k, gt - k + 1);
+        size_t ns = k + 1, ne = ns;
+        while (ne < gt && !std::isspace(static_cast<unsigned char>(svg[ne])) &&
+               svg[ne] != '/' && svg[ne] != '>') ne++;
+        std::string tag = svg.substr(ns, ne - ns);
+
+        Decls merged; // tag < class < id specificity (later overrides)
+        auto setp = [&](const std::string& p, const std::string& v) {
+            for (auto& e : merged) if (e.first == p) { e.second = v; return; }
+            merged.emplace_back(p, v);
+        };
+        auto it = tagR.find(tag);
+        if (it != tagR.end()) for (auto& pv : it->second) setp(pv.first, pv.second);
+        std::string clsVal, idVal, styleVal;
+        findAttr(tagStr, "class", 0, &clsVal);
+        findAttr(tagStr, "id", 0, &idVal);
+        findAttr(tagStr, "style", 0, &styleVal);
+        for (size_t t = 0; t < clsVal.size(); ) {
+            size_t spc = clsVal.find_first_of(" \t", t);
+            std::string tok = clsVal.substr(t,
+                (spc == std::string::npos ? clsVal.size() : spc) - t);
+            t = (spc == std::string::npos) ? clsVal.size() : spc + 1;
+            auto ci = classR.find(tok);
+            if (!tok.empty() && ci != classR.end())
+                for (auto& pv : ci->second) setp(pv.first, pv.second);
+        }
+        auto ii = idR.find(idVal);
+        if (!idVal.empty() && ii != idR.end())
+            for (auto& pv : ii->second) setp(pv.first, pv.second);
+
+        std::string inject;
+        for (auto& pv : merged) {
+            std::string dummy;
+            if (findAttr(tagStr, pv.first, 0, &dummy) != std::string::npos) continue;
+            if (!styleVal.empty() && styleVal.find(pv.first + ":") != std::string::npos) continue;
+            inject += " " + pv.first + "=\"" + pv.second + "\"";
+        }
+        if (!inject.empty()) {
+            out += svg.substr(k, ne - k); // "<tag"
+            out += inject;
+            out += svg.substr(ne, gt - ne + 1); // " …>"
+            ++injected;
+        } else {
+            out += tagStr;
+        }
+        k = gt + 1;
+    }
+    if (injected > 0) {
+        std::fprintf(stderr, "[SVG] inlined CSS onto %d element(s)\n", injected);
+        svg.swap(out);
+    }
+}
+
+// ─── <text> → glyph outlines ─────────────────────────────────────────────────
+// nanosvg has no font engine, so live <text> elements vanish silently. We render
+// each one to glyph outlines and replace it with a <path> BEFORE nanosvg parses,
+// so it inherits the same viewBox/transform pipeline as every other path and
+// lands aligned. Font resolution is OCCT's Font_BRepFont::FindAndCreate, which
+// matches the requested font-family against the system's installed fonts (with
+// a sane fallback) — so "I have the font" just works, no per-import picking.
+// First cut: single-run text (tspans flattened), font-size / family / weight /
+// style / text-anchor, and the element's own transform; per-glyph positioning,
+// textPath, and multi-line tspans are out of scope.
+
+Font_FontAspect svgFontAspect(const std::string& weight, const std::string& style) {
+    bool bold = (weight == "bold" || weight == "bolder" ||
+                 (!weight.empty() && std::isdigit((unsigned char)weight[0]) &&
+                  std::atoi(weight.c_str()) >= 600));
+    bool ital = (style == "italic" || style == "oblique");
+    if (bold && ital) return Font_FontAspect_BoldItalic;
+    if (bold) return Font_FontAspect_Bold;
+    if (ital) return Font_FontAspect_Italic;
+    return Font_FontAspect_Regular;
+}
+
+std::string svgDecodeEntities(const std::string& s) {
+    std::string o; o.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ) {
+        if (s[i] != '&') { o += s[i++]; continue; }
+        size_t semi = s.find(';', i);
+        if (semi == std::string::npos) { o += s[i++]; continue; }
+        std::string ent = s.substr(i + 1, semi - i - 1);
+        if (ent == "amp") o += '&';
+        else if (ent == "lt") o += '<';
+        else if (ent == "gt") o += '>';
+        else if (ent == "quot") o += '"';
+        else if (ent == "apos") o += '\'';
+        else if (!ent.empty() && ent[0] == '#') {
+            int cp = (ent.size() > 1 && (ent[1] == 'x' || ent[1] == 'X'))
+                         ? (int)std::strtol(ent.c_str() + 2, nullptr, 16)
+                         : std::atoi(ent.c_str() + 1);
+            if (cp > 0 && cp < 128) o += (char)cp; // ASCII only (first cut)
+        }
+        i = semi + 1;
+    }
+    return o;
+}
+
+// Strip child tags (tspans) from a <text>'s inner content, keep the text.
+std::string svgTextRuns(const std::string& inner) {
+    std::string o;
+    for (size_t i = 0; i < inner.size(); ) {
+        if (inner[i] == '<') {
+            size_t gt = inner.find('>', i);
+            if (gt == std::string::npos) break;
+            i = gt + 1;
+        } else { o += inner[i++]; }
+    }
+    return svgDecodeEntities(o);
+}
+
+void expandSvgText(std::string& svg) {
+    std::string result;
+    size_t pos = 0;
+    int rendered = 0;
+    while (true) {
+        size_t lt = svg.find("<text", pos);
+        if (lt == std::string::npos) { result += svg.substr(pos); break; }
+        // Must be the <text element, not <textPath/<textArea: next char breaks it.
+        char nc = (lt + 5 < svg.size()) ? svg[lt + 5] : '>';
+        if (nc != ' ' && nc != '\t' && nc != '\n' && nc != '\r' &&
+            nc != '/' && nc != '>') { result += svg.substr(pos, lt + 5 - pos); pos = lt + 5; continue; }
+        size_t gt = svg.find('>', lt);
+        size_t close = svg.find("</text>", gt);
+        if (gt == std::string::npos || close == std::string::npos) {
+            result += svg.substr(pos); break;
+        }
+        result += svg.substr(pos, lt - pos); // copy everything before <text>
+        std::string openTag = svg.substr(lt, gt - lt + 1);
+        std::string inner = svg.substr(gt + 1, close - gt - 1);
+        pos = close + 7; // past </text>
+
+        std::string content = svgTextRuns(inner);
+        // trim leading/trailing whitespace from the run
+        content = cssTrim(content);
+        if (content.empty()) continue; // nothing to render
+
+        std::string sx, sy, sfs, fam, weight, style, anchor, fill, transform;
+        findAttr(openTag, "x", 0, &sx);
+        findAttr(openTag, "y", 0, &sy);
+        findAttr(openTag, "font-size", 0, &sfs);
+        findAttr(openTag, "font-family", 0, &fam);
+        findAttr(openTag, "font-weight", 0, &weight);
+        findAttr(openTag, "font-style", 0, &style);
+        findAttr(openTag, "text-anchor", 0, &anchor);
+        findAttr(openTag, "fill", 0, &fill);
+        findAttr(openTag, "transform", 0, &transform);
+        float tx = sx.empty() ? 0.f : (float)std::atof(sx.c_str());
+        float ty = sy.empty() ? 0.f : (float)std::atof(sy.c_str());
+        float fs = sfs.empty() ? 16.f : (float)std::atof(sfs.c_str()); // px/units
+        if (fs < 0.01f) fs = 16.f;
+        if (fill.empty()) fill = "#000000";
+
+        // Render glyphs at size fs (≈ em in user units); resolve by name. The
+        // static factory matches the family against installed fonts (fallback
+        // built in) and returns null only if nothing at all is available.
+        Handle(Font_BRepFont) fontH;
+        try {
+            fontH = Font_BRepFont::FindAndCreate(
+                TCollection_AsciiString(fam.empty() ? "Sans" : fam.c_str()),
+                svgFontAspect(weight, style), fs, Font_StrictLevel_Any);
+        } catch (...) {}
+        if (fontH.IsNull()) continue; // no font available — leave text dropped
+
+        TopoDS_Shape shape;
+        try {
+            Font_BRepTextBuilder builder;
+            shape = builder.Perform(*fontH, NCollection_String(content.c_str()), gp_Ax3());
+        } catch (...) { continue; }
+        if (shape.IsNull()) continue;
+
+        // text-anchor needs the rendered width.
+        double w = 0.0;
+        { Bnd_Box bb; BRepBndLib::Add(shape, bb);
+          if (!bb.IsVoid()) { double a,b,c,d,e,f; bb.Get(a,b,c,d,e,f); w = d - a; } }
+        float ax = (anchor == "middle") ? -(float)w * 0.5f
+                 : (anchor == "end")    ? -(float)w : 0.f;
+
+        // Sample every wire → an SVG subpath. Glyph space is y-up, baseline at 0;
+        // SVG is y-down with ty the baseline → x = tx+ax+gx, y = ty-gy.
+        double defl = std::max(0.02 * fs, 1e-3);
+        std::string d;
+        for (TopExp_Explorer wx(shape, TopAbs_WIRE); wx.More(); wx.Next()) {
+            std::vector<glm::vec2> pts;
+            for (BRepTools_WireExplorer ed(TopoDS::Wire(wx.Current())); ed.More(); ed.Next()) {
+                BRepAdaptor_Curve cu(ed.Current());
+                GCPnts_QuasiUniformDeflection s(cu, defl);
+                if (!s.IsDone() || s.NbPoints() < 2) continue;
+                std::vector<glm::vec2> seg;
+                for (int i = 1; i <= s.NbPoints(); ++i) {
+                    gp_Pnt p = s.Value(i);
+                    seg.emplace_back((float)p.X(), (float)p.Y());
+                }
+                if (ed.Current().Orientation() == TopAbs_REVERSED)
+                    std::reverse(seg.begin(), seg.end());
+                for (size_t i = pts.empty() ? 0 : 1; i < seg.size(); ++i) pts.push_back(seg[i]);
+            }
+            if (pts.size() < 3) continue;
+            char buf[64];
+            for (size_t i = 0; i < pts.size(); ++i) {
+                float X = tx + ax + pts[i].x, Y = ty - pts[i].y;
+                std::snprintf(buf, sizeof(buf), "%s%.3f %.3f", i ? "L" : "M", X, Y);
+                d += buf;
+            }
+            d += "Z";
+        }
+        if (d.empty()) continue;
+
+        std::string pathEl = "<path d=\"" + d + "\" fill=\"" + fill +
+                             "\" fill-rule=\"evenodd\"/>";
+        if (!transform.empty())
+            pathEl = "<g transform=\"" + transform + "\">" + pathEl + "</g>";
+        result += pathEl;
+        ++rendered;
+    }
+    if (rendered > 0) {
+        std::fprintf(stderr, "[SVG] rendered %d <text> element(s) to outlines\n", rendered);
+        svg.swap(result);
+    }
+}
+
+// ─── stroke → outline ────────────────────────────────────────────────────────
+// Modern "line icons" (Feather / Lucide / Heroicons-outline, etc.) are drawn as
+// STROKES with no fill — so there's no closed area to emboss/engrave. Offset the
+// centerline by half the stroke width into a closed ribbon. OCCT's wire offsetter
+// (arc joins) handles the corners robustly (no miter spikes). Closed paths give
+// concentric outer+inner loops (a ring); open paths get both sides + butt caps.
+// Returns false (caller keeps the centerline) if the offset can't be built.
+
+void sampleOffsetWire(const TopoDS_Shape& shp, double defl, std::vector<glm::vec2>& loop) {
+    for (TopExp_Explorer wx(shp, TopAbs_WIRE); wx.More(); wx.Next()) {
+        for (BRepTools_WireExplorer ed(TopoDS::Wire(wx.Current())); ed.More(); ed.Next()) {
+            BRepAdaptor_Curve cu(ed.Current());
+            GCPnts_QuasiUniformDeflection s(cu, defl);
+            if (!s.IsDone() || s.NbPoints() < 2) continue;
+            std::vector<glm::vec2> seg;
+            for (int i = 1; i <= s.NbPoints(); ++i) {
+                gp_Pnt p = s.Value(i);
+                seg.emplace_back((float)p.X(), (float)p.Y());
+            }
+            if (ed.Current().Orientation() == TopAbs_REVERSED)
+                std::reverse(seg.begin(), seg.end());
+            for (size_t i = loop.empty() ? 0 : 1; i < seg.size(); ++i) loop.push_back(seg[i]);
+        }
+        break; // first wire only (a single offset side)
+    }
+}
+
+bool strokeToOutline(const std::vector<glm::vec2>& center, bool closed,
+                     float halfW, double defl,
+                     std::vector<std::vector<glm::vec2>>& out) {
+    if (center.size() < 2 || halfW < 1e-6f) return false;
+    try {
+        BRepBuilderAPI_MakePolygon poly;
+        for (const auto& q : center) poly.Add(gp_Pnt(q.x, q.y, 0.0));
+        if (closed) poly.Close();
+        if (!poly.IsDone()) return false;
+        TopoDS_Wire wire = poly.Wire();
+
+        if (closed) {
+            for (float sign : {1.0f, -1.0f}) {
+                BRepOffsetAPI_MakeOffset mk(wire, GeomAbs_Arc);
+                mk.Perform(sign * halfW);
+                if (!mk.IsDone() || mk.Shape().IsNull()) continue;
+                std::vector<glm::vec2> loop;
+                sampleOffsetWire(mk.Shape(), defl, loop);
+                if (loop.size() >= 3) out.push_back(std::move(loop));
+            }
+            return !out.empty();
+        }
+        // Open: offset both sides, stitch into one ribbon (butt caps).
+        std::vector<glm::vec2> a, b;
+        { BRepOffsetAPI_MakeOffset mk(wire, GeomAbs_Arc); mk.Perform(halfW);
+          if (mk.IsDone() && !mk.Shape().IsNull()) sampleOffsetWire(mk.Shape(), defl, a); }
+        { BRepOffsetAPI_MakeOffset mk(wire, GeomAbs_Arc); mk.Perform(-halfW);
+          if (mk.IsDone() && !mk.Shape().IsNull()) sampleOffsetWire(mk.Shape(), defl, b); }
+        if (a.size() < 2 || b.size() < 2) return false;
+        std::vector<glm::vec2> loop = a;
+        for (auto it = b.rbegin(); it != b.rend(); ++it) loop.push_back(*it);
+        out.push_back(std::move(loop));
+        return true;
+    } catch (...) { return false; }
+}
+
 } // namespace
 
 bool SvgImport::load(const std::string& path, SvgPaths& out) {
@@ -226,6 +637,8 @@ bool SvgImport::load(const std::string& path, SvgPaths& out) {
     std::ostringstream ss;
     ss << in.rdbuf();
     std::string text = ss.str();
+    inlineSvgCss(text);   // resolve <style> class fills → presentation attrs
+    expandSvgText(text);  // render live <text> to glyph-outline <path>s
     expandSvgUses(text);
     // nsvgParse mutates the buffer in place — give it a null-terminated copy.
     text.push_back('\0');
@@ -266,19 +679,34 @@ bool SvgImport::load(const std::string& path, SvgPaths& out) {
             if (pts.size() > 2 &&
                 glm::length(pts.front() - pts.back()) < 1e-4f * ref)
                 pts.pop_back();
-            const bool closed = (p->closed != 0) || filled;
-            if (pts.size() < (closed ? 3u : 2u)) continue;
-            for (const auto& q : pts) {
-                if (!haveBB) {
-                    out.bbMin = out.bbMax = q;
-                    haveBB = true;
-                } else {
-                    out.bbMin = glm::min(out.bbMin, q);
-                    out.bbMax = glm::max(out.bbMax, q);
+            auto emit = [&](std::vector<glm::vec2> loop, bool isClosed) {
+                if (loop.size() < (isClosed ? 3u : 2u)) return;
+                for (const auto& q : loop) {
+                    if (!haveBB) { out.bbMin = out.bbMax = q; haveBB = true; }
+                    else { out.bbMin = glm::min(out.bbMin, q);
+                           out.bbMax = glm::max(out.bbMax, q); }
                 }
+                out.loops.push_back(std::move(loop));
+                out.closed.push_back(isClosed);
+            };
+
+            // Stroke-only path (a "line icon"): no fill area to emboss — offset
+            // the centerline into a closed ribbon. Fall back to the centerline if
+            // the offset can't be built.
+            const bool strokeOnly = !filled &&
+                sh->stroke.type != NSVG_PAINT_NONE && sh->strokeWidth > 1e-4f;
+            if (strokeOnly) {
+                std::vector<std::vector<glm::vec2>> ribbon;
+                if (strokeToOutline(pts, p->closed != 0, sh->strokeWidth * 0.5f,
+                                    std::max(0.005 * ref, 1e-3), ribbon) &&
+                    !ribbon.empty()) {
+                    for (auto& r : ribbon) emit(std::move(r), true);
+                } else {
+                    emit(std::move(pts), p->closed != 0);
+                }
+            } else {
+                emit(std::move(pts), (p->closed != 0) || filled);
             }
-            out.loops.push_back(std::move(pts));
-            out.closed.push_back(closed);
         }
     }
     nsvgDelete(img);

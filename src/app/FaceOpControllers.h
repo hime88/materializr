@@ -55,14 +55,23 @@ protected:
     void panelBody(const IopContext& ctx, bool& changed) override;
     void onCleanup() override;
     float panelWidth() const override { return 300.0f; }
+    bool wantsLivePreview(const IopContext& ctx) const override;
+
+    // Past this many projected regions the live preview is dropped (the
+    // per-change boolean would freeze the UI); Confirm still applies it. Set
+    // low deliberately — it got slow around ~30 regions on high-end hardware,
+    // so weaker machines need the cutoff earlier.
+    static constexpr int kPreviewRegionCap = 20;
 
 private:
+    int effectiveRegionCount(const IopContext& ctx) const;
     TopoDS_Face m_face;
     std::vector<int> m_sketchIds;   // combo choices, built at begin
     int  m_sketchPick = 0;          // index into m_sketchIds
     std::vector<int> m_regionFilter; // region subset from selection; empty = all
     float m_depth = 1.0f;
     int   m_mode = 0;               // 0=Engrave, 1=Emboss
+    int   m_cycleMode = 0;          // 0=all, 1=loops only, 2=islands only
 };
 
 // ─── Scale Face ──────────────────────────────────────────────────────────────

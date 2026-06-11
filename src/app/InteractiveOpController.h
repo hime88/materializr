@@ -68,6 +68,10 @@ protected:
     virtual void panelBody(const IopContext& ctx, bool& changed) = 0;
     virtual void onCleanup() {}
     virtual float panelWidth() const { return 260.0f; }
+    // Override to suppress the per-change live preview when recomputing it would
+    // freeze the UI (e.g. projecting a sketch with hundreds of regions). Commit
+    // still builds + runs the op once. Default: always preview.
+    virtual bool wantsLivePreview(const IopContext&) const { return true; }
 
     void requestCommit() { m_commitRequested = true; }
 
