@@ -36,6 +36,17 @@ static bool dlgIsDir(const std::string& p) {
 #endif
 }
 
+#if defined(__ANDROID__)
+// True if the directory can actually be listed (read permission), not just that
+// it exists — distinguishes "All-files access granted" from "not yet".
+static bool dlgCanList(const char* p) {
+    DIR* d = opendir(p);
+    if (!d) return false;
+    closedir(d);
+    return true;
+}
+#endif
+
 static struct {
     bool open = false;
     bool isSave = false;
@@ -230,8 +241,14 @@ static void launchInAppBrowser(const std::string& title, bool isSave,
                                std::function<void(const std::string&)> cb) {
     std::string start = s_lastDir;
     if (start.empty() || !dlgIsDir(start)) {
-        const char* ext = SDL_AndroidGetExternalStoragePath();
-        start = (ext && dlgIsDir(ext)) ? ext : "/";
+        // Prefer the user-visible storage root (needs All-files access); fall
+        // back to the app's own external dir, which is always readable.
+        if (dlgCanList("/storage/emulated/0")) {
+            start = "/storage/emulated/0";
+        } else {
+            const char* ext = SDL_AndroidGetExternalStoragePath();
+            start = (ext && dlgIsDir(ext)) ? ext : "/";
+        }
     }
     s_state.open = true;
     s_state.isSave = isSave;
