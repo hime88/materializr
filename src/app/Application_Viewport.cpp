@@ -1886,6 +1886,15 @@ void Application::renderViewport() {
 
         if (ImGui::IsItemHovered()) {
             ImGuiIO& io = ImGui::GetIO();
+            // Multi-select toggle = the touch stand-in for holding Ctrl. Force
+            // io.KeyCtrl on for this hovered-viewport scope so every selection
+            // path below treats taps as additive; restored automatically on exit
+            // (so panels rendered later see the real Ctrl state).
+            struct CtrlForce {
+                ImGuiIO& io; bool saved;
+                CtrlForce(ImGuiIO& i, bool f) : io(i), saved(i.KeyCtrl) { if (f) io.KeyCtrl = true; }
+                ~CtrlForce() { io.KeyCtrl = saved; }
+            } ctrlForce_(io, m_multiSelectToggle);
             if (io.MouseWheel != 0.0f) {
                 // Zoom toward whatever the cursor is over (Blender/Fusion-360
                 // feel). Ray-cast against the document for a real hit point;
@@ -4453,24 +4462,29 @@ void Application::renderViewport() {
     // changes save immediately.
     renderSnapWidget();
 
-    // Tiny FPS readout in the bottom-left of the viewport — temporary
-    // diagnostic for the navigation-lag issue. Real users won't see a
-    // number for the framerate; us debugging will.
+    // Multi-select toggle in the bottom-left of the viewport — the touch
+    // stand-in for holding Ctrl. While on, taps add to / toggle the current
+    // selection instead of replacing it (see the CtrlForce guard above).
     {
         ImVec2 vpMin = ImGui::GetWindowPos();
         ImVec2 vpSize = ImGui::GetWindowSize();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        char fpsBuf[32];
-        float fps = ImGui::GetIO().Framerate;
-        std::snprintf(fpsBuf, sizeof(fpsBuf), "%.0f fps", fps);
-        ImVec2 ts = ImGui::CalcTextSize(fpsBuf);
-        ImVec2 tp(vpMin.x + 8.0f, vpMin.y + vpSize.y - ts.y - 6.0f);
-        dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2),
-                          ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2),
-                          IM_COL32(20, 20, 28, 180), 3.0f);
-        ImU32 col = fps < 25.0f ? IM_COL32(255, 120, 120, 255)
-                                : IM_COL32(180, 220, 180, 255);
-        dl->AddText(tp, col, fpsBuf);
+        const char* label = m_multiSelectToggle ? "Multi-Select: On" : "Multi-Select: Off";
+        ImVec2 ts = ImGui::CalcTextSize("Multi-Select: Off");
+        float pad = ImGui::GetStyle().FramePadding.x;
+        ImGui::SetCursorScreenPos(ImVec2(vpMin.x + 8.0f,
+                                         vpMin.y + vpSize.y - ImGui::GetFrameHeight() - 8.0f));
+        if (m_multiSelectToggle) {
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.48f, 0.85f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.58f, 0.95f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.40f, 0.75f, 1.0f));
+        }
+        if (ImGui::Button(label, ImVec2(ts.x + pad * 2.0f, 0.0f))) {
+            m_multiSelectToggle = !m_multiSelectToggle;
+        }
+        if (m_multiSelectToggle) ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Add taps to the current selection\n(the touch equivalent of holding Ctrl)");
+        }
     }
 
     // Right-click face context menu
