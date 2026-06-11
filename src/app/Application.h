@@ -495,6 +495,16 @@ private:
     // Touch press-drag-release: a drawing-tool press is pending; its point is
     // placed on release (the drag previews the radius/bulge/segment first).
     bool m_sketchPressActive = false;
+    // For the drag tools (circle/rectangle) the centre/first corner is dropped on
+    // press so the whole shape is one press-drag-release gesture; this flags that
+    // the release must complete the shape (and only if the finger actually moved).
+    bool m_sketchDragCenterPlaced = false;
+    float m_sketchDownX = 0.0f, m_sketchDownY = 0.0f; // press pos (px) for drag slop
+    // ImGui drops IsItemHovered() mid-drag once the window-move grab takes the
+    // ActiveId, which freezes the live sketch preview. Latch the viewport input
+    // block alive while a left press-drag that began over the viewport is in
+    // flight so onMouseMove keeps following the finger. Cleared on button-up.
+    bool m_viewportInputLatch = false;
     bool m_showSettings = false;
     int m_settingsOrbitButton = 2; // staged value in the Settings dialog
     int m_settingsPanButton = 1;

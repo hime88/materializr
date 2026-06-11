@@ -1884,7 +1884,20 @@ void Application::renderViewport() {
             }
         }
 
-        if (ImGui::IsItemHovered()) {
+        bool viewportHovered = ImGui::IsItemHovered();
+#if defined(__ANDROID__)
+        // ImGui drops IsItemHovered() a couple of frames into a press-drag — the
+        // window-move grab claims the ActiveId, so the plain Image stops reading
+        // as hovered and this whole input block (incl. the live sketch preview's
+        // onMouseMove) would freeze until release. Latch it: once a left press
+        // begins over the viewport, keep the block alive until the button lifts.
+        if (viewportHovered && ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            m_viewportInputLatch = true;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            m_viewportInputLatch = false;
+        if (m_viewportInputLatch) viewportHovered = true;
+#endif
+        if (viewportHovered) {
             ImGuiIO& io = ImGui::GetIO();
             // Multi-select toggle = the touch stand-in for holding Ctrl. Force
             // io.KeyCtrl on for this hovered-viewport scope so every selection
@@ -2018,7 +2031,13 @@ void Application::renderViewport() {
             // Pause interactive operations while a camera button is also being
             // dragged — otherwise the changing view matrix re-projects the same
             // mouse motion onto a moving target each frame and the value jolts.
-            bool camDragging = !gizmoOwnsDrag &&
+            // suppressCamDrag means the left-drag is NOT orbiting the camera (in
+            // sketch mode it's drawing the rubber-band). When it's suppressed the
+            // view isn't moving, so this must read false — otherwise it would gate
+            // off the sketch input block and freeze the live preview a few px into
+            // the drag (once IsMouseDragging crosses its threshold). Outside sketch
+            // mode suppressCamDrag == gizmoOwnsDrag, so this changes nothing there.
+            bool camDragging = !gizmoOwnsDrag && !suppressCamDrag &&
                 (ImGui::IsMouseDragging(m_orbitButton) ||
                  (m_panButton != m_orbitButton && ImGui::IsMouseDragging(m_panButton)));
 
@@ -4367,10 +4386,23 @@ void Application::renderViewport() {
                     } else {
                         // Drawing tool.
 #if defined(__ANDROID__)
-                        // Press-drag-release: defer the placement to mouse-release
-                        // so the drag can preview the radius / bulge / segment
-                        // first. The point lands at the release position.
+                        // Press-drag-release. The point normally lands on release
+                        // so the drag can preview the radius / bulge / segment.
                         m_sketchPressActive = true;
+                        m_sketchDownX = io.MousePos.x;
+                        m_sketchDownY = io.MousePos.y;
+                        m_sketchDragCenterPlaced = false;
+                        // The drag tools (circle/rectangle) are a single
+                        // click-drag-release gesture: drop the centre / first
+                        // corner now, on press, so the drag sizes the shape and
+                        // the release commits it. (Multi-point tools keep
+                        // placing every point on release.)
+                        SketchToolMode m = m_sketchTool->getMode();
+                        if ((m == SketchToolMode::Circle || m == SketchToolMode::Rectangle) &&
+                            !m_sketchTool->isPlacing()) {
+                            recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                            m_sketchDragCenterPlaced = true;
+                        }
 #else
                         recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
 #endif
@@ -4451,9 +4483,25 @@ void Application::renderViewport() {
                         m_sketchTool->getMode() != SketchToolMode::Select &&
                         !m_moveModeToggle &&
                         m_window && !m_window->lastLeftReleaseWasGesture()) {
-                        recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                        float ddx = io.MousePos.x - m_sketchDownX;
+                        float ddy = io.MousePos.y - m_sketchDownY;
+                        float slop = 12.0f * (m_window ? m_window->uiScale() : 1.0f);
+                        bool moved = (ddx * ddx + ddy * ddy) > slop * slop;
+                        if (m_sketchDragCenterPlaced) {
+                            // Circle/rectangle whose centre dropped on press:
+                            // complete it only if the finger dragged out a size.
+                            // A no-drag tap leaves it placing, so a second tap can
+                            // set the radius/corner (tap-tap still works too).
+                            if (moved)
+                                recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                        } else {
+                            // Multi-point tool, or the drag tool's second tap:
+                            // place the point at the release position.
+                            recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                        }
                     }
                     m_sketchPressActive = false;
+                    m_sketchDragCenterPlaced = false;
 #endif
                     if (m_sketchDragBefore) {
                         // Compare point positions; commit a SketchEditOp if any moved.
