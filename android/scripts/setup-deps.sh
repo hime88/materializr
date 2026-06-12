@@ -35,18 +35,31 @@ echo "PREFIX: $PREFIX"
 echo "REPO:   $REPO"
 [ -f "$TOOLCHAIN" ] || { echo "NDK toolchain not found: $TOOLCHAIN"; exit 1; }
 
-fetch() { # url dest
+# Expected SHA-256 of each pinned source tarball — verified after download so a
+# corrupted mirror or tampered upstream can't slip in (supply-chain integrity;
+# also what F-Droid wants for a reproducible build from source).
+SDL2_SHA256="24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d6beba4"
+FT_SHA256="5c3a8e78f7b24c20b25b54ee575d6daa40007a5f4eea2845861c3409b3021747"
+OCCT_SHA256="7321af48c34dc253bf8aae3f0430e8cb10976961d534d8509e72516978aa82f5"
+
+fetch() { # url dest sha256
     [ -f "$2" ] || curl -L --fail --retry 3 -o "$2" "$1"
+    if [ -n "$3" ]; then
+        echo "$3  $2" | sha256sum -c - || {
+            echo "ERROR: checksum mismatch for $2 — refusing to build." >&2
+            rm -f "$2"; exit 1
+        }
+    fi
 }
 
 # ── SDL2 source -> android/app/jni/SDL ───────────────────────────────────────
-fetch "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL2-$SDL_VER.tar.gz" "$DL/sdl2.tar.gz"
+fetch "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL2-$SDL_VER.tar.gz" "$DL/sdl2.tar.gz" "$SDL2_SHA256"
 [ -d "$SRC/SDL2-$SDL_VER" ] || tar -xzf "$DL/sdl2.tar.gz" -C "$SRC"
 ln -sfn "$SRC/SDL2-$SDL_VER" "$REPO/android/app/jni/SDL"
 echo "SDL2 linked at android/app/jni/SDL"
 
 # ── FreeType (static) ────────────────────────────────────────────────────────
-fetch "https://download.savannah.gnu.org/releases/freetype/freetype-$FT_VER.tar.gz" "$DL/freetype.tar.gz"
+fetch "https://download.savannah.gnu.org/releases/freetype/freetype-$FT_VER.tar.gz" "$DL/freetype.tar.gz" "$FT_SHA256"
 [ -d "$SRC/freetype-$FT_VER" ] || tar -xzf "$DL/freetype.tar.gz" -C "$SRC"
 rm -rf "$BUILD/freetype-$ABI"
 "$CMAKE_BIN" -S "$SRC/freetype-$FT_VER" -B "$BUILD/freetype-$ABI" \
@@ -57,7 +70,7 @@ rm -rf "$BUILD/freetype-$ABI"
 "$CMAKE_BIN" --build "$BUILD/freetype-$ABI" --target install -j"$JOBS"
 
 # ── OpenCASCADE (shared) ─────────────────────────────────────────────────────
-fetch "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/$OCCT_TAG.tar.gz" "$DL/occt.tar.gz"
+fetch "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/$OCCT_TAG.tar.gz" "$DL/occt.tar.gz" "$OCCT_SHA256"
 OCCT_DIR="$SRC/OCCT-${OCCT_TAG#V}"
 [ -d "$OCCT_DIR" ] || tar -xzf "$DL/occt.tar.gz" -C "$SRC"
 
