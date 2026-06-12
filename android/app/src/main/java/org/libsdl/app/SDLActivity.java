@@ -1284,7 +1284,10 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             mTextEdit.requestFocus();
 
             InputMethodManager imm = (InputMethodManager) SDL.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-            imm.showSoftInput(mTextEdit, 0);
+            // Materializr: SHOW_FORCED (was 0). With flag 0 Android silently
+            // ignores showSoftInput in our immersive-fullscreen window, so the
+            // keyboard never appeared on text fields; SHOW_FORCED makes it show.
+            imm.showSoftInput(mTextEdit, InputMethodManager.SHOW_FORCED);
 
             mScreenKeyboardShown = true;
         }
