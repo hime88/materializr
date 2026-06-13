@@ -21,9 +21,7 @@ Builds:
       - apt-get install -y build-essential cmake curl
     gradle:
       - yes
-    prebuild: JOBS=4 ANDROID_NDK="$$NDK$$" ../scripts/setup-deps.sh
-    scanignore:
-      - android/app/src/main/jniLibs
+    build: JOBS=4 ANDROID_NDK="$$NDK$$" ../scripts/setup-deps.sh
     ndk: r26d
 
 AutoUpdateMode: Version
