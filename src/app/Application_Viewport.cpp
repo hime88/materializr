@@ -2026,22 +2026,32 @@ void Application::renderViewport() {
             // (touch has no hover), so don't orbit. Two-finger pan/zoom still
             // works — it's gated on gizmoOwnsDrag, not this local.
             bool suppressCamDrag = gizmoOwnsDrag;
+            // A primary drag should drive the ACTIVE TOOL, not the camera, while a
+            // tool owns it. In sketch mode that's the rubber-band; during an
+            // interactive op it's the op's arrow/handle (push/pull, extrude, edge
+            // fillet/chamfer, move/scale face) — read below as a LEFT-button drag
+            // gated on `!camDragging`. If that drag also orbits/pans the camera,
+            // the gate never fires and the op "doesn't work".
+            const bool toolWantsDrag =
+                m_inSketchMode || m_pushPullActive || m_extruding ||
+                m_edgeOpActive || m_moveFaceActive || m_scaleFaceCtl.active() ||
+                m_resizeCylActive || anyIopActive();
             if (materializr::touchMode()) {
-                // A one-finger drag drives the ACTIVE TOOL, not the camera (touch
-                // has no hover, and the move gizmo already grabs its own axes via
-                // gizmoOwnsDrag). In sketch mode that's the rubber-band; during an
-                // interactive op it's the op's arrow/handle (push/pull, extrude,
-                // edge fillet/chamfer, move/scale face) — otherwise a finger drag
-                // orbited the view and the arrow's `!camDragging` gate never fired,
-                // so push/pull "didn't work" and the slider bled into an orbit.
-                // Two-finger still pans/zooms; Move (nav lock) forces orbit.
-                const bool toolWantsDrag =
-                    m_inSketchMode || m_pushPullActive || m_extruding ||
-                    m_edgeOpActive || m_moveFaceActive || m_scaleFaceCtl.active() ||
-                    m_resizeCylActive || anyIopActive();
+                // Touch has no hover and the one finger is the only pointer, so the
+                // tool always owns the drag. Two-finger still pans/zooms; Move (nav
+                // lock) forces orbit.
                 if (toolWantsDrag && !m_moveModeToggle) suppressCamDrag = true;
-                // Move mode never drives a tool: a one-finger drag orbits instead.
                 if (m_moveModeToggle) suppressCamDrag = gizmoOwnsDrag;
+            } else {
+                // Desktop: the op reads a LEFT-button drag. Only steal the camera
+                // drag when the orbit OR pan button IS Left (left-orbit / trackpad
+                // mode) — that's the case where left-drag would orbit instead of
+                // driving the op (the bug). With the default bindings (orbit=middle,
+                // pan=right) Left is already free for the op, so we change nothing
+                // and middle/right stay live for orbit/pan DURING the op.
+                const bool leftIsCamera = (m_orbitButton == ImGuiMouseButton_Left ||
+                                           m_panButton  == ImGuiMouseButton_Left);
+                if (toolWantsDrag && leftIsCamera) suppressCamDrag = true;
             }
             if (!suppressCamDrag && ImGui::IsMouseDragging(m_orbitButton)) {
                 ImVec2 delta = io.MouseDelta;
@@ -4974,8 +4984,10 @@ void Application::renderViewport() {
         ImGui::PopStyleColor();
 
         // Floating distance input panel
-        ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260,
-                                        ImGui::GetWindowPos().y + 50));
+        ImGui::SetNextWindowPos(ImVec2(
+            std::max(ImGui::GetWindowPos().x + 6.0f,
+                     ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260.0f),
+            ImGui::GetWindowPos().y + 50));
         ImGui::SetNextWindowSize(uiSz(240, 0));
         ImGui::Begin("##ExtrudeInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -5037,8 +5049,10 @@ void Application::renderViewport() {
                     : "PUSH/PULL - Positive = extrude, Negative = cut. Enter to confirm, Escape to cancel.");
         ImGui::PopStyleColor();
 
-        ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260,
-                                        ImGui::GetWindowPos().y + 50));
+        ImGui::SetNextWindowPos(ImVec2(
+            std::max(ImGui::GetWindowPos().x + 6.0f,
+                     ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260.0f),
+            ImGui::GetWindowPos().y + 50));
         ImGui::SetNextWindowSize(uiSz(240, 0));
         ImGui::Begin("##PushPullInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -5133,8 +5147,10 @@ void Application::renderViewport() {
                     : "%s - Type value or use slider. Enter to confirm, Escape to cancel.", opName);
         ImGui::PopStyleColor();
 
-        ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260,
-                                        ImGui::GetWindowPos().y + 50));
+        ImGui::SetNextWindowPos(ImVec2(
+            std::max(ImGui::GetWindowPos().x + 6.0f,
+                     ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 260.0f),
+            ImGui::GetWindowPos().y + 50));
         ImGui::SetNextWindowSize(uiSz(240, 0));
         ImGui::Begin("##EdgeOpInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -5368,21 +5384,29 @@ void Application::renderViewport() {
             default: dimLabel = nullptr;
         }
         if (dimLabel) {
-            ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 230,
-                                            ImGui::GetWindowPos().y + 50));
-            ImGui::SetNextWindowSize(uiSz(220, 0));
+            // Fixed window width + fixed field width so every step is identical.
+            // The old version used AlwaysAutoResize with an unsized InputText,
+            // which put the field in ImGui's auto-resize feedback loop (field
+            // width wants the window width, window width wants the content width)
+            // — so some steps (the rectangle's 2nd "Height" entry, the line)
+            // came out too narrow and clipped the typed digits off the left.
+            // Anchor it just inside the viewport's right edge, clamped so a
+            // narrow viewport can't shove it off the left.
+            const float winW = uiW(230.0f);
+            const float parentX = ImGui::GetWindowPos().x;
+            float winX = parentX + ImGui::GetWindowWidth() - winW - uiW(10.0f);
+            if (winX < parentX + 6.0f) winX = parentX + 6.0f;
+            ImGui::SetNextWindowPos(ImVec2(winX, ImGui::GetWindowPos().y + 50.0f));
+            ImGui::SetNextWindowSize(ImVec2(winW, 0.0f)); // fixed width, auto height
             ImGui::Begin("##SketchDimInput", nullptr,
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                ImGuiWindowFlags_AlwaysAutoResize);
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
 
             ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", dimLabel);
             ImGui::Separator();
-            // Explicit wrap width — TextWrapped inside an AlwaysAutoResize
-            // window is a feedback loop (wrap wants the window width, the
-            // window wants the content width): the polygon hint rendered
-            // half cut-off until typing nudged a re-measure.
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 200.0f);
+            // Window width is fixed now, so wrapping at the window edge is safe
+            // (no feedback loop).
+            ImGui::PushTextWrapPos(0.0f);
             ImGui::TextUnformatted(dimHint);
             ImGui::PopTextWrapPos();
 
@@ -5397,6 +5421,7 @@ void Application::renderViewport() {
                 m_sketchDimWasShown = true;
             }
 
+            ImGui::SetNextItemWidth(winW - uiW(16.0f)); // fill the fixed width, minus padding
             if (ImGui::InputText("##sketchDim", m_sketchDimBuf, sizeof(m_sketchDimBuf),
                                  ImGuiInputTextFlags_EnterReturnsTrue |
                                  ImGuiInputTextFlags_CharsDecimal |
