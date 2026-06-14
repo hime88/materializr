@@ -23,6 +23,7 @@
 #include "viewport/Picker.h"
 #include <TopExp.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include "viewport/Gizmo.h"
 #include "viewport/SelectionHighlight.h"
@@ -4848,6 +4849,27 @@ void Application::renderViewport() {
         // selection instead of replacing it, so you can gather several
         // faces/bodies via long-press too.
         const bool addToSel = m_multiSelectToggle;
+
+        // Select every unique edge of a shape — a face's rim, or a whole body.
+        // Lets the user set up a fillet/chamfer over an entire face or body in
+        // one shot. Edges are keyed by shape identity in the SelectionManager,
+        // and a face's edges share the body's TShapes, so these entries are
+        // IsSame to picked edges and highlight/dedup correctly. Multi-Select
+        // off → replace the current selection; on → add to it.
+        auto selectAllEdgesOf = [&](const TopoDS_Shape& shape) {
+            if (shape.IsNull()) return;
+            if (!addToSel) m_selection->clear();
+            TopTools_IndexedMapOfShape edgeMap;
+            TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
+            for (int i = 1; i <= edgeMap.Extent(); ++i) {
+                SelectionEntry e;
+                e.type = SelectionType::Edge;
+                e.bodyId = bid;
+                e.shape = edgeMap(i);
+                m_selection->addToSelection(e);
+            }
+        };
+
         if (ImGui::BeginMenu("Face")) {
             if (ImGui::MenuItem("Select Face")) {
                 SelectionEntry entry;
@@ -4856,6 +4878,11 @@ void Application::renderViewport() {
                 entry.shape = m_contextMenuFace;
                 if (addToSel) m_selection->addToSelection(entry);
                 else          m_selection->select(entry);
+                m_contextMenuFace.Nullify();
+            }
+            if (ImGui::MenuItem("Select All Edges of Face")) {
+                // All edges bounding this face — e.g. fillet a pocket's whole rim.
+                selectAllEdgesOf(m_contextMenuFace);
                 m_contextMenuFace.Nullify();
             }
             if (ImGui::MenuItem("Sketch on this Face")) {
@@ -4884,6 +4911,13 @@ void Application::renderViewport() {
                 try { entry.shape = m_document->getBody(bid); } catch (...) {}
                 if (addToSel) m_selection->addToSelection(entry);
                 else          m_selection->select(entry);
+                m_contextMenuFace.Nullify();
+            }
+            if (ImGui::MenuItem("Select All Edges of Body")) {
+                // Every edge on the body — e.g. break all sharp edges at once.
+                TopoDS_Shape body;
+                try { body = m_document->getBody(bid); } catch (...) {}
+                selectAllEdgesOf(body);
                 m_contextMenuFace.Nullify();
             }
             ImGui::Separator();
