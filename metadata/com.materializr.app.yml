@@ -12,9 +12,9 @@ RepoType: git
 Repo: https://github.com/materializr-cad/materializr.git
 
 Builds:
-  - versionName: 1.0.0
-    versionCode: 5
-    commit: be0e2260e0f396f0cad33a39b720080c4b7ea2f7
+  - versionName: 1.0.1
+    versionCode: 6
+    commit: 761ba3b2b0bd580fb7141e066ab0c2c3316655dc
     subdir: android/app
     sudo:
       - apt-get update
@@ -26,5 +26,5 @@ Builds:
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.0
-CurrentVersionCode: 5
+CurrentVersion: 1.0.1
+CurrentVersionCode: 6
