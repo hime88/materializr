@@ -1285,6 +1285,7 @@ private:
     // Right-click face context menu state
     int m_contextMenuBodyId = -1;
     TopoDS_Shape m_contextMenuFace;
+    int m_contextMenuPlaneId = -1; // >=0 → the pending context menu is for a plane
     bool m_contextMenuPending = false;
 
     // Project file + dirty tracking

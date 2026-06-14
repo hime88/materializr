@@ -3963,9 +3963,18 @@ void Application::renderViewport() {
                     ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
                     bool wasDragging = (std::abs(dragDelta.x) > 1.0f || std::abs(dragDelta.y) > 1.0f);
                     if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !wasDragging) {
-                        if (result.hit && !result.pickedShape.IsNull()) {
+                        if (result.hit && result.planeId >= 0) {
+                            // Right-click on a construction plane → its own menu
+                            // (Flip Normal / Rotate About Axis), mirroring the
+                            // Items-panel plane context menu so the normal can be
+                            // adjusted right on the plane in the viewport.
+                            m_contextMenuPlaneId = result.planeId;
+                            m_contextMenuFace.Nullify();
+                            m_contextMenuPending = true;
+                        } else if (result.hit && !result.pickedShape.IsNull()) {
                             m_contextMenuBodyId = result.bodyId;
                             m_contextMenuFace = result.pickedShape;
+                            m_contextMenuPlaneId = -1;
                             m_contextMenuPending = true;
                         }
                     }
@@ -4808,7 +4817,8 @@ void Application::renderViewport() {
 
     // Right-click face context menu
     if (m_contextMenuPending) {
-        ImGui::OpenPopup("FaceContextMenu");
+        ImGui::OpenPopup(m_contextMenuPlaneId >= 0 ? "PlaneContextMenu"
+                                                   : "FaceContextMenu");
         m_contextMenuPending = false;
     }
     if (ImGui::BeginPopup("FaceContextMenu")) {
@@ -4927,6 +4937,29 @@ void Application::renderViewport() {
         ImGui::Separator();
         if (ImGui::MenuItem("Cancel")) {
             m_contextMenuFace.Nullify();
+        }
+        ImGui::EndPopup();
+    }
+
+    // Right-click construction-plane context menu — the same normal-adjustment
+    // actions the Items panel offers, but reachable directly on the plane in
+    // the viewport.
+    if (ImGui::BeginPopup("PlaneContextMenu")) {
+        const int pid = m_contextMenuPlaneId;
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Construction Plane");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Flip Normal")) {
+            m_document->flipPlaneNormal(pid);
+            markDirty();
+        }
+        if (ImGui::MenuItem("Rotate About Axis…")) {
+            beginRotatePlaneAboutAxis(pid);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Delete")) {
+            m_document->removePlane(pid);
+            if (m_selection) m_selection->clear();
+            m_contextMenuPlaneId = -1;
         }
         ImGui::EndPopup();
     }
