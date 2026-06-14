@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace materializr {
 
@@ -67,6 +68,15 @@ struct AppSettings {
     // to re-navigate to their projects folder every time. Machine-local
     // (omitted from JSON import/export, same as lastProjectPath).
     std::string lastFileDir;
+
+    // Recently opened / saved projects, most-recent-first (capped; see
+    // Application::addRecentProject). `ref` is what re-opens the project — a
+    // filesystem path on desktop, or a persisted SAF content:// URI on
+    // Android — and `name` is the display label. Machine-local (omitted from
+    // JSON import/export like lastProjectPath). Serialized as indexed
+    // recentN_ref / recentN_name keys.
+    struct RecentProject { std::string ref; std::string name; };
+    std::vector<RecentProject> recentProjects;
 
     // Hit the GitHub releases API at startup and pop a "newer release
     // available" dialog if the running build is older. Off in --safe-mode

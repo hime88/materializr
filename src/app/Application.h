@@ -21,6 +21,7 @@
 #include <array>
 #include "modeling/ExtrudeOp.h" // for ExtrudeMode
 #include "modeling/SketchConstraints.h" // for ConstraintType (applySketchConstraint)
+#include "io/Settings.h" // for AppSettings::RecentProject (m_recentProjects)
 
 // Global (non-namespaced) op, forward-declared for configureFaceOp's signature.
 class MoveFaceOp;
@@ -159,6 +160,14 @@ private:
     // Load a project file directly by path. Used by loadProject() and by the
     // "auto-open last project on launch" path.
     bool loadProjectAt(const std::string& path);
+
+    // Open Recent: a persisted, most-recent-first list of projects. `ref` is a
+    // filesystem path (desktop) or a SAF content:// URI (Android); `name` is the
+    // display label. addRecentProject records a successful open/save;
+    // openRecentProject re-opens one (resolving the URI on Android).
+    void addRecentProject(const std::string& ref, const std::string& name);
+    void openRecentProject(const AppSettings::RecentProject& r);
+    void removeRecentProject(const std::string& ref);
     // File → Close Project. Prompts to save if dirty (unless autosave is on),
     // then clears the document/history/selection and resets the project path.
     void closeProject();
@@ -1290,6 +1299,7 @@ private:
 
     // Project file + dirty tracking
     std::string m_currentProjectPath;          // empty until first save/load
+    std::vector<AppSettings::RecentProject> m_recentProjects; // Open Recent (persisted)
     int m_savedAtHistoryStep = -1;             // history index when last saved/loaded
     bool m_unsavedNonHistoryChanges = false;   // for mutations outside History (imports, etc.)
 

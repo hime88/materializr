@@ -36,6 +36,8 @@ public class MaterializrActivity extends SDLActivity {
     private static volatile boolean sResultReady = false;
     private static volatile String  sResultValue = "";   // open: temp path; save: "ok"; cancel: ""
     private Uri mPendingSaveUri;                          // destination chosen for a save
+    private static volatile String sLastDocUri  = "";    // persisted URI of the last open/save
+    private static volatile String sLastDocName = "";    // its display name (for Open Recent)
 
     // Native -> Java entry points (called from FileDialogs.cpp via JNI) ---------
 
@@ -48,6 +50,10 @@ public class MaterializrActivity extends SDLActivity {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             i.addCategory(Intent.CATEGORY_OPENABLE);
             applyMimes(i, mimeCsv);
+            // Request a *persistable* read grant so the picked document can be
+            // re-opened later from the Open Recent list.
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                     | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
             try { a.startActivityForResult(i, REQ_OPEN); }
             catch (Exception e) { signal(""); }
         });
@@ -62,6 +68,10 @@ public class MaterializrActivity extends SDLActivity {
             i.addCategory(Intent.CATEGORY_OPENABLE);
             i.setType((mime == null || mime.isEmpty()) ? "application/octet-stream" : mime);
             i.putExtra(Intent.EXTRA_TITLE, name);
+            // Persistable read+write so a saved project lands in Open Recent too.
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                     | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                     | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
             try { a.startActivityForResult(i, REQ_SAVE); }
             catch (Exception e) { signal(""); }
         });
@@ -120,6 +130,30 @@ public class MaterializrActivity extends SDLActivity {
         return sResultValue;
     }
 
+    // Persisted-document URI accessors for the Open Recent list.
+    public static String nativeLastDocUri()  { return sLastDocUri; }
+    public static String nativeLastDocName() { return sLastDocName; }
+
+    // Re-open a previously persisted document URI without a picker: copy it into
+    // a cache temp and return that path ("" on failure — access revoked or the
+    // file was deleted). Runs synchronously on the caller (native) thread.
+    public static String nativeOpenUri(String uriString) {
+        MaterializrActivity a = sInstance;
+        if (a == null || uriString == null || uriString.isEmpty()) return "";
+        try {
+            Uri uri = Uri.parse(uriString);
+            File dir = new File(a.getCacheDir(), "import");
+            dir.mkdirs();
+            File dst = new File(dir, a.queryName(uri));
+            try (InputStream in = a.getContentResolver().openInputStream(uri);
+                 OutputStream out = new FileOutputStream(dst)) { copy(in, out); }
+            a.rememberDoc(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            return dst.getAbsolutePath();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private static void signal(String value) { sResultValue = value; sResultReady = true; }
 
     private static void applyMimes(Intent i, String mimeCsv) {
@@ -150,6 +184,17 @@ public class MaterializrActivity extends SDLActivity {
         return new File(name).getName();
     }
 
+    // Take a persistable permission on `uri` and record it as the last document
+    // for the Open Recent list. Best-effort: some providers don't grant
+    // persistable permissions, so recents may not be able to re-open those.
+    private void rememberDoc(Uri uri, int modeFlags) {
+        try {
+            getContentResolver().takePersistableUriPermission(uri, modeFlags);
+        } catch (Exception ignored) {}
+        sLastDocUri = uri.toString();
+        sLastDocName = queryName(uri);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -164,12 +209,15 @@ public class MaterializrActivity extends SDLActivity {
                 File dst = new File(dir, queryName(uri));
                 try (InputStream in = getContentResolver().openInputStream(uri);
                      OutputStream out = new FileOutputStream(dst)) { copy(in, out); }
+                rememberDoc(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 signal(dst.getAbsolutePath());
             } catch (Exception e) {
                 signal("");
             }
         } else { // REQ_SAVE: remember the destination; native writes a temp then commits.
             mPendingSaveUri = uri;
+            rememberDoc(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                           | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             signal("ok");
         }
     }

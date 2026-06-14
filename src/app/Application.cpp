@@ -84,6 +84,7 @@ inline void resetFpuForOcct() {
 #include "io/ProjectIO.h"
 #include "io/SketchRecovery.h"
 #include "io/Settings.h"
+#include "android_files.h" // androidLastDocUri/Name + androidOpenUri (Open Recent on SAF)
 #include "core/EventBus.h"
 #include "core/Events.h"
 #include "plugin/PluginContext.h"
@@ -883,6 +884,25 @@ void Application::renderMenuBar() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open Project...", "Ctrl+O")) loadProject();
+            // Open Recent — persisted, most-recent-first. Greyed when empty.
+            if (ImGui::BeginMenu("Open Recent", !m_recentProjects.empty())) {
+                // Snapshot: openRecentProject() mutates m_recentProjects.
+                std::vector<AppSettings::RecentProject> snapshot = m_recentProjects;
+                for (size_t i = 0; i < snapshot.size(); ++i) {
+                    ImGui::PushID(static_cast<int>(i));
+                    if (ImGui::MenuItem(snapshot[i].name.c_str()))
+                        openRecentProject(snapshot[i]);
+                    if (ImGui::IsItemHovered() && !snapshot[i].ref.empty())
+                        ImGui::SetTooltip("%s", snapshot[i].ref.c_str());
+                    ImGui::PopID();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Clear Recent")) {
+                    m_recentProjects.clear();
+                    saveAppSettings();
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("Save Project", "Ctrl+S")) saveProjectQuick();
             if (ImGui::MenuItem("Save Project As...")) saveProject();
             if (ImGui::MenuItem("New Project")) closeProject();
@@ -1248,6 +1268,7 @@ AppSettings Application::currentSettings() const {
     s.rightPanelHidden = m_rightPanelHidden;
     s.showToolbarTooltips = m_showToolbarTooltips;
     s.autoOpenLastProject = m_autoOpenLastProject;
+    s.recentProjects = m_recentProjects;
     s.lastProjectPath = m_currentProjectPath; // empty after closeProject()
     s.lastFileDir = materializr::FileDialogs::getLastDir();
     s.checkForUpdatesOnLaunch = m_checkForUpdatesOnLaunch;
@@ -1304,6 +1325,7 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_rightPanelHidden = s.rightPanelHidden;
     m_showToolbarTooltips = s.showToolbarTooltips;
     m_autoOpenLastProject = s.autoOpenLastProject;
+    m_recentProjects = s.recentProjects;
     m_checkForUpdatesOnLaunch = s.checkForUpdatesOnLaunch;
     m_snapToGrid = s.snapToGrid;
     m_sketchGridStep = s.sketchGridStep;
@@ -2555,6 +2577,19 @@ void Application::saveProject() {
                 m_currentProjectPath = path;
                 markSaved();
                 saveAppSettings(); // persist lastProjectPath for auto-open
+                // Save As also lands in Open Recent (persistable ref on Android).
+                {
+                    std::string ref, name;
+#if defined(__ANDROID__)
+                    ref  = materializr::androidLastDocUri();
+                    name = materializr::androidLastDocName();
+                    if (ref.empty()) ref = path;
+#else
+                    ref = path;
+#endif
+                    if (name.empty()) name = std::filesystem::path(path).filename().string();
+                    addRecentProject(ref, name);
+                }
                 std::fprintf(stdout, "Project saved to %s\n", path.c_str());
                 if (m_closeAfterSave) {
                     if (m_postSaveAction == PostSaveAction::CloseProject) {
@@ -2840,10 +2875,75 @@ bool Application::loadProjectAt(const std::string& path) {
     return true;
 }
 
+void Application::addRecentProject(const std::string& ref, const std::string& name) {
+    if (ref.empty()) return;
+    constexpr size_t kMaxRecents = 10;
+    // Drop any existing entry with the same ref, then push this to the front.
+    for (auto it = m_recentProjects.begin(); it != m_recentProjects.end(); ) {
+        if (it->ref == ref) it = m_recentProjects.erase(it);
+        else                ++it;
+    }
+    AppSettings::RecentProject rp;
+    rp.ref  = ref;
+    rp.name = name.empty() ? ref : name;
+    m_recentProjects.insert(m_recentProjects.begin(), rp);
+    if (m_recentProjects.size() > kMaxRecents)
+        m_recentProjects.resize(kMaxRecents);
+    saveAppSettings();
+}
+
+void Application::removeRecentProject(const std::string& ref) {
+    bool changed = false;
+    for (auto it = m_recentProjects.begin(); it != m_recentProjects.end(); ) {
+        if (it->ref == ref) { it = m_recentProjects.erase(it); changed = true; }
+        else                ++it;
+    }
+    if (changed) saveAppSettings();
+}
+
+void Application::openRecentProject(const AppSettings::RecentProject& r) {
+    // Copy first: addRecentProject/removeRecentProject mutate m_recentProjects,
+    // which may be the vector backing the reference `r`.
+    const std::string ref  = r.ref;
+    const std::string name = r.name;
+#if defined(__ANDROID__)
+    // ref is a persisted SAF content:// URI — resolve to a temp file, no picker.
+    std::string tmp = materializr::androidOpenUri(ref);
+    if (tmp.empty()) {
+        showToast("Couldn't open \"" + name + "\" - access may have been revoked.");
+        removeRecentProject(ref);
+        return;
+    }
+    if (loadProjectAt(tmp)) addRecentProject(ref, name);  // bump to front
+    else { showToast("Failed to open \"" + name + "\"."); removeRecentProject(ref); }
+#else
+    if (loadProjectAt(ref)) addRecentProject(ref, name);  // bump to front
+    else {
+        showToast("Couldn't open \"" + name + "\" - the file may have moved or been deleted.");
+        removeRecentProject(ref);
+    }
+#endif
+}
+
 void Application::loadProject() {
     FileDialogs::openFile("Open Project",
         {{"Materializr Project", "*.materializr"}},
-        [this](const std::string& path) { loadProjectAt(path); });
+        [this](const std::string& path) {
+            if (path.empty() || !loadProjectAt(path)) return;
+            // Record in Open Recent with a *persistable* ref: the SAF content://
+            // URI on Android (the `path` is a throwaway temp there), the real
+            // path on desktop.
+            std::string ref, name;
+#if defined(__ANDROID__)
+            ref  = materializr::androidLastDocUri();
+            name = materializr::androidLastDocName();
+            if (ref.empty()) ref = path; // fallback (non-persistable provider)
+#else
+            ref = path;
+#endif
+            if (name.empty()) name = std::filesystem::path(path).filename().string();
+            addRecentProject(ref, name);
+        });
 }
 
 void Application::closeProject() {

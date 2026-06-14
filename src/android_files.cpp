@@ -49,6 +49,50 @@ void callStaticVoidStringString(const char* method, const std::string& a, const 
     env->DeleteLocalRef(act);
 }
 
+// Call a no-arg static method returning String. Empty string on any failure.
+std::string callStaticStringNoArg(const char* method) {
+    JNIEnv* env; jobject act; jclass cls;
+    if (!jniActivity(env, act, cls)) return {};
+    std::string out;
+    jmethodID mid = env->GetStaticMethodID(cls, method, "()Ljava/lang/String;");
+    if (mid) {
+        jobject res = env->CallStaticObjectMethod(cls, mid);
+        if (res) {
+            const char* s = env->GetStringUTFChars(static_cast<jstring>(res), nullptr);
+            out = s ? s : "";
+            if (s) env->ReleaseStringUTFChars(static_cast<jstring>(res), s);
+            env->DeleteLocalRef(res);
+        }
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(act);
+    return out;
+}
+
+// Call a String->String static method. Empty string on any failure.
+std::string callStaticStringArg(const char* method, const std::string& a) {
+    JNIEnv* env; jobject act; jclass cls;
+    if (!jniActivity(env, act, cls)) return {};
+    std::string out;
+    jmethodID mid = env->GetStaticMethodID(cls, method, "(Ljava/lang/String;)Ljava/lang/String;");
+    if (mid) {
+        jstring sa = env->NewStringUTF(a.c_str());
+        jobject res = env->CallStaticObjectMethod(cls, mid, sa);
+        env->DeleteLocalRef(sa);
+        if (res) {
+            const char* s = env->GetStringUTFChars(static_cast<jstring>(res), nullptr);
+            out = s ? s : "";
+            if (s) env->ReleaseStringUTFChars(static_cast<jstring>(res), s);
+            env->DeleteLocalRef(res);
+        }
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(act);
+    return out;
+}
+
 } // namespace
 
 bool androidStartOpenDocument(const std::string& mimeCsv) {
@@ -100,6 +144,12 @@ bool androidCommitSave(const std::string& tempPath) {
     env->DeleteLocalRef(cls);
     env->DeleteLocalRef(act);
     return ok == JNI_TRUE;
+}
+
+std::string androidLastDocUri()  { return callStaticStringNoArg("nativeLastDocUri"); }
+std::string androidLastDocName() { return callStaticStringNoArg("nativeLastDocName"); }
+std::string androidOpenUri(const std::string& uri) {
+    return callStaticStringArg("nativeOpenUri", uri);
 }
 
 } // namespace materializr

@@ -82,6 +82,19 @@ void applyKv(const std::map<std::string, std::string>& kv, AppSettings& s) {
     readInt (kv, "inferenceLevel",       s.inferenceLevel);
     readBool(kv, "showInferenceToolbarToggle", s.showInferenceToolbarToggle);
     readInt (kv, "angleSnapDeg",         s.angleSnapDeg);
+
+    // Recently opened/saved projects: contiguous indexed keys recentN_ref /
+    // recentN_name (most-recent-first). Stop at the first missing/empty _ref.
+    s.recentProjects.clear();
+    for (int i = 0; ; ++i) {
+        auto rit = kv.find("recent" + std::to_string(i) + "_ref");
+        if (rit == kv.end() || rit->second.empty()) break;
+        AppSettings::RecentProject rp;
+        rp.ref = rit->second;
+        auto nit = kv.find("recent" + std::to_string(i) + "_name");
+        rp.name = (nit != kv.end() && !nit->second.empty()) ? nit->second : rp.ref;
+        s.recentProjects.push_back(rp);
+    }
 }
 
 // Make sure the parent directory of `path` exists. Best-effort: a failure here
@@ -238,6 +251,10 @@ bool SettingsIO::save(const std::string& path, const AppSettings& s) {
     ofs << "autoOpenLastProject = " << (s.autoOpenLastProject ? "true" : "false") << "\n";
     ofs << "lastProjectPath = "     << s.lastProjectPath     << "\n";
     ofs << "lastFileDir = "         << s.lastFileDir         << "\n";
+    for (size_t i = 0; i < s.recentProjects.size(); ++i) {
+        ofs << "recent" << i << "_ref = "  << s.recentProjects[i].ref  << "\n";
+        ofs << "recent" << i << "_name = " << s.recentProjects[i].name << "\n";
+    }
     ofs << "checkForUpdatesOnLaunch = " << (s.checkForUpdatesOnLaunch ? "true" : "false") << "\n";
     ofs << "snapToGrid = "              << (s.snapToGrid ? "true" : "false") << "\n";
     ofs << "sketchGridStep = "          << s.sketchGridStep      << "\n";

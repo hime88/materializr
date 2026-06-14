@@ -28,6 +28,16 @@ bool androidCommitSave(const std::string& tempPath);
 // FileProvider cache; no storage permission needed).
 void androidShareFile(const std::string& path, const std::string& mime);
 
+// Persisted-URI support for the "Open Recent" list. After a successful open or
+// save picker, the activity has taken a *persistable* permission on the chosen
+// document; these return that content:// URI and its display name so it can be
+// stored as a recent. androidOpenUri() re-opens such a stored URI without a
+// picker — it copies the document to a cache temp file and returns that path
+// (empty on failure, e.g. the user revoked access or deleted the file).
+std::string androidLastDocUri();
+std::string androidLastDocName();
+std::string androidOpenUri(const std::string& uri);
+
 #else  // desktop: no-ops (the calls live behind #if __ANDROID__ anyway)
 
 inline bool androidStartOpenDocument(const std::string&) { return false; }
@@ -35,6 +45,9 @@ inline bool androidStartCreateDocument(const std::string&, const std::string&) {
 inline bool androidPollFileResult(std::string&) { return false; }
 inline bool androidCommitSave(const std::string&) { return false; }
 inline void androidShareFile(const std::string&, const std::string&) {}
+inline std::string androidLastDocUri() { return {}; }
+inline std::string androidLastDocName() { return {}; }
+inline std::string androidOpenUri(const std::string&) { return {}; }
 
 #endif
 
