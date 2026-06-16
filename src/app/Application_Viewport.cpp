@@ -2900,17 +2900,20 @@ void Application::renderViewport() {
                                 m_gizmoTotalDelta += gResult.delta;
                                 glm::vec3 d = m_gizmoTotalDelta;
                                 if (m_snapToGrid && m_sketchGridStep > 0.0f) {
-                                    // Absolute-position snap (matches sketch
-                                    // grid behaviour everywhere else): the
-                                    // pivot lands on grid intersections, not
-                                    // on delta multiples. So a sketch starting
-                                    // off-grid will jump onto the grid on the
-                                    // first qualifying drag.
+                                    // Absolute-position snap: the pivot lands on
+                                    // grid intersections (matches sketch grid
+                                    // behaviour). Snap ONLY the axes that moved —
+                                    // an axis-constrained drag (e.g. Y only)
+                                    // leaves the other components ~0, and snapping
+                                    // those too yanked a resting off-grid X/Z onto
+                                    // the grid, drifting the body sideways (bug #6).
                                     float step = m_sketchGridStep;
                                     glm::vec3 absAfter = m_gizmoSharedPivot + d;
                                     auto s = [&](float v){ return std::round(v/step)*step; };
-                                    glm::vec3 absSnap(s(absAfter.x), s(absAfter.y), s(absAfter.z));
-                                    d = absSnap - m_gizmoSharedPivot;
+                                    const float eps = 1e-5f;
+                                    if (std::abs(d.x) > eps) d.x = s(absAfter.x) - m_gizmoSharedPivot.x;
+                                    if (std::abs(d.y) > eps) d.y = s(absAfter.y) - m_gizmoSharedPivot.y;
+                                    if (std::abs(d.z) > eps) d.z = s(absAfter.z) - m_gizmoSharedPivot.z;
                                 }
                                 gp_Trsf trsf; trsf.SetTranslation(gp_Vec(d.x, d.y, d.z));
                                 // Apply the same translation to every selected body,
@@ -3093,12 +3096,17 @@ void Application::renderViewport() {
                             glm::vec3 d = m_gizmoTotalDelta;
                             if (gm == GizmoMode::Translate &&
                                 m_snapToGrid && m_sketchGridStep > 0.0f) {
-                                // Absolute snap — same rule as the live drag.
+                                // Absolute snap — same rule as the live drag:
+                                // snap ONLY the axes that moved, so an
+                                // axis-constrained move doesn't drift the others
+                                // onto the grid (bug #6).
                                 float step = m_sketchGridStep;
                                 glm::vec3 absAfter = m_gizmoSharedPivot + d;
                                 auto s = [&](float v){ return std::round(v/step)*step; };
-                                glm::vec3 absSnap(s(absAfter.x), s(absAfter.y), s(absAfter.z));
-                                d = absSnap - m_gizmoSharedPivot;
+                                const float eps = 1e-5f;
+                                if (std::abs(d.x) > eps) d.x = s(absAfter.x) - m_gizmoSharedPivot.x;
+                                if (std::abs(d.y) > eps) d.y = s(absAfter.y) - m_gizmoSharedPivot.y;
+                                if (std::abs(d.z) > eps) d.z = s(absAfter.z) - m_gizmoSharedPivot.z;
                             }
                             float ang = (gm == GizmoMode::Rotate)
                                             ? softSnap45(m_gizmoTotalAngle) : 0.0f;
