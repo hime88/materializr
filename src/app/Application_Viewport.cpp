@@ -3430,7 +3430,17 @@ void Application::renderViewport() {
                         const bool stickToRegion =
                             m_projectSketchCtl.active() || ImGui::GetIO().KeyCtrl;
                         int forced = -1; // -1 none, 0 face, 1 region
-                        if (!dbl && sameSpot && m_pickCycleLast == 0) forced = 1;
+                        // Touch: a FAST same-spot re-tap is a double-tap (→ body),
+                        // not a deliberate "show behind" cycle (IsMouseDoubleClicked
+                        // is unreliable for touch). Keep it on the FACE so the
+                        // double-tap escalation can take it to the body; cycling to
+                        // the sketch behind needs a slower, deliberate re-tap.
+                        const bool touchFastReTap =
+                            materializr::touchMode() && sameSpot && m_pickCycleTick > 0.0 &&
+                            (ImGui::GetTime() - m_pickCycleTick) <
+                                ImGui::GetIO().MouseDoubleClickTime;
+                        if (touchFastReTap) forced = 0;
+                        else if (!dbl && sameSpot && m_pickCycleLast == 0) forced = 1;
                         else if (!dbl && sameSpot && m_pickCycleLast == 1 &&
                                  !stickToRegion) forced = 0;
                         // DEFAULT = the ORIGINAL pre-saga semantics:
@@ -3520,6 +3530,7 @@ void Application::renderViewport() {
                             ImVec2 mp2 = ImGui::GetMousePos();
                             m_pickCyclePos = glm::vec2(mp2.x, mp2.y);
                         }
+                        m_pickCycleTick = ImGui::GetTime();
                         m_pickCycleLast = 1; // region picked; same-spot → face
                         regionConsumedClick = true;
                     }
@@ -3764,6 +3775,7 @@ void Application::renderViewport() {
                                 // candidate at this position".
                                 ImVec2 mp2 = ImGui::GetMousePos();
                                 m_pickCyclePos = glm::vec2(mp2.x, mp2.y);
+                                m_pickCycleTick = ImGui::GetTime();
                                 m_pickCycleLast = -1;
                             } else {
                                 // If click is near an edge, select edge; otherwise face. The
@@ -3820,6 +3832,7 @@ void Application::renderViewport() {
                                     ImVec2 mp2 = ImGui::GetMousePos();
                                     m_pickCyclePos = glm::vec2(mp2.x, mp2.y);
                                 }
+                                m_pickCycleTick = ImGui::GetTime();
                                 m_pickCycleLast = 0; // face picked; same-spot → region
                             }
                         } else {

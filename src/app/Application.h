@@ -965,6 +965,7 @@ private:
     // by / behind that face — resolves the face-vs-region ambiguity when
     // bodies sit on both sides of their source sketch plane.
     glm::vec2 m_pickCyclePos{-1000.0f, -1000.0f};
+    double m_pickCycleTick = 0.0; // ImGui time of the last pick at m_pickCyclePos
     int m_pickCycleLast = -1; // -1 none, 0 face, 1 region
 
     // Resolve the pull direction + neutral-plane point from the current
