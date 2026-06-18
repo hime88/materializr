@@ -1968,8 +1968,18 @@ void Application::renderViewport() {
                     b.type = SelectionType::Body;
                     b.bodyId = bid;
                     try { b.shape = m_document->getBody(bid); } catch (...) {}
-                    if (m_multiSelectToggle) m_selection->addToSelection(b);
-                    else                     m_selection->select(b);
+                    if (m_multiSelectToggle) {
+                        // Replace this body's faces/edges with the body itself —
+                        // leave other selected items intact, no stray faces.
+                        std::vector<SelectionEntry> drop;
+                        for (const auto& e : m_selection->getSelection())
+                            if (e.bodyId == bid && e.type != SelectionType::Body)
+                                drop.push_back(e);
+                        for (const auto& e : drop) m_selection->removeFromSelection(e);
+                        m_selection->addToSelection(b);
+                    } else {
+                        m_selection->select(b);
+                    }
                 }
             }
         }
