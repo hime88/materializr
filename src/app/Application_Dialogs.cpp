@@ -155,6 +155,16 @@ void Application::renderSettings() {
                     if (ImGui::Checkbox("Items",        &m_showItems))        changed = true;
                     if (ImGui::Checkbox("Properties",   &m_showProperties))   changed = true;
 
+                    if (materializr::touchMode()) {
+                        ImGui::Spacing();
+                        ImGui::SeparatorText("Touch sensitivity");
+                        ImGui::TextWrapped("Scale how far the camera moves per gesture "
+                                           "(1.00x = default).");
+                        if (ImGui::SliderFloat("Orbit", &m_touchOrbitSens, 0.25f, 3.0f, "%.2fx")) changed = true;
+                        if (ImGui::SliderFloat("Pan",   &m_touchPanSens,   0.25f, 3.0f, "%.2fx")) changed = true;
+                        if (ImGui::SliderFloat("Zoom",  &m_touchZoomSens,  0.25f, 3.0f, "%.2fx")) changed = true;
+                    }
+
                     ImGui::Spacing();
                     ImGui::SeparatorText("Autosave");
                     if (ImGui::Checkbox("Autosave saved projects", &m_autosaveEnabled)) changed = true;

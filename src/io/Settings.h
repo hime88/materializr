@@ -59,6 +59,10 @@ struct AppSettings {
     bool  showHistory       = true;
     bool  showItems         = true;
     bool  showProperties    = true;
+    // Touch-mode camera sensitivity multipliers (1.0 = default).
+    float touchOrbitSens    = 1.0f;
+    float touchPanSens      = 1.0f;
+    float touchZoomSens     = 1.0f;
     bool  showToolbarTooltips = true; // hover-tip describing each toolbar button
 
     // --- Session ---

@@ -77,6 +77,9 @@ void applyKv(const std::map<std::string, std::string>& kv, AppSettings& s) {
     readBool (kv, "showHistory",         s.showHistory);
     readBool (kv, "showItems",           s.showItems);
     readBool (kv, "showProperties",      s.showProperties);
+    readFloat(kv, "touchOrbitSens",      s.touchOrbitSens);
+    readFloat(kv, "touchPanSens",        s.touchPanSens);
+    readFloat(kv, "touchZoomSens",       s.touchZoomSens);
     readBool(kv, "showToolbarTooltips",  s.showToolbarTooltips);
     readBool(kv, "autoOpenLastProject",  s.autoOpenLastProject);
     readString(kv, "lastProjectPath",    s.lastProjectPath);
@@ -257,6 +260,9 @@ bool SettingsIO::save(const std::string& path, const AppSettings& s) {
     ofs << "showHistory = "         << s.showHistory         << "\n";
     ofs << "showItems = "           << s.showItems           << "\n";
     ofs << "showProperties = "      << s.showProperties      << "\n";
+    ofs << "touchOrbitSens = "      << s.touchOrbitSens      << "\n";
+    ofs << "touchPanSens = "        << s.touchPanSens        << "\n";
+    ofs << "touchZoomSens = "       << s.touchZoomSens       << "\n";
     ofs << "showToolbarTooltips = " << (s.showToolbarTooltips ? "true" : "false") << "\n";
     ofs << "autoOpenLastProject = " << (s.autoOpenLastProject ? "true" : "false") << "\n";
     ofs << "lastProjectPath = "     << s.lastProjectPath     << "\n";

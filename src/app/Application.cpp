@@ -1313,6 +1313,9 @@ AppSettings Application::currentSettings() const {
     s.showHistory = m_showHistory;
     s.showItems = m_showItems;
     s.showProperties = m_showProperties;
+    s.touchOrbitSens = m_touchOrbitSens;
+    s.touchPanSens = m_touchPanSens;
+    s.touchZoomSens = m_touchZoomSens;
     s.showToolbarTooltips = m_showToolbarTooltips;
     s.autoOpenLastProject = m_autoOpenLastProject;
     s.recentProjects = m_recentProjects;
@@ -1375,6 +1378,9 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_showHistory = s.showHistory;
     m_showItems = s.showItems;
     m_showProperties = s.showProperties;
+    m_touchOrbitSens = s.touchOrbitSens;
+    m_touchPanSens = s.touchPanSens;
+    m_touchZoomSens = s.touchZoomSens;
     m_showToolbarTooltips = s.showToolbarTooltips;
     m_autoOpenLastProject = s.autoOpenLastProject;
     m_recentProjects = s.recentProjects;

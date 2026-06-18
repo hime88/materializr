@@ -2088,7 +2088,12 @@ void Application::renderViewport() {
             if (!suppressCamDrag && ImGui::IsMouseDragging(m_orbitButton)) {
                 ImVec2 delta = io.MouseDelta;
                 if (io.KeyShift) cam.pan(delta.x, delta.y);
-                else cam.orbit(delta.x, delta.y);
+                else {
+                    // Touch orbit honours the user's sensitivity slider; desktop
+                    // mouse orbit is unscaled (factor 1).
+                    const float os = materializr::touchMode() ? m_touchOrbitSens : 1.0f;
+                    cam.orbit(delta.x * os, delta.y * os);
+                }
             }
             if (!suppressCamDrag && m_panButton != m_orbitButton &&
                 ImGui::IsMouseDragging(m_panButton)) {
@@ -2104,13 +2109,13 @@ void Application::renderViewport() {
                 // creep the view.
                 if (!gizmoOwnsDrag && m_window->consumeTouchPan(tdx, tdy)) {
                     if (std::fabs(tdx) > 0.5f || std::fabs(tdy) > 0.5f) {
-                        cam.pan(tdx * 0.55f, tdy * 0.55f);
+                        cam.pan(tdx * 0.55f * m_touchPanSens, tdy * 0.55f * m_touchPanSens);
                     }
                 }
                 // Pinch zoom: continuous (fires every frame), so a fraction of a
                 // wheel tick. Deadzoned to keep a pure pan from zooming.
                 if (m_window->consumeTouchZoom(tdz)) {
-                    if (std::fabs(tdz) > 1.5f) cam.zoom(tdz * 0.006f);
+                    if (std::fabs(tdz) > 1.5f) cam.zoom(tdz * 0.006f * m_touchZoomSens);
                 }
             }
 

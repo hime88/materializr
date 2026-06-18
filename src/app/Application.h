@@ -617,6 +617,10 @@ private:
     bool  m_showHistory      = true;
     bool  m_showItems        = true;
     bool  m_showProperties   = true;
+    // Touch-mode camera sensitivity (Settings > Touch; persisted; 1.0 = default).
+    float m_touchOrbitSens = 1.0f;
+    float m_touchPanSens   = 1.0f;
+    float m_touchZoomSens  = 1.0f;
     // Toggle for the sketch toolbar's live Full/Reduced/Off inference cycle
     // button. Off hides the button so users who set the level once in
     // Settings can declutter the sketch toolbar.
