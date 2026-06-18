@@ -1,7 +1,7 @@
 # Materializr
 
 **Open-source parametric 3D CAD for makers** — constraint sketches, solid
-modeling, threads, SVG & text engraving, STL/STEP export.
+modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 
 > **📱 Now on Android (1.0.0+):** Materializr runs on Android (arm64-v8a),
 > reusing the entire geometry codebase via an SDL2 + OpenGL ES 3.0 backend and
@@ -73,7 +73,8 @@ axes, **Section View** with any cutting plane, version snapshots with
 auto-save, undo everywhere.
 
 **Exchange** — STEP and IGES import/export, STL and glTF export
-(Z-up corrected for printing), SVG import, PNG viewport export, and a
+(Z-up corrected for printing), **sketch → SVG export** (1:1 mm, for laser
+cutters and 2.5D CNC), SVG import, PNG viewport export, and a
 compact native `.materializr` format that stores bodies, sketches, and
 the full history.
 

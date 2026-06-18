@@ -1,1 +1,1 @@
-Parametric 3D CAD
+Maker 3D CAD — the middle ground between Tinkercad and FreeCAD

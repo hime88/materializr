@@ -3,6 +3,42 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [1.1.0] — 2026-06-18
+
+Feature + fix release, with a large pass on the Android touch experience.
+
+### Added
+
+- **Sketch → SVG export** (1:1 mm, polyline) for laser cutters and 2.5D CNC —
+  from the Items-panel sketch menu and the new viewport sketch menu.
+- **Viewport sketch context menu** — right-click (or long-press) a sketch:
+  Edit / Export as SVG / Move / Rotate / Delete.
+- **Settings → Panels** — per-panel show/hide (Tools, Interactions, History,
+  Items, Properties), persisted.
+- **Touch sensitivity sliders** (orbit / pan / zoom) under Settings → Navigation.
+- **AppImage delta auto-update** — the Linux AppImage now embeds gh-releases
+  update info and ships a `.zsync`, so AppImageUpdate / Gear Lever can update it.
+- In-app **"Join our Discord"** link in the About dialog.
+
+### Changed
+
+- **Boolean Union/Intersect** combine ALL selected bodies; **Subtract** asks
+  which body to keep.
+- **Sketch snapping** tiered by inference level: grid-vs-curve nearest-wins
+  (Reduced), land on grid∩curve (Full/Max), grid+endpoint only (Off).
+- Settings reorganized (Navigation tab; per-panel visibility; tidier grouping).
+- Listing/README positioning: "the middle ground between Tinkercad and FreeCAD".
+
+### Fixed
+
+- **Push/pull direction** on faces whose orientation was inverted (the truly
+  outward normal is now verified via a solid-classifier test).
+- **Gizmo move** no longer drifts the un-moved axes when snapping.
+- STL/STEP export enforce their file extension when the picker returns a bare name.
+- **Touch:** panels resize and re-dock by drag; the Settings scrollbar drags;
+  double-tap selects the body (even over a sketch); two-finger pan/zoom lock to
+  one gesture at a time; box-select via Alt+drag in trackpad mode.
+
 ## [1.0.1] — 2026-06-14
 
 Bugfix release. Android-focused: STEP import could crash the app instantly on
