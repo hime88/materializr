@@ -19,6 +19,7 @@
 #include "modeling/ExtrudeOp.h"
 #include "modeling/PushPullOp.h"
 #include "modeling/MoveFaceOp.h"
+#include "modeling/MoveHoleOp.h"
 #include "modeling/FilletOp.h"
 #include "modeling/ChamferOp.h"
 #include "modeling/ShellOp.h"
@@ -1623,6 +1624,51 @@ void Application::beginMoveFace(FaceXform kind) {
     m_moveFaceScaleA = m_moveFaceScaleABase = 1.0f;
     m_moveFaceScaleB = m_moveFaceScaleBBase = 1.0f;
     m_moveFaceDragging = false;
+    m_moveHoleMode = false;
+    m_moveHoleWall.Nullify();
+
+    // Hole move: if the Move selection is a recognizable THROUGH-HOLE wall, slide
+    // the whole hole (MoveHoleOp) instead of shearing a face. buildVoid succeeds
+    // only on a real hole wall (an outer face / block side fails it), so this
+    // doesn't hijack ordinary Move Face. Translate only; pockets are refused.
+    if (kind == FaceXform::Translate && m_selection) {
+        for (const auto& e : m_selection->getSelection()) {
+            if (e.type != SelectionType::Face || e.shape.IsNull()) continue;
+            TopoDS_Shape body;
+            try { body = m_document->getBody(e.bodyId); } catch (...) { continue; }
+            if (body.IsNull()) continue;
+            TopoDS_Face wall = TopoDS::Face(e.shape);
+            TopoDS_Shape voidSolid; gp_Vec entryN; bool pocket = false;
+            if (MoveHoleOp::buildVoid(body, wall, voidSolid, entryN, pocket)) {
+                // Gizmo set-up at the hole: plane = entry face, translate only.
+                m_moveHoleMode = true;
+                m_moveHoleWall = wall;
+                m_moveFaceBodyId = e.bodyId;
+                m_moveFacePreviousShape = body;
+                m_moveFaceN = glm::normalize(glm::vec3(entryN.X(), entryN.Y(), entryN.Z()));
+                try {
+                    GProp_GProps gp; BRepGProp::SurfaceProperties(wall, gp);
+                    gp_Pnt c = gp.CentreOfMass();
+                    m_moveFaceP0 = m_moveFacePivot = glm::vec3(c.X(), c.Y(), c.Z());
+                } catch (...) { m_moveFaceP0 = m_moveFacePivot = glm::vec3(0.0f); }
+                glm::vec3 N = m_moveFaceN;
+                glm::vec3 ref = (std::abs(N.x) < 0.9f) ? glm::vec3(1,0,0) : glm::vec3(0,1,0);
+                glm::vec3 A = ref - glm::dot(ref, N) * N;
+                if (glm::length(A) < 1e-5f) { ref = glm::vec3(0,0,1); A = ref - glm::dot(ref, N) * N; }
+                m_moveFaceAxisA = glm::normalize(A);
+                m_moveFaceAxisB = glm::normalize(glm::cross(N, m_moveFaceAxisA));
+                m_moveFaceGrab = -1;
+                m_moveFaceHalfExtent = 1.0f;
+                m_moveFaceActive = true;
+                return;
+            }
+            if (pocket) {
+                showToast("Moving a pocket isn't supported yet \xE2\x80\x94 only "
+                          "through-holes.");
+                return;
+            }
+        }
+    }
 
     // Sort the selection: the first PLANAR face slides (the moving face); every
     // OTHER selected face is a candidate hole WALL (move that hole as a straight
@@ -1900,6 +1946,27 @@ bool Application::faceXformNontrivial() const {
 
 void Application::updateMoveFace() {
     if (!m_moveFaceActive || m_moveFaceBodyId < 0) return;
+
+    // Hole-move preview: re-cut the hole at the dragged position each frame.
+    if (m_moveHoleMode) {
+        m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
+        m_meshesDirty = true;
+        gp_Vec mv(m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z);
+        if (mv.Magnitude() < 1e-9) return;
+        try {
+            MoveHoleOp op;
+            op.setBody(m_moveFaceBodyId);
+            op.setSeedWall(m_moveHoleWall);
+            op.setMoveVector(mv);
+            if (!op.execute(*m_document))
+                m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
+            m_meshesDirty = true;
+        } catch (...) {
+            m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
+        }
+        return;
+    }
+
     // Always preview from the original snapshot so transforms don't compound.
     m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
     m_meshesDirty = true;
@@ -1922,6 +1989,29 @@ void Application::updateMoveFace() {
 
 void Application::commitMoveFace() {
     if (!m_moveFaceActive) { return; }
+
+    // Hole-move commit: restore the snapshot, then push one MoveHoleOp.
+    if (m_moveHoleMode) {
+        if (m_moveFaceBodyId >= 0 && !m_moveFacePreviousShape.IsNull())
+            m_document->updateBody(m_moveFaceBodyId, m_moveFacePreviousShape);
+        gp_Vec mv(m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z);
+        if (mv.Magnitude() > 1e-9 && m_moveFaceBodyId >= 0 && !m_moveHoleWall.IsNull()) {
+            auto op = std::make_unique<MoveHoleOp>();
+            op->setBody(m_moveFaceBodyId);
+            op->setSeedWall(m_moveHoleWall);
+            op->setMoveVector(mv);
+            if (m_history->pushOperation(std::move(op), *m_document))
+                std::fprintf(stdout, "Hole move committed\n");
+        }
+        // The wall face identity changed; clear selection rather than chase it.
+        if (m_selection) m_selection->clear();
+        m_moveHoleMode = false;
+        m_moveFaceActive = false;
+        m_moveHoleWall.Nullify();
+        m_meshesDirty = true;
+        return;
+    }
+
     // Restore the original body + sketch planes before the real op runs (it
     // snapshots the body from the doc and re-applies the slide atomically).
     if (m_moveFaceBodyId >= 0 && !m_moveFacePreviousShape.IsNull())
@@ -1975,6 +2065,8 @@ void Application::commitMoveFace() {
     m_moveFaceSketchIds.clear();
     m_moveFaceSketchPlanes0.clear();
     m_moveFaceActive = false;
+    m_moveHoleMode = false;
+    m_moveHoleWall.Nullify();
     m_moveFaceBodyId = -1;
     m_moveFaceFace.Nullify();
     m_moveFacePreviousShape.Nullify();
@@ -1997,6 +2089,8 @@ void Application::cancelMoveFace() {
     m_moveFaceSketchIds.clear();
     m_moveFaceSketchPlanes0.clear();
     m_moveFaceActive = false;
+    m_moveHoleMode = false;
+    m_moveHoleWall.Nullify();
     m_moveFaceBodyId = -1;
     m_moveFaceFace.Nullify();
     m_moveFacePreviousShape.Nullify();
