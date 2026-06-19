@@ -71,7 +71,13 @@ public:
     // the current index (e.g. one suspended by a failed recompute) rolls
     // forward to it instead of refusing; a successful edit also auto-retries
     // a failure-suspended tail.
-    bool editStep(int index, Document& doc);
+    //
+    // `transactional`: snapshot the whole model (bodies + sketches) before
+    // replaying and, if any downstream op fails, restore it completely so the
+    // edit either fully applies or leaves the model exactly as it was — never a
+    // half-built state. Pass true from one-shot Apply-Changes paths; leave false
+    // for per-frame previews (the snapshot copy isn't free).
+    bool editStep(int index, Document& doc, bool transactional = false);
 
     // Index of the step that most recently failed to recompute during an
     // editStep replay / redo (its result vanished from the viewport and it

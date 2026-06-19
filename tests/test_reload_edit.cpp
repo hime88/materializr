@@ -345,6 +345,30 @@ TEST(SketchHistory, MeaningfulDescriptions) {
               "Arc R8.0 mm");
 }
 
+// A transactional editStep whose replay fails must restore the model to its
+// last-good state — never leave a half-built body. (The fix for "editing a
+// circle dropped my hollow and fillets and left a broken cube".)
+TEST(EditStep, TransactionalRevertOnFailure) {
+    Document d;
+    int b = d.addBody(boxAt(0,0,0), "box");
+    History H;
+    auto f = std::make_unique<FilletOp>();
+    f->setBody(b);
+    f->setEdges(firstEdge(d.getBody(b)));
+    f->setRadius(1.0);
+    ASSERT_TRUE(H.pushOperation(std::move(f), d));   // valid filleted body
+    const double vGood = volume(d, b);
+
+    // Edit the fillet to a radius the box can't carry, then replay transactionally.
+    auto* fop = const_cast<FilletOp*>(dynamic_cast<const FilletOp*>(H.getStep(0)));
+    fop->setRadius(1000.0);
+    bool ok = H.editStep(0, d, /*transactional=*/true);
+    EXPECT_FALSE(ok) << "an impossible fillet radius must fail the replay";
+    EXPECT_NEAR(volume(d, b), vGood, 1e-6)
+        << "model restored to the last-good filleted state, not left un-filleted/broken";
+    EXPECT_EQ(d.getAllBodyIds().size(), 1u);
+}
+
 // A circle added without a constraint is diameter-editable from history: the
 // panel writes the new radius to the after-snapshot, and execute() pushes the
 // resized sketch onto the live one (centre unchanged).

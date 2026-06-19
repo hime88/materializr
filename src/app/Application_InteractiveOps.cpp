@@ -2292,61 +2292,51 @@ void Application::commitLoft() {
 void Application::cascadeFromSketchEdit(int sketchId) {
     if (sketchId < 0 || !m_history || !m_document) return;
     int n = m_history->stepCount();
-    int matched = 0, rebuilt = 0, executed = 0, anyOps = 0, reloadedNoCast = 0;
-    bool anyChanged = false;
 
-    // Diagnostic: snapshot body ids before cascade so we can see exactly
-    // which bodies got added / replaced. If the count grows, we know a
-    // duplicate body was created instead of the existing one being updated.
-    auto bodyIdsBefore = m_document->getAllBodyIds();
-
+    // Re-derive the profile of every sketch-sourced extrude / push-pull that
+    // references the edited sketch, and remember the EARLIEST such step. We do
+    // NOT execute them in isolation here — that used to overwrite the body with
+    // just the bare extrude, discarding everything downstream (hollows,
+    // fillets) and leaving a "cube with N holes". Instead we replay the whole
+    // chain from the earliest affected step below.
+    int earliest = -1, matched = 0;
     for (int i = 0; i < n; ++i) {
         Operation* op = const_cast<Operation*>(m_history->getStep(i));
         if (!op || !op->isEnabled()) continue;
-        ++anyOps;
-        // Diagnostic: a reloaded Extrude/PushPull shows up as ReplayOp, not
-        // a real instance — that's the "post-load loses sketch link"
-        // limitation we'll fix later via op-specific serialization.
-        const std::string tid = op->typeId();
-        if ((tid == "extrude" || tid == "pushpull") &&
-            !dynamic_cast<ExtrudeOp*>(op) &&
-            !dynamic_cast<PushPullOp*>(op)) ++reloadedNoCast;
-
         if (auto* ext = dynamic_cast<ExtrudeOp*>(op)) {
             if (ext->getSketchId() != sketchId) continue;
             ++matched;
-            if (!ext->rebuildProfileFromSketch(*m_document)) continue;
-            ++rebuilt;
-            if (ext->execute(*m_document)) { ++executed; anyChanged = true; }
+            if (ext->rebuildProfileFromSketch(*m_document) && earliest < 0) earliest = i;
         } else if (auto* pp = dynamic_cast<PushPullOp*>(op)) {
-            // PushPullOp can hold multiple targets, each with its own
-            // sketch source — only re-execute if at least one references
-            // the edited sketch.
             bool refs = false;
             int tc = pp->targetCount();
-            for (int t = 0; t < tc; ++t) {
+            for (int t = 0; t < tc; ++t)
                 if (pp->getSketchIdAt(t) == sketchId) { refs = true; break; }
-            }
             if (!refs) continue;
             ++matched;
-            if (!pp->rebuildProfileFromSketch(*m_document, sketchId)) continue;
-            ++rebuilt;
-            if (pp->execute(*m_document)) { ++executed; anyChanged = true; }
+            if (pp->rebuildProfileFromSketch(*m_document, sketchId) && earliest < 0)
+                earliest = i;
         }
     }
-    auto bodyIdsAfter = m_document->getAllBodyIds();
-    int added = 0;
-    for (int id : bodyIdsAfter) {
-        bool wasThere = false;
-        for (int b : bodyIdsBefore) if (b == id) { wasThere = true; break; }
-        if (!wasThere) ++added;
+    if (earliest < 0) {
+        std::fprintf(stderr, "[Cascade] sketchId=%d: %d matched, none re-derivable\n",
+                     sketchId, matched);
+        return;
     }
-    std::fprintf(stderr,
-        "[Cascade] sketchId=%d  steps=%d enabled=%d  reloadedNoCast=%d  "
-        "matched=%d  rebuilt=%d  executed=%d  bodies_before=%zu bodies_after=%zu added=%d\n",
-        sketchId, n, anyOps, reloadedNoCast, matched, rebuilt, executed,
-        bodyIdsBefore.size(), bodyIdsAfter.size(), added);
-    if (anyChanged) m_meshesDirty = true;
+
+    // Replay the chain from the earliest re-derived op forward, TRANSACTIONALLY:
+    // the new profiles take effect and ALL downstream ops re-run on the updated
+    // geometry. If any can't follow (e.g. a fillet whose edge no longer exists
+    // after the change), the entire model is restored — never half-built.
+    bool ok = m_history->editStep(earliest, *m_document, /*transactional=*/true);
+    std::fprintf(stderr, "[Cascade] sketchId=%d replay from step %d: %s\n",
+                 sketchId, earliest, ok ? "applied" : "reverted");
+    if (!ok) {
+        showToast("Couldn't update the model for that sketch change \xE2\x80\x94 a "
+                  "downstream feature (e.g. a fillet) couldn't follow it, so the "
+                  "model was left unchanged.");
+    }
+    m_meshesDirty = true;
 }
 
 void Application::cancelLoft() {

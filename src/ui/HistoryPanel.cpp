@@ -293,15 +293,19 @@ bool HistoryPanel::render() {
             ImGui::EndChild();
 
             if (ImGui::Button("Apply Changes", ImVec2(-1, 0)) || enterInProps) {
-                m_history->editStep(m_editingStep, *m_document);
+                // Transactional: a failed replay restores the model wholesale
+                // rather than leaving it half-built.
+                bool applied = m_history->editStep(m_editingStep, *m_document,
+                                                   /*transactional=*/true);
                 modified = true;
                 // If the edited step is a SketchEditOp, publish a cascade
                 // event so any downstream Extrude / Push-Pull that consumed
                 // this sketch re-runs with the new constraint values. We
                 // publish from here (not from inside editStep) so generic
                 // history shuffles — undo/redo, push/pull drag previews —
-                // don't trigger spurious cascades.
-                if (m_eventBus) {
+                // don't trigger spurious cascades. Skip if the edit didn't
+                // apply (model was reverted) — cascading a reverted edit is wrong.
+                if (applied && m_eventBus) {
                     auto* sketchOp = dynamic_cast<const materializr::SketchEditOp*>(op);
                     if (sketchOp) {
                         auto target = sketchOp->getTarget();

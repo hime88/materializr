@@ -1,7 +1,10 @@
 #include "History.h"
 #include "EventBus.h"
 #include "Events.h"
+#include "../modeling/Sketch.h"
 #include <cstdio>
+#include <map>
+#include <set>
 
 History::History() = default;
 
@@ -136,10 +139,32 @@ const Operation* History::getStep(int index) const {
     return m_operations[index].get();
 }
 
-bool History::editStep(int index, Document& doc) {
+bool History::editStep(int index, Document& doc, bool transactional) {
     if (index < 0 || index >= static_cast<int>(m_operations.size())) {
         return false;
     }
+
+    // Transactional safety: snapshot the whole model up front so a replay that
+    // fails partway (a downstream fillet whose edges can't re-bind after the
+    // edited geometry moved, etc.) can be fully reverted — an edit must never
+    // strand a half-built model. TopoDS_Shape is a cheap handle; sketches copy
+    // by value. Only done when asked (one-shot Apply paths), not per preview frame.
+    const int savedIndex = m_currentIndex;
+    std::map<int, TopoDS_Shape> bodySnap;
+    std::map<int, materializr::Sketch> sketchSnap;
+    if (transactional) {
+        for (int id : doc.getAllBodyIds()) bodySnap[id] = doc.getBody(id);
+        for (int sid : doc.getAllSketchIds())
+            if (auto sk = doc.getSketch(sid)) sketchSnap.emplace(sid, *sk);
+    }
+    auto restoreSnapshot = [&]() {
+        std::set<int> want;
+        for (const auto& [id, shp] : bodySnap) { doc.putBody(id, shp); want.insert(id); }
+        for (int id : doc.getAllBodyIds()) if (!want.count(id)) doc.removeBody(id);
+        for (const auto& [sid, sk] : sketchSnap)
+            if (auto live = doc.getSketch(sid)) *live = sk;
+        m_currentIndex = savedIndex;
+    };
 
     int limit = m_currentIndex;
     if (m_breakpoint >= 0 && m_breakpoint < limit) {
@@ -155,6 +180,7 @@ bool History::editStep(int index, Document& doc) {
             Operation* op = m_operations[i].get();
             if (op->isEnabled()) {
                 if (!op->execute(doc)) {
+                    if (transactional) { restoreSnapshot(); return false; }
                     m_failedReplayAt = i;
                     return false;
                 }
@@ -195,6 +221,7 @@ bool History::editStep(int index, Document& doc) {
                     editRejected = true;
                     continue;
                 }
+                if (transactional) { restoreSnapshot(); return false; }
                 m_currentIndex = i - 1;
                 m_failedReplayAt = i;
                 return false;

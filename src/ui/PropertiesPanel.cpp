@@ -82,7 +82,10 @@ bool PropertiesPanel::render() {
 
             if (ImGui::Button("Apply Changes", ImVec2(-1, 0)) || enterCommits) {
                 if (m_document) {
-                    m_history->editStep(m_editingStep, *m_document);
+                    // Transactional: a failed replay restores the whole model
+                    // rather than leaving it half-built.
+                    m_history->editStep(m_editingStep, *m_document,
+                                        /*transactional=*/true);
                     modified = true;
                 }
             }
