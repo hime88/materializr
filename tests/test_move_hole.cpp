@@ -31,6 +31,12 @@ double volume(const TopoDS_Shape& s) {
     GProp_GProps g; BRepGProp::VolumeProperties(s, g); return g.Mass();
 }
 
+int countFaces(const TopoDS_Shape& s) {
+    int n = 0;
+    for (TopExp_Explorer ex(s, TopAbs_FACE); ex.More(); ex.Next()) ++n;
+    return n;
+}
+
 // IN = inside material, OUT = empty (hole/outside).
 bool isSolidAt(const TopoDS_Shape& s, double x, double y, double z) {
     BRepClass3d_SolidClassifier cl(s, gp_Pnt(x, y, z), 1e-7);
@@ -77,6 +83,7 @@ TEST(MoveHole, RoundThroughHoleRelocatesAndConservesVolume) {
     Document doc;
     int id = doc.addBody(part, "part");
     double v0 = volume(part);
+    int f0 = countFaces(part);
     ASSERT_TRUE(isSolidAt(part, 11,5,5)) << "new spot starts solid";
     ASSERT_FALSE(isSolidAt(part, 5,5,5)) << "old spot starts void";
 
@@ -94,6 +101,8 @@ TEST(MoveHole, RoundThroughHoleRelocatesAndConservesVolume) {
     EXPECT_NEAR(volume(moved), v0, 1e-6) << "same-size hole, just moved";
     EXPECT_TRUE(isSolidAt(moved, 5,5,5))  << "old hole filled solid";
     EXPECT_FALSE(isSolidAt(moved, 11,5,5)) << "new hole is void";
+    EXPECT_EQ(countFaces(moved), f0)
+        << "no ghost face/edge left where the hole was (unified)";
 }
 
 TEST(MoveHole, SquareThroughHoleRelocates) {
@@ -105,6 +114,7 @@ TEST(MoveHole, SquareThroughHoleRelocates) {
     Document doc;
     int id = doc.addBody(part, "part");
     double v0 = volume(part);
+    int f0 = countFaces(part);
     ASSERT_FALSE(isSolidAt(part, 6,6,5)) << "old square hole is void";
 
     TopoDS_Face wall = findInteriorWall(doc.getBody(id), 6, 6);
@@ -120,6 +130,7 @@ TEST(MoveHole, SquareThroughHoleRelocates) {
     EXPECT_NEAR(volume(moved), v0, 1e-6);
     EXPECT_TRUE(isSolidAt(moved, 6,6,5))   << "old square hole filled";
     EXPECT_FALSE(isSolidAt(moved, 12,6,5)) << "new square hole is void";
+    EXPECT_EQ(countFaces(moved), f0) << "no ghost face/edge left behind";
 }
 
 TEST(MoveHole, PocketIsRefused) {

@@ -9,6 +9,7 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Geom_Surface.hxx>
 #include <Geom_Plane.hxx>
 #include <TopExp.hxx>
@@ -179,6 +180,18 @@ bool MoveHoleOp::execute(Document& doc) {
         if (!cut.IsDone() || cut.Shape().IsNull()) return false;
 
         TopoDS_Shape result = cut.Shape();
+        // The fill-fuse leaves the patched disk as a separate face coplanar with
+        // the original face, with a ghost circular edge between them. Merge same-
+        // surface faces and drop the redundant seam so the old location looks
+        // untouched (also tidies the new hole's edges).
+        try {
+            ShapeUpgrade_UnifySameDomain unify(result, Standard_True /*edges*/,
+                                               Standard_True /*faces*/,
+                                               Standard_False /*concat bsplines*/);
+            unify.Build();
+            if (!unify.Shape().IsNull()) result = unify.Shape();
+        } catch (...) { /* keep the un-unified result rather than fail the move */ }
+
         if (!BRepCheck_Analyzer(result).IsValid()) {
             std::fprintf(stderr, "[MoveHole] result invalid\n");
             return false;
