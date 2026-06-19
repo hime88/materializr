@@ -18,6 +18,9 @@
 #include "ResizeCylindricalOp.h"
 #include "ThreadOp.h"
 #include "PrimitiveOp.h"
+#include "BooleanOp.h"
+#include "DeleteOp.h"
+#include "TransformOp.h"
 
 namespace OperationFactory {
 
@@ -51,6 +54,13 @@ std::unique_ptr<Operation> create(const std::string& typeId) {
     if (typeId == "project_sketch") return std::make_unique<ProjectSketchOp>();
     if (typeId == "resize_cylindrical") return std::make_unique<ResizeCylindricalOp>();
     if (typeId == "thread")  return std::make_unique<ThreadOp>(); // pure derived geometry
+    //   - body-id-referencing ops: target/tool/body ids (+ mode) live in the
+    //     blob; rehydrate restores the pre-step shapes from the step diff so an
+    //     editStep replays them as REAL ops. Without this they reload as baked
+    //     ReplayOps that overwrite any edit made to an upstream step.
+    if (typeId == "boolean") return std::make_unique<BooleanOp>();
+    if (typeId == "delete")  return std::make_unique<DeleteOp>();
+    if (typeId == "transform") return std::make_unique<TransformOp>();
     // Parametric primitives: kind + extents/radii live in the blob; the body
     // id is replayed via rehydrateFromReload's `created` list.
     if (typeId == "primitive") return std::make_unique<materializr::PrimitiveOp>();

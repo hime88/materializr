@@ -3,6 +3,7 @@
 #include "../core/Document.h"
 #include <TopoDS_Shape.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Trsf.hxx>
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,8 +38,24 @@ public:
     void renderProperties() override;
     std::string typeId() const override { return "transform"; }
     OperationDiff captureDiff() const override;
+    // A transform references its body by id and is a pure gp_Trsf, so it reloads
+    // as a real, editable op that re-applies to the LIVE body — otherwise a
+    // baked transform re-slams its stale result over any edit made to an
+    // upstream step (e.g. a fillet on the same body). New files serialise the
+    // typed params; legacy files (no blob) reconstruct the rigid transform from
+    // the step's before/after snapshots via rigidTrsfBetween().
+    std::string serializeParams() const override;
+    bool deserializeParams(const std::string& blob) override;
+    bool rehydrateFromReload(const ReloadState& state, Document& doc) override;
+    // Recover the rigid (translate/rotate) transform mapping `before` onto
+    // `after` (congruent shapes). Returns false if not recoverable (degenerate
+    // vertices, or a non-rigid change such as scale).
+    static bool rigidTrsfBetween(const TopoDS_Shape& before,
+                                 const TopoDS_Shape& after, gp_Trsf& out);
 
 private:
+    bool m_useRawTrsf = false;  // reloaded legacy step: apply m_rawTrsf directly
+    gp_Trsf m_rawTrsf;
     int m_bodyId = -1;
     TransformType m_type = TransformType::Translate;
     double m_dx = 0, m_dy = 0, m_dz = 0;

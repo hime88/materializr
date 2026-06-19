@@ -47,8 +47,11 @@ public:
     }
 
 private:
-    static void restore(Document& doc, const BodyState& state,
-                        bool removeUnlisted);
+    // Apply only the body changes between two snapshots (created/modified/
+    // deleted), leaving bodies that ride along unchanged alone — so replaying a
+    // reloaded step doesn't reset edits made to an upstream step's bodies.
+    static void applyDelta(Document& doc, const BodyState& from,
+                           const BodyState& to);
 
     std::string m_typeId, m_name, m_description;
     BodyState m_before, m_after;

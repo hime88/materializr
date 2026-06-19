@@ -811,6 +811,12 @@ private:
     // commit path then pushes a fresh FilletOp / ChamferOp. >=0 means "editing
     // existing" — commit updates the op's parameter and calls editStep().
     int m_edgeOpEditingIndex = -1;
+    // The body whose fillet/chamfer FACE was clicked to start an edit. Used to
+    // detect a baked feature: if that body's geometry doesn't change after the
+    // edit, the operation drives a different/deleted body and the clicked
+    // geometry has no editable op behind it — we tell the user instead of
+    // silently doing nothing.
+    int m_edgeOpPickedBodyId = -1;
     // The radius/distance the op had when the edit began. Cancel (and the
     // confirm-at-zero "treat as cancel" path) restores it before replaying,
     // since the edit-mode live preview mutates the real op's parameter.

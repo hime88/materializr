@@ -10,6 +10,9 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepGProp_Face.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <Bnd_Box.hxx>
@@ -128,6 +131,46 @@ bool PushPullOp::execute(Document& doc) {
     if (m_targets.empty() || std::abs(m_distance) < 1e-6) return false;
 
     std::unordered_set<int> savedBodies;
+
+    // Subtract `prism` from every VISIBLE body it intersects, except `excludeId`
+    // (the source body, already handled by the normal path). Each body cut
+    // separately; hidden bodies skipped; invalid or no-overlap results skipped.
+    // Returns how many bodies were actually cut. This is what makes a push/pull
+    // cut go THROUGH everything in its path, not just the sketch's source body.
+    auto cutVisibleBodies = [&](const TopoDS_Shape& prism, int excludeId) -> int {
+        int n = 0;
+        Bnd_Box prismBox; BRepBndLib::Add(prism, prismBox);
+        for (int bid : doc.getAllBodyIds()) {
+            if (bid == excludeId) continue;
+            if (!doc.isBodyVisible(bid)) continue;          // respect hidden
+            TopoDS_Shape body;
+            try { body = doc.getBody(bid); } catch (...) { continue; }
+            if (body.IsNull()) continue;
+            Bnd_Box bbox; BRepBndLib::Add(body, bbox);
+            if (prismBox.IsOut(bbox)) continue;             // cheap disjoint reject
+            try {
+                BRepAlgoAPI_Cut cut(body, prism); cut.Build();
+                if (!cut.IsDone()) continue;
+                TopoDS_Shape result = cut.Shape();
+                if (result.IsNull() || !BRepCheck_Analyzer(result).IsValid()) continue;
+                GProp_GProps gb; BRepGProp::VolumeProperties(body, gb);
+                GProp_GProps gr; BRepGProp::VolumeProperties(result, gr);
+                if (gb.Mass() - gr.Mass() < 1e-7) continue; // no real overlap
+                try {
+                    ShapeUpgrade_UnifySameDomain u(result, true, true, true);
+                    u.Build();
+                    if (!u.Shape().IsNull()) result = u.Shape();
+                } catch (...) {}
+                if (!savedBodies.count(bid)) {
+                    m_previousBodies.emplace_back(bid, body);
+                    savedBodies.insert(bid);
+                }
+                doc.updateBody(bid, result);
+                ++n;
+            } catch (...) { continue; }
+        }
+        return n;
+    };
 
     for (const auto& tgt : m_targets) {
         if (tgt.profile.IsNull()) continue;
@@ -257,16 +300,30 @@ bool PushPullOp::execute(Document& doc) {
                 doc.updateBody(tgt.sourceBodyId, result);
             } catch (...) { continue; }
         } else {
-            // Free-floating: create a new body. On redo, m_reuseBodyIds holds
-            // the ids from the previous execute so addOrPutBody picks the
-            // same one back up (Document's tombstone restore then brings the
-            // folder/colour/visibility/name back).
-            int id = (m_reuseIdx < m_reuseBodyIds.size())
-                       ? m_reuseBodyIds[m_reuseIdx] : -1;
-            doc.addOrPutBody(id, prism, m_distance > 0 ? "Push" : "Pull");
-            m_createdBodyIds.push_back(id);
-            ++m_reuseIdx;
+            // Free-floating prism. When cut-intersecting is on, subtract it from
+            // every visible body it overlaps; if it hits nothing (or every cut is
+            // a no-op / invalid), fall back to creating a new body (prior
+            // behaviour).
+            bool cutAny = m_cutIntersecting && (cutVisibleBodies(prism, -1) > 0);
+            if (!cutAny) {
+                // Free-floating: create a new body. On redo, m_reuseBodyIds holds
+                // the ids from the previous execute so addOrPutBody picks the
+                // same one back up (Document's tombstone restore then brings the
+                // folder/colour/visibility/name back).
+                int id = (m_reuseIdx < m_reuseBodyIds.size())
+                           ? m_reuseBodyIds[m_reuseIdx] : -1;
+                doc.addOrPutBody(id, prism, m_distance > 0 ? "Push" : "Pull");
+                m_createdBodyIds.push_back(id);
+                ++m_reuseIdx;
+            }
         }
+
+        // Attached CUT that runs through the model: after the source body was
+        // cut above, also remove the prism from every OTHER visible body in its
+        // path (hidden bodies skipped). Only for cut direction — an extrude
+        // (add) still only affects its source body.
+        if (m_cutIntersecting && tgt.sourceBodyId >= 0 && m_distance < 0.0)
+            cutVisibleBodies(prism, tgt.sourceBodyId);
     }
 
     return !m_previousBodies.empty() || !m_createdBodyIds.empty();
@@ -326,8 +383,8 @@ std::string PushPullOp::serializeParams() const {
     // persistent topological naming to survive a reload.
     std::string blob;
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "dist=%.6f;sym=%d;count=%d",
-                  m_distance, m_symmetric ? 1 : 0,
+    std::snprintf(buf, sizeof(buf), "dist=%.6f;sym=%d;cut=%d;count=%d",
+                  m_distance, m_symmetric ? 1 : 0, m_cutIntersecting ? 1 : 0,
                   static_cast<int>(m_targets.size()));
     blob += buf;
     for (size_t i = 0; i < m_targets.size(); ++i) {
@@ -371,6 +428,7 @@ bool PushPullOp::deserializeParams(const std::string& blob) {
         std::string val = blob.substr(eq + 1, end - eq - 1);
         if      (key == "dist")  { m_distance = std::atof(val.c_str()); any = true; }
         else if (key == "sym")   { m_symmetric = std::atoi(val.c_str()) != 0; any = true; }
+        else if (key == "cut")   { m_cutIntersecting = std::atoi(val.c_str()) != 0; any = true; }
         else if (key == "count") { count = std::atoi(val.c_str()); any = true; }
         pos = end + 1;
     }

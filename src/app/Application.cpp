@@ -2028,12 +2028,16 @@ void Application::handleToolAction(int action) {
             // Find the FilletOp / ChamferOp in history that owns the picked face,
             // then re-open it for editing with the existing radius / distance.
             TopoDS_Shape pickedFace;
+            int pickedBodyId = -1;
             for (const auto& e : m_selection->getSelection()) {
                 if (e.type == SelectionType::Face && !e.shape.IsNull()) {
-                    pickedFace = e.shape; break;
+                    pickedFace = e.shape; pickedBodyId = e.bodyId; break;
                 }
             }
             if (pickedFace.IsNull()) break;
+            // Remember which body's face was clicked — the edit path uses it to
+            // detect a baked feature (clicked body doesn't change after edit).
+            m_edgeOpPickedBodyId = pickedBodyId;
             const auto& ops = m_history->operations();
             for (int i = 0; i < static_cast<int>(ops.size()); ++i) {
                 const auto& op = ops[i];
@@ -2773,6 +2777,13 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist) {
     m_history->clear();
     if (!hist.present) return;
 
+    // Health report: count steps that reload as baked (non-editable) ReplayOps.
+    // A body-affecting baked step means geometry the user can see but can't edit
+    // (e.g. frozen by an older save) — surfaced after the loop so the parametric
+    // state of a project is visible up front instead of discovered mid-edit.
+    int bakedBodySteps = 0;     // baked steps that change/delete a body
+    int bakedSketchSteps = 0;   // baked sketch-only steps (benign)
+
     // Accumulate full states forward from the initial snapshot, giving each
     // reloaded step a ReplayOp that knows its complete before/after body set.
     std::map<int, TopoDS_Shape> running;
@@ -2817,13 +2828,56 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist) {
         if (st.typeId == "sketchedit" && !st.params.empty()) {
             op = ProjectIO::rehydrateSketchEditOp(st.params, *m_document);
         }
+
+        // Backward-compat: boolean/delete steps written before they serialised
+        // params have an empty blob, so they'd reload as baked ReplayOps and
+        // silently overwrite any edit made to an UPSTREAM step (e.g. a fillet
+        // feeding a union). Synthesise a params blob from the step's body diff
+        // — target = the modified body, tool/victim = the deleted body — plus
+        // the boolean mode parsed from the saved description. New projects carry
+        // real params and skip this path.
+        std::string params = st.params;
+        if (params.empty()) {
+            char buf[320];
+            if (st.typeId == "boolean" && reload.modifiedBefore.size() == 1 &&
+                reload.deletedBefore.size() == 1) {
+                int mode = st.description.find("Subtract")  != std::string::npos ? 1
+                         : st.description.find("Intersect") != std::string::npos ? 2 : 0;
+                std::snprintf(buf, sizeof(buf), "target=%d;tool=%d;mode=%d",
+                              reload.modifiedBefore[0].first,
+                              reload.deletedBefore[0].first, mode);
+                params = buf;
+            } else if (st.typeId == "delete" && reload.deletedBefore.size() == 1) {
+                std::snprintf(buf, sizeof(buf), "body=%d",
+                              reload.deletedBefore[0].first);
+                params = buf;
+            } else if (st.typeId == "transform" &&
+                       reload.modifiedBefore.size() == 1 &&
+                       reload.modifiedAfter.size() == 1) {
+                // Recover the rigid transform from the before/after snapshots so
+                // the step reloads as a real op that re-applies to the LIVE body
+                // (instead of a baked ReplayOp that overwrites upstream edits).
+                gp_Trsf t;
+                if (TransformOp::rigidTrsfBetween(reload.modifiedBefore[0].second,
+                                                  reload.modifiedAfter[0].second, t)) {
+                    std::snprintf(buf, sizeof(buf),
+                        "body=%d;raw=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
+                        reload.modifiedBefore[0].first,
+                        t.Value(1,1), t.Value(1,2), t.Value(1,3), t.Value(1,4),
+                        t.Value(2,1), t.Value(2,2), t.Value(2,3), t.Value(2,4),
+                        t.Value(3,1), t.Value(3,2), t.Value(3,3), t.Value(3,4));
+                    params = buf;
+                }
+            }
+        }
+
         // Generic factory path: build the real op from typeId, restore its
         // parameters, then its post-execution state. Only ops that opt into
         // rehydrateFromReload() (returning true) come back editable; everyone
         // else falls through to the baked ReplayOp below, unchanged.
-        if (!op && !st.params.empty()) {
+        if (!op && !params.empty()) {
             auto candidate = OperationFactory::create(st.typeId);
-            if (candidate && candidate->deserializeParams(st.params) &&
+            if (candidate && candidate->deserializeParams(params) &&
                 candidate->rehydrateFromReload(reload, *m_document)) {
                 op = std::move(candidate);
                 std::fprintf(stderr, "[Reload] step '%s' (%s): rehydrated as "
@@ -2833,10 +2887,12 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist) {
             }
         }
         if (!op) {
+            const bool affectsBody = !st.changed.empty() || !st.deleted.empty();
+            if (affectsBody) ++bakedBodySteps; else ++bakedSketchSteps;
             std::fprintf(stderr, "[Reload] step '%s' (%s): baked ReplayOp "
-                                 "(params=%s)\n",
+                                 "(params=%s, affectsBody=%d)\n",
                          st.name.c_str(), st.typeId.c_str(),
-                         st.params.empty() ? "none" : "present");
+                         st.params.empty() ? "none" : "present", (int)affectsBody);
             op = std::make_unique<ReplayOp>(
                 st.typeId, st.name, st.description,
                 std::move(before), std::move(after));
@@ -2858,6 +2914,32 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist) {
                              std::chrono::hours{24});
         }
         m_history->pushExecuted(std::move(op));
+    }
+
+    // Health report. Two sources of non-editable geometry:
+    //  • baked body-affecting STEPS (an op that didn't round-trip), and
+    //  • base bodies in the INITIAL STATE — geometry with no construction
+    //    history at all (imported, or frozen into the base by an older save's
+    //    history-loss bug). Features on those bodies (e.g. the fillet you see)
+    //    have no operation behind them and can't be edited. This is the real
+    //    cause behind "the fillet won't change", so surface it honestly.
+    const int baseBodies = static_cast<int>(hist.initialState.size());
+    std::fprintf(stderr,
+        "[Reload] health: %d steps, %d baked body-features, %d baked sketch-edits, "
+        "%d base bodies with NO editable history\n",
+        static_cast<int>(hist.steps.size()), bakedBodySteps, bakedSketchSteps,
+        baseBodies);
+    const int nonEditable = bakedBodySteps + baseBodies;
+    if (nonEditable > 0) {
+        std::string msg;
+        if (baseBodies > 0)
+            msg = std::to_string(baseBodies) + " body(ies) in this project have no "
+                  "construction history (base or frozen geometry). Fillets/features "
+                  "on them can't be edited \xE2\x80\x94 re-apply them to make them adjustable.";
+        else
+            msg = std::to_string(bakedBodySteps) + " feature(s) are baked from an "
+                  "older save and can't be edited \xE2\x80\x94 re-apply them to adjust.";
+        showToast(msg);
     }
 }
 

@@ -1,4 +1,6 @@
 #include "DeleteOp.h"
+#include <cstdio>
+#include <cstdlib>
 #include <imgui.h>
 
 DeleteOp::DeleteOp() = default;
@@ -33,13 +35,12 @@ bool DeleteOp::undo(Document& doc) {
     }
 
     try {
-        // Re-add the body with its original name
-        int newId = doc.addBody(m_deletedShape, m_deletedName);
-        doc.setBodyVisible(newId, m_wasVisible);
-
-        // Update our stored body ID to reflect the re-added body
-        m_bodyId = newId;
-
+        // Restore the body under its ORIGINAL id (not a fresh addBody id) so an
+        // editStep replay can roll this delete back and any step that references
+        // the body by id still resolves it. putBody also pulls folder/colour
+        // metadata back from the tombstone.
+        doc.putBody(m_bodyId, m_deletedShape, m_deletedName);
+        doc.setBodyVisible(m_bodyId, m_wasVisible);
         return true;
     } catch (...) {
         return false;
@@ -69,4 +70,36 @@ OperationDiff DeleteOp::captureDiff() const {
     if (m_bodyId >= 0 && !m_deletedShape.IsNull())
         d.deletedBefore.push_back({m_bodyId, m_deletedShape});
     return d;
+}
+
+std::string DeleteOp::serializeParams() const {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "body=%d", m_bodyId);
+    return buf;
+}
+
+bool DeleteOp::deserializeParams(const std::string& blob) {
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string key = blob.substr(pos, eq - pos);
+        std::string val = blob.substr(eq + 1, end - eq - 1);
+        if (key == "body") { m_bodyId = std::atoi(val.c_str()); any = true; }
+        pos = end + 1;
+    }
+    return any;
+}
+
+bool DeleteOp::rehydrateFromReload(const ReloadState& state, Document& /*doc*/) {
+    if (m_bodyId < 0) return false;
+    // Recover the deleted body's shape from the saved step diff so undo() can
+    // put it back (under its original id) during an editStep replay.
+    m_deletedShape.Nullify();
+    for (const auto& [id, shp] : state.deletedBefore)
+        if (id == m_bodyId) { m_deletedShape = shp; break; }
+    return !m_deletedShape.IsNull();
 }

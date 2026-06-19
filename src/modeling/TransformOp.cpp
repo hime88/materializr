@@ -8,10 +8,18 @@
 #include <gp_XYZ.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Ax3.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <BRep_Tool.hxx>
 #include <imgui.h>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -81,6 +89,20 @@ bool TransformOp::execute(Document& doc) {
                     m_previousSketchPlanes.push_back({sid, sk->getPlane()});
                 }
             }
+        }
+
+        // Reloaded legacy step: apply the reconstructed rigid transform straight
+        // to the LIVE body so any upstream edit (a fillet on this body) survives.
+        if (m_useRawTrsf) {
+            BRepBuilderAPI_Transform tf(m_previousShape, m_rawTrsf, true);
+            tf.Build();
+            if (!tf.IsDone()) return false;
+            doc.updateBody(m_bodyId, tf.Shape());
+            for (const auto& [sid, prevPln] : m_previousSketchPlanes) {
+                auto sk = doc.getSketch(sid);
+                if (sk) sk->setPlane(prevPln.Transformed(m_rawTrsf));
+            }
+            return true;
         }
 
         gp_Pnt center(m_cx, m_cy, m_cz);
@@ -214,4 +236,120 @@ OperationDiff TransformOp::captureDiff() const {
     if (m_bodyId >= 0 && !m_previousShape.IsNull())
         d.modifiedBefore.push_back({m_bodyId, m_previousShape});
     return d;
+}
+
+std::string TransformOp::serializeParams() const {
+    char buf[320];
+    if (m_useRawTrsf) {
+        std::snprintf(buf, sizeof(buf),
+            "body=%d;raw=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
+            m_bodyId,
+            m_rawTrsf.Value(1,1), m_rawTrsf.Value(1,2), m_rawTrsf.Value(1,3), m_rawTrsf.Value(1,4),
+            m_rawTrsf.Value(2,1), m_rawTrsf.Value(2,2), m_rawTrsf.Value(2,3), m_rawTrsf.Value(2,4),
+            m_rawTrsf.Value(3,1), m_rawTrsf.Value(3,2), m_rawTrsf.Value(3,3), m_rawTrsf.Value(3,4));
+        return buf;
+    }
+    std::snprintf(buf, sizeof(buf),
+        "body=%d;type=%d;dx=%.9g;dy=%.9g;dz=%.9g;ax=%.9g;ay=%.9g;az=%.9g;angle=%.9g;"
+        "scale=%.9g;sx=%.9g;sy=%.9g;sz=%.9g;nu=%d;cx=%.9g;cy=%.9g;cz=%.9g",
+        m_bodyId, static_cast<int>(m_type), m_dx, m_dy, m_dz, m_ax, m_ay, m_az, m_angle,
+        m_scale, m_sx, m_sy, m_sz, m_nonUniform ? 1 : 0, m_cx, m_cy, m_cz);
+    return buf;
+}
+
+bool TransformOp::deserializeParams(const std::string& blob) {
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string k = blob.substr(pos, eq - pos);
+        std::string v = blob.substr(eq + 1, end - eq - 1);
+        auto d = [&]{ return std::atof(v.c_str()); };
+        if      (k == "body")  { m_bodyId = std::atoi(v.c_str()); any = true; }
+        else if (k == "type")  { int t = std::atoi(v.c_str());
+                                 if (t >= 0 && t <= 2) m_type = static_cast<TransformType>(t); any = true; }
+        else if (k == "dx")    { m_dx = d(); any = true; }
+        else if (k == "dy")    { m_dy = d(); any = true; }
+        else if (k == "dz")    { m_dz = d(); any = true; }
+        else if (k == "ax")    { m_ax = d(); any = true; }
+        else if (k == "ay")    { m_ay = d(); any = true; }
+        else if (k == "az")    { m_az = d(); any = true; }
+        else if (k == "angle") { m_angle = d(); any = true; }
+        else if (k == "scale") { m_scale = d(); any = true; }
+        else if (k == "sx")    { m_sx = d(); any = true; }
+        else if (k == "sy")    { m_sy = d(); any = true; }
+        else if (k == "sz")    { m_sz = d(); any = true; }
+        else if (k == "nu")    { m_nonUniform = std::atoi(v.c_str()) != 0; any = true; }
+        else if (k == "cx")    { m_cx = d(); any = true; }
+        else if (k == "cy")    { m_cy = d(); any = true; }
+        else if (k == "cz")    { m_cz = d(); any = true; }
+        else if (k == "raw")   {
+            double m[12] = {0}; int n = 0; size_t p = 0;
+            while (n < 12 && p < v.size()) {
+                size_t c = v.find(',', p);
+                if (c == std::string::npos) c = v.size();
+                m[n++] = std::atof(v.substr(p, c - p).c_str());
+                p = c + 1;
+            }
+            if (n == 12) {
+                m_rawTrsf.SetValues(m[0],m[1],m[2],m[3], m[4],m[5],m[6],m[7], m[8],m[9],m[10],m[11]);
+                m_useRawTrsf = true; any = true;
+            }
+        }
+        pos = end + 1;
+    }
+    return any;
+}
+
+bool TransformOp::rehydrateFromReload(const ReloadState& state, Document& /*doc*/) {
+    if (m_bodyId < 0) return false;
+    m_previousShape.Nullify();
+    for (const auto& [id, shp] : state.modifiedBefore)
+        if (id == m_bodyId) { m_previousShape = shp; break; }
+    return !m_previousShape.IsNull();
+}
+
+bool TransformOp::rigidTrsfBetween(const TopoDS_Shape& before,
+                                   const TopoDS_Shape& after, gp_Trsf& out) {
+    if (before.IsNull() || after.IsNull()) return false;
+    TopTools_IndexedMapOfShape vb, va;
+    TopExp::MapShapes(before, TopAbs_VERTEX, vb);
+    TopExp::MapShapes(after,  TopAbs_VERTEX, va);
+    const int n = vb.Extent();
+    if (n < 3 || va.Extent() != n) return false;  // not congruent / too few points
+    auto Pb = [&](int i){ return BRep_Tool::Pnt(TopoDS::Vertex(vb.FindKey(i))); };
+    auto Pa = [&](int i){ return BRep_Tool::Pnt(TopoDS::Vertex(va.FindKey(i))); };
+
+    // Three vertices that form a non-degenerate triangle in `before`.
+    gp_Pnt b0 = Pb(1), a0 = Pa(1);
+    int i1 = -1;
+    for (int i = 2; i <= n; ++i) if (Pb(i).Distance(b0) > 1e-6) { i1 = i; break; }
+    if (i1 < 0) return false;
+    gp_Pnt b1 = Pb(i1), a1 = Pa(i1);
+    gp_Vec v01(b0, b1);
+    int i2 = -1;
+    for (int i = 2; i <= n; ++i) {
+        if (i == i1) continue;
+        gp_Vec v0i(b0, Pb(i));
+        if (v01.Crossed(v0i).Magnitude() > 1e-6) { i2 = i; break; }
+    }
+    if (i2 < 0) return false;
+    gp_Pnt b2 = Pb(i2), a2 = Pa(i2);
+
+    auto frame = [](const gp_Pnt& o, const gp_Pnt& x, const gp_Pnt& y) {
+        gp_Vec vx(o, x), vy(o, y), vz = vx.Crossed(vy);
+        return gp_Ax3(o, gp_Dir(vz), gp_Dir(vx));
+    };
+    try {
+        out.SetDisplacement(frame(b0, b1, b2), frame(a0, a1, a2));
+    } catch (...) { return false; }
+
+    // Verify it actually maps before→after (rejects non-rigid changes / scale).
+    if (b0.Transformed(out).Distance(a0) > 1e-3) return false;
+    if (b1.Transformed(out).Distance(a1) > 1e-3) return false;
+    if (b2.Transformed(out).Distance(a2) > 1e-3) return false;
+    return true;
 }

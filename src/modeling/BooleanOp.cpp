@@ -3,6 +3,8 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <cstdio>
+#include <cstdlib>
 #include <imgui.h>
 
 BooleanOp::BooleanOp() = default;
@@ -92,9 +94,14 @@ bool BooleanOp::undo(Document& doc) {
             doc.updateBody(m_targetBodyId, m_previousTargetShape);
         }
 
-        // Re-add the tool body that was removed
+        // Re-add the tool body that was removed — restore it under its ORIGINAL
+        // id (not a fresh addBody id). editStep rolls a boolean back then
+        // re-executes the steps above it; an upstream op that targets the tool
+        // body (e.g. a fillet on it) must still find it by its old id, and the
+        // boolean's own re-execute looks the tool up by m_toolBodyId. putBody
+        // also pulls folder/colour/visibility back from the tombstone.
         if (m_removedToolId >= 0 && !m_previousToolShape.IsNull()) {
-            doc.addBody(m_previousToolShape, "Boolean Tool (restored)");
+            doc.putBody(m_toolBodyId, m_previousToolShape, "Boolean Tool (restored)");
             m_removedToolId = -1;
         }
 
@@ -137,4 +144,53 @@ OperationDiff BooleanOp::captureDiff() const {
     if (m_toolBodyId >= 0 && !m_previousToolShape.IsNull())
         d.deletedBefore.push_back({m_toolBodyId, m_previousToolShape});
     return d;
+}
+
+std::string BooleanOp::serializeParams() const {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "target=%d;tool=%d;mode=%d",
+                  m_targetBodyId, m_toolBodyId, static_cast<int>(m_mode));
+    return buf;
+}
+
+bool BooleanOp::deserializeParams(const std::string& blob) {
+    // Tolerant key=value parser (same scheme as FilletOp/ChamferOp).
+    bool any = false;
+    size_t pos = 0;
+    while (pos < blob.size()) {
+        size_t eq = blob.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t end = blob.find(';', eq);
+        if (end == std::string::npos) end = blob.size();
+        std::string key = blob.substr(pos, eq - pos);
+        std::string val = blob.substr(eq + 1, end - eq - 1);
+        if      (key == "target") { m_targetBodyId = std::atoi(val.c_str()); any = true; }
+        else if (key == "tool")   { m_toolBodyId   = std::atoi(val.c_str()); any = true; }
+        else if (key == "mode")   { int m = std::atoi(val.c_str());
+                                    if (m >= 0 && m <= 2) m_mode = static_cast<BooleanMode>(m);
+                                    any = true; }
+        pos = end + 1;
+    }
+    return any;
+}
+
+bool BooleanOp::rehydrateFromReload(const ReloadState& state, Document& /*doc*/) {
+    if (m_targetBodyId < 0 || m_toolBodyId < 0) return false;
+
+    // Restore the pre-boolean shapes from the saved step diff: the target was
+    // modified in place, the tool was consumed (deleted). Both are needed so
+    // undo()/redo() and an editStep replay can roll the boolean back and re-run
+    // it against the (possibly edited) upstream geometry.
+    m_previousTargetShape.Nullify();
+    m_previousToolShape.Nullify();
+    for (const auto& [id, shp] : state.modifiedBefore)
+        if (id == m_targetBodyId) { m_previousTargetShape = shp; break; }
+    for (const auto& [id, shp] : state.deletedBefore)
+        if (id == m_toolBodyId) { m_previousToolShape = shp; break; }
+    if (m_previousTargetShape.IsNull() || m_previousToolShape.IsNull()) return false;
+
+    // Post-execution bookkeeping: this step already consumed the tool body, so
+    // undo() knows to restore it.
+    m_removedToolId = m_toolBodyId;
+    return true;
 }

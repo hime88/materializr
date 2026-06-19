@@ -393,6 +393,22 @@ void Application::commitInteractiveEdgeOp() {
 
     bool committed = true; // false if execute() rejected the result (create mode)
     if (m_edgeOpEditingIndex >= 0) {
+        // Geometric signature (volume + surface area) of the body whose face was
+        // clicked, so we can tell whether the edit actually changes what the user
+        // sees. A baked feature (frozen by an older save) leaves it untouched.
+        auto bodySig = [&](int id, double& vol, double& area) -> bool {
+            try {
+                TopoDS_Shape s = m_document->getBody(id);
+                if (s.IsNull()) return false;
+                GProp_GProps gv; BRepGProp::VolumeProperties(s, gv);  vol = gv.Mass();
+                GProp_GProps ga; BRepGProp::SurfaceProperties(s, ga); area = ga.Mass();
+                return true;
+            } catch (...) { return false; }
+        };
+        double volBefore = 0, areaBefore = 0;
+        const bool hadPicked = (m_edgeOpPickedBodyId >= 0) &&
+                               bodySig(m_edgeOpPickedBodyId, volBefore, areaBefore);
+
         // Update the existing op's parameter and rerun from that point so any
         // downstream ops (cuts, fillets stacked on this one, …) recompute too.
         setEdgeOpParam(m_history->getStep(m_edgeOpEditingIndex),
@@ -400,6 +416,25 @@ void Application::commitInteractiveEdgeOp() {
                        m_edgeOpValue,
                        m_edgeOpTwoDist ? m_edgeOpValue2 : -1.0f);
         m_history->editStep(m_edgeOpEditingIndex, *m_document);
+
+        // If the clicked body's geometry is unchanged, the operation drives a
+        // different/deleted body — the feature the user sees is baked, with no
+        // editable op behind it. Say so instead of silently doing nothing.
+        if (hadPicked) {
+            double volAfter = 0, areaAfter = 0;
+            const bool stillThere = bodySig(m_edgeOpPickedBodyId, volAfter, areaAfter);
+            const double vtol = 1e-6 * std::max(1.0, std::fabs(volBefore));
+            const double atol = 1e-6 * std::max(1.0, std::fabs(areaBefore));
+            const bool unchanged = stillThere &&
+                std::fabs(volAfter - volBefore) <= vtol &&
+                std::fabs(areaAfter - areaBefore) <= atol;
+            if (unchanged) {
+                showToast("This fillet/chamfer is baked into the model \xE2\x80\x94 the "
+                          "geometry you clicked has no editable operation behind it "
+                          "(it was frozen by an older save). Re-apply it to make it "
+                          "adjustable.");
+            }
+        }
         std::fprintf(stdout, "%s edited to %.1f mm\n",
                      m_edgeOpType == EdgeOpType::Fillet ? "Fillet" : "Chamfer",
                      m_edgeOpValue);
@@ -1466,6 +1501,14 @@ std::unique_ptr<PushPullOp> Application::makePushPullOpFromState() const {
     op->setTargets(std::move(targets));
     op->setDistance(static_cast<double>(m_pushPullDistance));
     op->setSymmetric(m_pushPullSymmetric);
+    // Cut-intersecting: a free-space sketch (cut-or-new-body) OR any cut-
+    // direction push/pull (also cut the other visible bodies in the path). An
+    // extrude (positive) on a source/face body keeps it OFF → fuses its source
+    // only, exactly as before.
+    bool allFreeSketch = !m_pushPullTargets.empty();
+    for (const auto& t : m_pushPullTargets)
+        if (!(t.sourceBodyId < 0 && t.sketchId >= 0)) { allFreeSketch = false; break; }
+    op->setCutIntersecting(allFreeSketch || m_pushPullDistance < 0.0f);
     // Cascade plumbing: stamp the originating sketch+region on every target.
     // setTargets() above pre-sizes the source arrays to all -1, so this
     // upgrades them where we actually have a sketch source. Free-face
@@ -1480,6 +1523,44 @@ std::unique_ptr<PushPullOp> Application::makePushPullOpFromState() const {
 }
 
 void Application::commitPushPull() {
+    // Smart cut: a free-space sketch push/pull that runs into visible bodies
+    // subtracts from them (each separately) instead of making an overlapping new
+    // body. Only this exact case (every target a free-space sketch region) is
+    // rerouted; everything else falls through to the unchanged paths below. The
+    // preview always showed the new-body extrusion, so undo it and run one fresh
+    // cut-enabled execute. The op itself falls back to a new body if it hits
+    // nothing — so "no intersection" is still today's behaviour.
+    bool allFreeSketch = !m_pushPullTargets.empty();
+    for (const auto& t : m_pushPullTargets)
+        if (!(t.sourceBodyId < 0 && t.sketchId >= 0)) { allFreeSketch = false; break; }
+    // Reroute when the result cuts through multiple bodies: a free-space sketch
+    // (cut-or-new-body), or ANY cut-direction push/pull (cuts the source body
+    // AND every other visible body in its path). Extrude (add) and non-sketch
+    // cases fall through to the unchanged paths below.
+    bool smartCut = std::abs(m_pushPullDistance) > 1e-6 &&
+                    !m_pushPullTargets.empty() &&
+                    (allFreeSketch || m_pushPullDistance < 0.0f);
+    if (smartCut) {
+        m_shapeRenderer->removeBody(-7777);
+        if (m_pushPullLiveOp && m_pushPullPreviewApplied) {
+            m_pushPullLiveOp->undo(*m_document);   // remove the preview new body
+            m_pushPullPreviewApplied = false;
+        }
+        if (!m_history->pushOperation(makePushPullOpFromState(), *m_document))
+            std::fprintf(stderr, "Push/Pull (cut) failed to apply\n");
+        m_pushPullLiveOp.reset();
+        m_pushPullHeavyPreview = false;
+        m_pushPullPreviewApplied = false;
+        m_pushPullActive = false;
+        m_pushPullSticky = false;
+        m_pushPullTargets.clear();
+        m_meshesDirty = true;
+        m_selection->clear();
+        std::fprintf(stdout, "Push/Pull (smart cut) committed at %.2f mm\n",
+                     m_pushPullDistance);
+        return;
+    }
+
     if (m_pushPullHeavyPreview) {
         // Ghost path: drop the preview mesh and run the real boolean ONCE.
         // This is where the thread reflow runs for dense bodies — a single

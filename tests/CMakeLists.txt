@@ -25,6 +25,12 @@ add_library(materializr_core STATIC
     ${CMAKE_SOURCE_DIR}/src/modeling/ExtrudeOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/FilletOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/ChamferOp.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/BooleanOp.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/DeleteOp.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/TransformOp.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/PushPullOp.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/Sketch.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/SubShapeIndex.cpp
 )
 
 target_include_directories(materializr_core PUBLIC
@@ -73,3 +79,8 @@ add_test(NAME test_operations COMMAND test_operations)
 add_executable(test_selection test_selection.cpp)
 target_link_libraries(test_selection PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_selection COMMAND test_selection)
+
+# test_reload_edit — boolean/delete rehydrate so edits upstream of them propagate
+add_executable(test_reload_edit test_reload_edit.cpp)
+target_link_libraries(test_reload_edit PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_reload_edit COMMAND test_reload_edit)

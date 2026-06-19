@@ -12,30 +12,37 @@ ReplayOp::ReplayOp(std::string typeId, std::string name, std::string description
     , m_after(std::move(after))
     , m_fromReload(fromReload) {}
 
-void ReplayOp::restore(Document& doc, const BodyState& state,
-                       bool removeUnlisted) {
-    std::set<int> wanted;
-    for (const auto& [id, shape] : state) {
-        doc.putBody(id, shape);
-        wanted.insert(id);
+void ReplayOp::applyDelta(Document& doc, const BodyState& from,
+                          const BodyState& to) {
+    // Apply ONLY what this step changed between `from` and `to`, leaving every
+    // other body untouched. Reloaded steps carry full-document snapshots, but
+    // re-applying the whole snapshot resets bodies this step never touched —
+    // which silently discarded edits made to an UPSTREAM step (e.g. editing a
+    // fillet whose body is later consumed by a union: a baked transform on an
+    // unrelated body would re-slam the entire stale scene over the rebuilt
+    // result). A body that rides along unchanged (IsEqual) is skipped, so the
+    // edited geometry survives.
+    std::map<int, const TopoDS_Shape*> fromMap;
+    for (const auto& [id, s] : from) fromMap[id] = &s;
+    std::set<int> toIds;
+    for (const auto& [id, s] : to) {
+        toIds.insert(id);
+        auto it = fromMap.find(id);
+        if (it == fromMap.end() || !s.IsEqual(*it->second))
+            doc.putBody(id, s);          // created or genuinely changed
     }
-    // Project-reload snapshots cover the whole document — anything not listed
-    // shouldn't exist in this state (e.g. a body created by a later step that
-    // we're undoing past). Batch in-session snapshots only cover the affected
-    // bodies, so removing unlisted ones would delete the rest of the scene.
-    if (!removeUnlisted) return;
-    for (int id : doc.getAllBodyIds()) {
-        if (!wanted.count(id)) doc.removeBody(id);
-    }
+    // Bodies present in `from` but not `to` were removed by this step.
+    for (const auto& [id, s] : from)
+        if (!toIds.count(id)) doc.removeBody(id);
 }
 
 bool ReplayOp::execute(Document& doc) {
-    restore(doc, m_after, /*removeUnlisted=*/m_fromReload);
+    applyDelta(doc, m_before, m_after);
     return true;
 }
 
 bool ReplayOp::undo(Document& doc) {
-    restore(doc, m_before, /*removeUnlisted=*/m_fromReload);
+    applyDelta(doc, m_after, m_before);
     return true;
 }
 

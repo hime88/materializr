@@ -36,6 +36,13 @@ public:
     // union keeps a seam edge on spline walls; OCCT can't unify those).
     void setSymmetric(bool s) { m_symmetric = s; }
     bool isSymmetric() const { return m_symmetric; }
+    // Free-space (sourceBodyId < 0) targets only: when set, the swept prism is
+    // SUBTRACTED from every VISIBLE body it intersects (each separately, hidden
+    // bodies skipped, overlap cut and the rest discarded) instead of becoming a
+    // new body. Falls back to the new-body behaviour when it intersects nothing
+    // or a cut would be invalid. Off by default → identical to prior behaviour.
+    void setCutIntersecting(bool c) { m_cutIntersecting = c; }
+    bool getCutIntersecting() const { return m_cutIntersecting; }
 
     double getDistance() const { return m_distance; }
 
@@ -72,6 +79,7 @@ public:
 private:
     std::vector<Target> m_targets;
     double m_distance = 1.0;
+    bool m_cutIntersecting = false; // free-space prism cuts intersecting visible bodies
 
     // Undo state
     std::vector<std::pair<int, TopoDS_Shape>> m_previousBodies; // sourceBody mutations
