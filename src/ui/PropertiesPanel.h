@@ -12,6 +12,7 @@ class SelectionManager;
 namespace materializr {
 class Sketch;
 class EventBus;
+class SketchTool;
 }
 
 namespace materializr {
@@ -24,6 +25,22 @@ public:
     void setDocument(Document* doc);
     void setSelectionManager(const SelectionManager* sel);
     void setEventBus(materializr::EventBus* bus) { m_eventBus = bus; }
+    // Per-frame sketch-mode context: while the user is editing a sketch, the
+    // panel shows the editable size of the currently-selected element (a
+    // circle's diameter, an arc's radius). Injected each frame by Application.
+    void setSketchContext(bool inSketchMode, materializr::Sketch* active,
+                          int activeSketchId, materializr::SketchTool* tool) {
+        m_inSketchMode = inSketchMode;
+        m_activeSketch = active;
+        m_activeSketchId = activeSketchId;
+        m_sketchTool = tool;
+    }
+    // Routes an element-size edit through Application::recordSketchMutation
+    // (snapshot before/after → SketchEditOp) + re-solve + cascade. The panel
+    // passes the raw mutation (e.g. setCircleRadius); the host wraps it.
+    void setSketchMutateCallback(std::function<void(const std::function<void()>&)> cb) {
+        m_sketchMutate = std::move(cb);
+    }
     // Routes the plane panel's "Rotate About Axis…" button to Application,
     // which opens the hinge popup for that plane id.
     void setRotatePlaneCallback(std::function<void(int)> cb) { m_rotatePlane = std::move(cb); }
@@ -46,6 +63,10 @@ private:
     // undoable and survives save/load. `modified` is set true if a value
     // was committed this frame so the host can dirty its mesh + history.
     void renderSketchConstraintsPanel(int sketchId, bool& modified);
+    // While in sketch mode: editable size of the selected element (circle
+    // diameter / arc radius), or a read-only readout for a line. Writes go
+    // through m_sketchMutate so they're undoable and cascade to bodies.
+    void renderSketchElementPanel(bool& modified);
     // Read-only orientation readout + Flip Normal / Rotate-About-Axis actions
     // for a selected construction plane.
     void renderPlanePanel(int planeId, bool& modified);
@@ -60,6 +81,13 @@ private:
     const SelectionManager* m_selection = nullptr;
     materializr::EventBus* m_eventBus = nullptr;
     int m_editingStep = -1;
+
+    // Sketch-mode context (see setSketchContext).
+    bool m_inSketchMode = false;
+    materializr::Sketch* m_activeSketch = nullptr;
+    int m_activeSketchId = -1;
+    materializr::SketchTool* m_sketchTool = nullptr;
+    std::function<void(const std::function<void()>&)> m_sketchMutate;
 
     // Buffered text for each editable constraint value in the panel above.
     // Keyed by `constraint id`. Wiped when the panel switches to a

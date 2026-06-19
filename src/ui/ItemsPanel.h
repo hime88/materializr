@@ -39,6 +39,9 @@ public:
     // laser / 2.5D CNC). Sketch-only by design — a File-menu export would also
     // catch non-planar geometry, which SVG can't represent.
     void setExportSketchSvgCallback(std::function<void(int)> cb) { m_exportSketchSvg = std::move(cb); }
+    // Called when the user picks "Duplicate Sketch" — makes an independent copy.
+    // Routes to Application::duplicateSketch.
+    void setDuplicateSketchCallback(std::function<void(int)> cb) { m_duplicateSketch = std::move(cb); }
     // Called when the user picks "Combine sketches" — merges the selected
     // coplanar sketches into the first. Routes to Application::combineSketches.
     void setCombineSketchesCallback(std::function<void(const std::vector<int>&)> cb) {
@@ -60,6 +63,7 @@ private:
     std::function<void(int)> m_exportStl;
     std::function<void(int)> m_editSketch;
     std::function<void(int)> m_exportSketchSvg;
+    std::function<void(int)> m_duplicateSketch;
     std::function<void(const std::vector<int>&)> m_combineSketches;
     std::function<void(int)> m_rotatePlane;
     int m_renamingId = -1;

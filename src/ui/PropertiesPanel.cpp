@@ -6,6 +6,7 @@
 #include "../modeling/Sketch.h"
 #include "../modeling/SketchSolver.h"
 #include "../modeling/SketchEditOp.h"
+#include "../modeling/SketchTool.h"
 #include "../modeling/SketchConstraints.h"
 #include "../modeling/TransformOp.h"
 #include "../core/EventBus.h"
@@ -55,6 +56,15 @@ bool PropertiesPanel::render() {
     bool modified = false;
 
     ImGui::Begin("Properties", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    // Case 0: In sketch mode — show the editable size of the selected element.
+    // Takes priority: while sketching, the panel is about the sketch, not the
+    // history step or a 3D selection.
+    if (m_inSketchMode && m_activeSketch && m_sketchTool) {
+        renderSketchElementPanel(modified);
+        ImGui::End();
+        return modified;
+    }
 
     // Case 1: Editing a history operation
     if (m_history && m_editingStep >= 0 && m_editingStep < m_history->stepCount()) {
@@ -372,6 +382,96 @@ void PropertiesPanel::renderAxisPanel(int axisId, bool& modified) {
 // panel reads/writes the current sketch directly, so the workflow works
 // across sessions.
 //
+void PropertiesPanel::renderSketchElementPanel(bool& modified) {
+    Sketch* sk = m_activeSketch;
+    if (!sk) return;
+
+    const auto& selC = m_sketchTool->getSelectedCircles();
+    const auto& selA = m_sketchTool->getSelectedArcs();
+    const auto& selL = m_sketchTool->getSelectedLines();
+    const auto& selP = m_sketchTool->getSelectedPoints();
+    const size_t total = selC.size() + selA.size() + selL.size() + selP.size();
+
+    ImGui::TextDisabled("Sketch");
+    ImGui::Separator();
+    if (total == 0) {
+        ImGui::TextWrapped("Select a sketch element to edit its size.");
+        return;
+    }
+    if (total > 1) {
+        ImGui::Text("%zu elements selected", total);
+        ImGui::TextDisabled("Select a single circle or arc to edit its size.");
+        return;
+    }
+
+    // Apply a size edit through the host so it's snapshot/undoable + cascades.
+    auto apply = [&](const std::function<void()>& mut) {
+        if (m_sketchMutate) { m_sketchMutate(mut); modified = true; }
+    };
+
+    // Resolve what was clicked to an editable element. Clicking a circle near
+    // its CENTRE grabs the centre point (so you can drag-move it), so a selected
+    // point that is a circle/arc centre still exposes that curve's size — you
+    // can edit a circle by clicking anywhere on it, centre included.
+    int circleId = -1, arcId = -1;
+    if (!selC.empty()) circleId = *selC.begin();
+    else if (!selA.empty()) arcId = *selA.begin();
+    else if (!selP.empty()) {
+        int pid = *selP.begin();
+        for (const auto& cc : sk->getCircles()) if (cc.centerPointId == pid) { circleId = cc.id; break; }
+        if (circleId < 0)
+            for (const auto& aa : sk->getArcs()) if (aa.centerPointId == pid) { arcId = aa.id; break; }
+    }
+
+    if (circleId >= 0) {
+        const SketchCircle* c = nullptr;
+        for (const auto& cc : sk->getCircles()) if (cc.id == circleId) { c = &cc; break; }
+        if (!c) return;
+        ImGui::Text("Circle");
+        double dia = c->radius * 2.0;
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::InputDouble("Diameter (mm)", &dia, 0.0, 0.0, "%.3f",
+                               ImGuiInputTextFlags_EnterReturnsTrue)) {
+            double r = std::max(dia, 1e-6) * 0.5;
+            apply([sk, circleId, r]() { sk->setCircleRadius(circleId, r); });
+        }
+        ImGui::TextDisabled("Centre stays put. Press Enter to apply.");
+    } else if (arcId >= 0) {
+        const SketchArc* a = nullptr;
+        for (const auto& aa : sk->getArcs()) if (aa.id == arcId) { a = &aa; break; }
+        if (!a) return;
+        ImGui::Text("Arc");
+        double rad = a->radius;
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::InputDouble("Radius (mm)", &rad, 0.0, 0.0, "%.3f",
+                               ImGuiInputTextFlags_EnterReturnsTrue)) {
+            double r = std::max(rad, 1e-6);
+            apply([sk, arcId, r]() { sk->setArcRadius(arcId, r); });
+        }
+        ImGui::TextDisabled("Press Enter to apply.");
+    } else if (!selL.empty()) {
+        int lid = *selL.begin();
+        const SketchLine* l = nullptr;
+        for (const auto& ll : sk->getLines()) if (ll.id == lid) { l = &ll; break; }
+        if (!l) return;
+        const SketchPoint* p1 = sk->getPoint(l->startPointId);
+        const SketchPoint* p2 = sk->getPoint(l->endPointId);
+        ImGui::Text("Line");
+        if (p1 && p2) {
+            double len = std::sqrt((p2->pos.x - p1->pos.x) * (p2->pos.x - p1->pos.x) +
+                                   (p2->pos.y - p1->pos.y) * (p2->pos.y - p1->pos.y));
+            ImGui::Text("Length: %.3f mm", len);
+        }
+        ImGui::TextDisabled("Edit a line by dragging an endpoint or adding a "
+                            "dimension (which endpoint moves is otherwise "
+                            "ambiguous).");
+    } else {
+        // A lone point that isn't a circle/arc centre (a line endpoint, etc.).
+        ImGui::Text("Point");
+        ImGui::TextDisabled("Drag to move; no editable size.");
+    }
+}
+
 // Commit policy: text edits commit on Enter or focus-out (the
 // IsItemDeactivatedAfterEdit signal). On commit we snapshot the pre-edit
 // sketch, apply the value, run the solver, and push a SketchEditOp

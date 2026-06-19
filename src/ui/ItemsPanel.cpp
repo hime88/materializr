@@ -305,6 +305,12 @@ bool ItemsPanel::render() {
                     if (ImGui::MenuItem("Export as SVG…")) {
                         if (m_exportSketchSvg) m_exportSketchSvg(id);
                     }
+                    // Make an independent copy — edit it freely (e.g. resize
+                    // holes) to derive a same-layout variant without touching
+                    // this sketch or any body built from it.
+                    if (ImGui::MenuItem("Duplicate Sketch")) {
+                        if (m_duplicateSketch) m_duplicateSketch(id);
+                    }
                     // Fold every OTHER coplanar sketch into this one (the app
                     // filters to the ones sharing this sketch's plane). Only
                     // offered when there's more than one sketch to fold.

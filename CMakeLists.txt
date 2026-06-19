@@ -184,6 +184,7 @@ add_executable(materializr
     src/modeling/PushPullOp.cpp
     src/modeling/MoveFaceOp.cpp
     src/modeling/CombineSketchesOp.cpp
+    src/modeling/DuplicateSketchOp.cpp
     src/modeling/ReplayOp.cpp
     src/modeling/OperationFactory.cpp
     src/modeling/SubShapeIndex.cpp

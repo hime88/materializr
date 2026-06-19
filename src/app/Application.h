@@ -192,6 +192,8 @@ private:
     // Merge coplanar sketches into the first (Items panel). Non-coplanar ones
     // are skipped; refuses (toast) if fewer than two end up coplanar.
     void combineSketches(const std::vector<int>& ids);
+    // Make an independent copy of a sketch (Items panel → Duplicate Sketch).
+    void duplicateSketch(int sketchId);
     void enterSketchMode();
     void enterSketchOnPlane(const gp_Pln& plane);
     void enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId = -1);

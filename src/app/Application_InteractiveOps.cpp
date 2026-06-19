@@ -2327,11 +2327,10 @@ void Application::cascadeFromSketchEdit(int sketchId) {
             // silently leaving the sketch changed and the body stale.
             showToast("Updated the sketch, but the body built from it couldn't "
                       "rebuild from the new shape \xE2\x80\x94 the model is unchanged.");
-        } else {
-            // The sketch changed but nothing in the model is built from it.
-            showToast("Updated the sketch. No body is built from it, so the "
-                      "model is unchanged.");
         }
+        // matched == 0: nothing in the model is built from this sketch (e.g.
+        // editing a freshly-duplicated sketch before it's extruded). That's the
+        // normal case while sketching — stay silent, just refresh.
         m_meshesDirty = true;
         return;
     }

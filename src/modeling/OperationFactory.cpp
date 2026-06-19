@@ -6,6 +6,7 @@
 #include "PushPullOp.h"
 #include "MoveFaceOp.h"
 #include "CombineSketchesOp.h"
+#include "DuplicateSketchOp.h"
 #include "RevolveOp.h"
 #include "ConstructionPlaneOp.h"
 #include "ConstructionAxisOp.h"
@@ -64,6 +65,9 @@ std::unique_ptr<Operation> create(const std::string& typeId) {
     // Parametric primitives: kind + extents/radii live in the blob; the body
     // id is replayed via rehydrateFromReload's `created` list.
     if (typeId == "primitive") return std::make_unique<materializr::PrimitiveOp>();
+    // Sketch duplication: the copy is saved in the project's sketch list and
+    // reloads on its own; this step binds to it for cross-session undo/redo.
+    if (typeId == "duplicate_sketch") return std::make_unique<DuplicateSketchOp>();
 
     return nullptr;
 }

@@ -20,6 +20,7 @@
 #include "modeling/PushPullOp.h"
 #include "modeling/Sketch.h"
 #include "modeling/SketchEditOp.h"
+#include "modeling/DuplicateSketchOp.h"
 
 #include <gtest/gtest.h>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -446,6 +447,50 @@ TEST(SketchHistory, CircleDiameterEditPropagatesThroughLaterSnapshots) {
     double rSnap = -1;
     for (const auto& c : after1->getCircles()) if (c.id == cid) rSnap = c.radius;
     EXPECT_NEAR(rSnap, 7.5, 1e-9) << "downstream snapshot not updated in place";
+}
+
+// Duplicating a sketch produces an INDEPENDENT copy: editing the copy must not
+// touch the original (the box/lid use case — same layout, different hole sizes).
+// Undo removes the copy cleanly; redo brings it back with its geometry intact.
+TEST(SketchHistory, DuplicateSketchIsIndependentAndUndoable) {
+    using materializr::Sketch;
+
+    Document doc;
+    auto src = std::make_shared<Sketch>();
+    int ctr = src->addPoint({0, 0});
+    int cid = src->addCircle(ctr, 2.5);                 // Ø5 (heat-set)
+    int srcId = doc.addSketch(src, "Sketch 1");
+
+    auto copy = std::make_shared<Sketch>(*src);
+    auto op = std::make_unique<DuplicateSketchOp>();
+    op->setCopy(copy, srcId, "Sketch 1 copy");
+    DuplicateSketchOp* raw = op.get();
+    ASSERT_TRUE(op->execute(doc));
+    int newId = raw->newSketchId();
+    History H;
+    H.pushExecuted(std::move(op));
+
+    ASSERT_GE(newId, 0);
+    ASSERT_NE(newId, srcId) << "copy must get its own id";
+    ASSERT_NE(doc.getSketch(newId), nullptr);
+
+    // Shrink the COPY's hole to screw size; the original must stay Ø5.
+    doc.getSketch(newId)->setCircleRadius(cid, 1.5);    // Ø3 (screw)
+    double rSrc = -1, rCopy = -1;
+    for (const auto& c : doc.getSketch(srcId)->getCircles()) if (c.id == cid) rSrc = c.radius;
+    for (const auto& c : doc.getSketch(newId)->getCircles()) if (c.id == cid) rCopy = c.radius;
+    EXPECT_NEAR(rSrc, 2.5, 1e-9) << "editing the copy must not change the original";
+    EXPECT_NEAR(rCopy, 1.5, 1e-9);
+
+    // Undo removes the copy entirely (no stranded empty husk).
+    ASSERT_TRUE(H.undo(doc));
+    EXPECT_EQ(doc.getSketch(newId), nullptr) << "undo must remove the duplicate";
+    EXPECT_NE(doc.getSketch(srcId), nullptr) << "original survives";
+
+    // Redo brings it back. (Its geometry is whatever the copy held when undone;
+    // here we just confirm the sketch reappears under the same id.)
+    ASSERT_TRUE(H.redo(doc));
+    EXPECT_NE(doc.getSketch(newId), nullptr) << "redo restores the duplicate";
 }
 
 // DeleteOp reloads as a real op: params round-trip and rehydrate recovers the

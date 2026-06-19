@@ -69,6 +69,7 @@ inline void resetFpuForOcct() {
 #include "modeling/OperationFactory.h"
 #include "modeling/PushPullOp.h"
 #include "modeling/CombineSketchesOp.h"
+#include "modeling/DuplicateSketchOp.h"
 #include "modeling/TransformOp.h"
 #include "modeling/MirrorOp.h"
 #include "modeling/FilletOp.h"
@@ -244,6 +245,7 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
     m_itemsPanel->setExportStlCallback([this](int bodyId) { exportBodyAsStl(bodyId); });
     m_itemsPanel->setEditSketchCallback([this](int sketchId) { editSketch(sketchId); });
     m_itemsPanel->setExportSketchSvgCallback([this](int sketchId) { exportSketchAsSvg(sketchId); });
+    m_itemsPanel->setDuplicateSketchCallback([this](int sketchId) { duplicateSketch(sketchId); });
     m_itemsPanel->setCombineSketchesCallback(
         [this](const std::vector<int>& ids) { combineSketches(ids); });
     m_itemsPanel->setRotatePlaneCallback([this](int planeId) { beginRotatePlaneAboutAxis(planeId); });
@@ -255,6 +257,23 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
     m_propertiesPanel->setEventBus(m_eventBus.get());
     m_propertiesPanel->setRotatePlaneCallback([this](int planeId) { beginRotatePlaneAboutAxis(planeId); });
     m_propertiesPanel->setDirtyCallback([this]() { markDirty(); });
+    // Element-size edits from the Properties panel while sketching: snapshot +
+    // re-solve inside recordSketchMutation (so it's one undoable SketchEditOp),
+    // then cascade to any body built from the sketch.
+    m_propertiesPanel->setSketchMutateCallback(
+        [this](const std::function<void()>& mut) {
+            recordSketchMutation([&]() {
+                mut();
+                if (m_activeSketch) {
+                    SketchSolver solver;
+                    solver.solve(*m_activeSketch);
+                }
+            });
+            if (m_eventBus && m_activeSketchId >= 0)
+                m_eventBus->publish(SketchEditedEvent{m_activeSketchId});
+            m_meshesDirty = true;
+            markDirty();
+        });
     // If no system file-dialog helper exists, Open/Save/Export would otherwise
     // do nothing at all — surface that instead of failing silently.
     FileDialogs::setUnavailableNotifier([this]() {
@@ -3407,6 +3426,33 @@ void Application::combineSketches(const std::vector<int>& ids) {
     }
 }
 
+void Application::duplicateSketch(int sketchId) {
+    if (!m_document || !m_history) return;
+    auto src = m_document->getSketch(sketchId);
+    if (!src) return;
+
+    // Independent deep copy: geometry, constraints, plane and source-body link
+    // all come along, but it's a separate Sketch object with its own id, so
+    // editing it never touches the original or any body built from it.
+    auto copy = std::make_shared<Sketch>(*src);
+
+    std::string base = m_document->getSketchName(sketchId);
+    if (base.empty()) base = "Sketch";
+    const std::string name = base + " copy";
+
+    auto op = std::make_unique<DuplicateSketchOp>();
+    op->setCopy(copy, sketchId, name);
+    DuplicateSketchOp* raw = op.get();  // valid while History owns the op
+    if (m_history->pushOperation(std::move(op), *m_document)) {
+        markDirty();
+        m_meshesDirty = true;
+        std::fprintf(stdout, "Duplicated sketch %d -> %d\n",
+                     sketchId, raw->newSketchId());
+        showToast("Duplicated \"" + base + "\" \xE2\x80\x94 edit the copy freely "
+                  "(e.g. resize holes); the original is untouched.");
+    }
+}
+
 void Application::enterSketchMode() {
     // If a planar face is selected, route through enterSketchOnFace for consistency
     if (m_selection && m_selection->hasSelectedFaces()) {
@@ -4614,6 +4660,9 @@ void Application::run() {
                     m_hoveredBodyId = -1;
                     m_meshesDirty = true;
                 }
+                m_propertiesPanel->setSketchContext(
+                    m_inSketchMode, m_activeSketch.get(), m_activeSketchId,
+                    m_sketchTool.get());
                 if (m_showProperties && m_propertiesPanel->render()) {
                     m_meshesDirty = true;
                 }
