@@ -21,9 +21,18 @@ ViewCube::ViewCube() {}
 // orthographic views) wrapped in a horizon ring (drag to rotate the camera
 // around its target). Drawn with ImDrawList so it shares ImGui's window state.
 
-ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
+ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag, bool lightMode)
 {
     ViewCubeAction action = ViewCubeAction::None;
+
+    // "Ink" = the labels / borders / arrows / home fill: light on the dark theme,
+    // dark on the light theme so they don't read as white over a light viewport.
+    // "Paper" is its opposite, used for the home glyph that sits on the ink fill.
+    // The cube face fills (blue/grey) and the yellow hover stay the same in both.
+    auto ink   = [lightMode](int a){ return lightMode ? IM_COL32(40, 42, 52, a)
+                                                      : IM_COL32(225, 226, 236, a); };
+    auto paper = [lightMode](int a){ return lightMode ? IM_COL32(236, 237, 244, a)
+                                                      : IM_COL32(60, 60, 70, a); };
 
     // --- Layout: top-right of the current window, leaving room for the title bar.
     //     cubeR is the cube's half-extent; widgetR is the radius used for the
@@ -130,14 +139,14 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
         if (hover) cubeHover = true;
         ImU32 fill = hover ? IM_COL32(80, 140, 220, 230) : IM_COL32(70, 75, 90, 215);
         dl->AddConvexPolyFilled(q, 4, fill);
-        dl->AddPolyline(q, 4, IM_COL32(220, 220, 230, 255), ImDrawFlags_Closed, 1.4f);
+        dl->AddPolyline(q, 4, ink(255), ImDrawFlags_Closed, 1.4f);
 
         // Label centred on the face.
         ImVec2 ctr((q[0].x + q[1].x + q[2].x + q[3].x) * 0.25f,
                    (q[0].y + q[1].y + q[2].y + q[3].y) * 0.25f);
         ImVec2 ts = ImGui::CalcTextSize(f.label);
         dl->AddText(ImVec2(ctr.x - ts.x * 0.5f, ctr.y - ts.y * 0.5f),
-                    IM_COL32(255, 255, 255, 255), f.label);
+                    ink(255), f.label);
 
         // Press on a face arms a pending snap; the actual snap fires on RELEASE
         // (and only if the user didn't drag in between, so dragging the cube
@@ -167,7 +176,7 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
         float dist = std::sqrt((mp.x - cp.x) * (mp.x - cp.x) +
                                (mp.y - cp.y) * (mp.y - cp.y));
         bool hover = dist < 7.0f * ts;
-        ImU32 col = hover ? IM_COL32(255, 220, 80, 240) : IM_COL32(200, 200, 220, 200);
+        ImU32 col = hover ? IM_COL32(255, 220, 80, 240) : ink(200);
         dl->AddCircleFilled(cp, (hover ? 6.0f : 4.0f) * ts, col);
         if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             m_pendingClick = kCornerActions[i];
@@ -199,7 +208,7 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
             ImVec2 b2(ac.x - ar.dir.x * s - perp.x * s, ac.y - ar.dir.y * s - perp.y * s);
             float dx = mp.x - ac.x, dy = mp.y - ac.y;
             bool hover = std::sqrt(dx * dx + dy * dy) < s + 3.0f * ts;
-            ImU32 col = hover ? IM_COL32(255, 220, 80, 255) : IM_COL32(200, 200, 220, 220);
+            ImU32 col = hover ? IM_COL32(255, 220, 80, 255) : ink(220);
             dl->AddTriangleFilled(tip, b1, b2, col);
             if (hover) {
                 cubeHover = true;
@@ -252,7 +261,7 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
                 if (d < bestD) bestD = d;
             }
             bool hover = bestD < 8.0f * ts;
-            ImU32 col = hover ? IM_COL32(255, 220, 80, 255) : IM_COL32(210, 210, 230, 235);
+            ImU32 col = hover ? IM_COL32(255, 220, 80, 255) : ink(235);
             // Polyline body.
             for (int i = 0; i < seg; ++i) {
                 dl->AddLine(pts[i], pts[i + 1], col, 3.0f * ts);
@@ -284,16 +293,16 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag)
         ImVec2 hc(center.x + widgetR + 22.0f * ts, center.y - widgetR - 22.0f * ts);
         float dx = mp.x - hc.x, dy = mp.y - hc.y;
         bool hover = std::sqrt(dx * dx + dy * dy) < 10.0f * ts;
-        ImU32 fill = hover ? IM_COL32(255, 220, 80, 255) : IM_COL32(210, 210, 230, 230);
+        ImU32 fill = hover ? IM_COL32(255, 220, 80, 255) : ink(230);
         dl->AddCircleFilled(hc, 8.0f * ts, fill);
-        dl->AddCircle      (hc, 8.0f * ts, IM_COL32(60, 60, 70, 255), 0, 1.2f * ts);
+        dl->AddCircle      (hc, 8.0f * ts, paper(255), 0, 1.2f * ts);
         // Simple house glyph: triangle roof + small square body inside the circle.
         ImVec2 roofL(hc.x - 4.0f * ts, hc.y - 0.5f * ts), roofR(hc.x + 4.0f * ts, hc.y - 0.5f * ts),
                roofT(hc.x,             hc.y - 4.5f * ts);
-        dl->AddTriangleFilled(roofL, roofT, roofR, IM_COL32(60, 60, 70, 255));
+        dl->AddTriangleFilled(roofL, roofT, roofR, paper(255));
         dl->AddRectFilled(ImVec2(hc.x - 3.0f * ts, hc.y - 0.5f * ts),
                           ImVec2(hc.x + 3.0f * ts, hc.y + 3.5f * ts),
-                          IM_COL32(60, 60, 70, 255));
+                          paper(255));
         if (hover) {
             cubeHover = true;
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {

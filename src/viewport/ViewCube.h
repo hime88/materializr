@@ -25,8 +25,11 @@ public:
 
     // Render the view cube overlay. Call inside an ImGui window. Returns the
     // action if a face was clicked. `invertDrag` flips the orbit sign when the
-    // user drags the cube body (configurable in Settings).
-    ViewCubeAction render(Camera& camera, bool invertDrag = false);
+    // user drags the cube body (configurable in Settings). `lightMode` flips the
+    // "ink" (labels/borders/arrows/home) from light to dark for the light theme;
+    // the blue/grey cube faces and the yellow hover are unchanged.
+    ViewCubeAction render(Camera& camera, bool invertDrag = false,
+                          bool lightMode = false);
 
     // True while the mouse is over the cube/ring widget — the viewport uses
     // this to suppress its own selection logic so cube clicks don't pass through.

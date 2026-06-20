@@ -4803,7 +4803,9 @@ void Application::renderViewport() {
     }
 
     // ViewCube overlay
-    ViewCubeAction vcAction = m_viewCube->render(m_viewport->getCamera(), m_invertCubeDrag);
+    ViewCubeAction vcAction = m_viewCube->render(
+        m_viewport->getCamera(), m_invertCubeDrag,
+        m_themeManager && m_themeManager->getTheme() == Theme::Light);
     if (vcAction != ViewCubeAction::None) {
         handleViewCubeAction(static_cast<int>(vcAction));
     }
