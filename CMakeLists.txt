@@ -198,6 +198,7 @@ add_executable(materializr
     src/modeling/ShellOp.cpp
     src/modeling/TaperOp.cpp
     src/modeling/ScaleFaceOp.cpp
+    src/modeling/DefeatureOp.cpp
     src/modeling/ProjectSketchOp.cpp
     src/modeling/SplitBodyOp.cpp
     src/modeling/MirrorOp.cpp

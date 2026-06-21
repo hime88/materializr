@@ -45,6 +45,24 @@ private:
 };
 
 // ─── Project Sketch ──────────────────────────────────────────────────────────
+// ─── Remove Face (defeature) ─────────────────────────────────────────────────
+// Remove the picked face(s) and heal the surrounding faces back together —
+// e.g. take a baked fillet/chamfer back to a sharp edge so it can be re-applied,
+// or clean an unwanted round/hole off an imported part.
+class DefeatureController : public InteractiveOpController {
+protected:
+    const char* title() const override { return "Repair Geometry"; }
+    int onBegin(const IopContext& ctx) override;
+    std::unique_ptr<Operation> buildOp(const IopContext& ctx) override;
+    void panelBody(const IopContext& ctx, bool& changed) override;
+    void onCleanup() override;
+    float panelWidth() const override { return 280.0f; }
+
+private:
+    std::vector<TopoDS_Face> m_faces;
+};
+
+// ─── Project Sketch ──────────────────────────────────────────────────────────
 // Project a sketch onto the picked face along the sketch normal, then
 // engrave or emboss the projected regions — text wrapped onto a cylinder.
 class ProjectSketchController : public InteractiveOpController {

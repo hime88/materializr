@@ -2057,6 +2057,11 @@ void Application::handleToolAction(int action) {
             break;
         }
 
+        case ToolAction::RemoveFace: {
+            beginIop(m_defeatureCtl);
+            break;
+        }
+
         case ToolAction::EditFilletChamfer: {
             // Find the FilletOp / ChamferOp in history that owns the picked face,
             // then re-open it for editing with the existing radius / distance.
@@ -2972,17 +2977,20 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist) {
         baseBodies);
     const int nonEditable = bakedBodySteps + baseBodies;
     if (nonEditable > 0) {
-        std::string msg;
-        if (baseBodies > 0)
-            msg = std::to_string(baseBodies) + " body(ies) in this project have no "
-                  "construction history (base or frozen geometry). Fillets/features "
-                  "on them can't be edited \xE2\x80\x94 re-apply them to make them adjustable.";
-        else
-            msg = std::to_string(bakedBodySteps) + " feature(s) are baked from an "
-                  "older save and can't be edited \xE2\x80\x94 re-apply them to adjust.";
-        // Double the default dwell (4s → 8s): this load-time report is a long
-        // sentence the user needs time to actually read on a fresh start.
-        showToast(msg, 8.0);
+        // Honest wording: don't tell the user to "re-apply" — a baked fillet /
+        // chamfer has already consumed its edge, so there's nothing to select to
+        // redo it. The shapes are intact; point at Remove Face (defeaturing),
+        // which heals a baked round back to a sharp edge so it CAN be redone.
+        const int n        = baseBodies > 0 ? baseBodies : bakedBodySteps;
+        const char* what   = baseBodies > 0 ? "body(ies)" : "feature(s)";
+        std::string msg =
+            "This project was saved in an older format: " + std::to_string(n) + " " +
+            what + " are frozen and can't be edited by value. The shapes are intact "
+            "\xE2\x80\x94 to change a baked round/chamfer, select its face and use "
+            "Repair Geometry to restore the sharp edge, then redo it. New saves "
+            "won't have this.";
+        // Long, important sentence shown once on load — give it a 9s dwell.
+        showToast(msg, 9.0);
     }
 }
 

@@ -6,6 +6,7 @@
 #include "../modeling/TaperOp.h"
 #include "../modeling/ScaleFaceOp.h"
 #include "../modeling/ProjectSketchOp.h"
+#include "../modeling/DefeatureOp.h"
 #include "../modeling/Sketch.h"
 #include <cstdio>
 #include <cstdlib>
@@ -251,6 +252,55 @@ void TaperController::panelBody(const IopContext&, bool& changed) {
 }
 
 void TaperController::onCleanup() { m_faces.clear(); }
+
+// ─── Remove Face (defeature) ─────────────────────────────────────────────────
+
+int DefeatureController::onBegin(const IopContext& ctx) {
+    // Gather every selected face on ONE body — multi-select a few faces to
+    // remove them together.
+    m_faces.clear();
+    int body = -1;
+    for (const auto& e : ctx.selection.getSelection()) {
+        if (e.type != SelectionType::Face || e.bodyId < 0 || e.shape.IsNull())
+            continue;
+        if (body < 0) body = e.bodyId;
+        if (e.bodyId != body) continue; // one body per op
+        m_faces.push_back(TopoDS::Face(e.shape));
+    }
+    if (m_faces.empty()) return -1;
+    return body;
+}
+
+std::unique_ptr<Operation> DefeatureController::buildOp(const IopContext&) {
+    if (m_faces.empty()) return nullptr;
+    auto op = std::make_unique<DefeatureOp>();
+    op->setBody(bodyId());
+    for (const auto& f : m_faces) op->addFace(f);
+    return op;
+}
+
+void DefeatureController::panelBody(const IopContext&, bool&) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 240.0f);
+    ImGui::TextDisabled("Removes the selected face(s) and heals the surrounding "
+                        "faces back together — e.g. take a baked fillet back to "
+                        "a sharp edge so you can re-fillet it.");
+    ImGui::PopTextWrapPos();
+    ImGui::Separator();
+    ImGui::Text("%zu face(s) selected", m_faces.size());
+
+    if (previewOk()) {
+        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "Previewing removal");
+    } else {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 240.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
+                           "Can't remove: the neighbouring faces can't be "
+                           "extended to close the gap. Try a different face — a "
+                           "single fillet / round usually works.");
+        ImGui::PopTextWrapPos();
+    }
+}
+
+void DefeatureController::onCleanup() { m_faces.clear(); }
 
 // ─── Project Sketch ──────────────────────────────────────────────────────────
 

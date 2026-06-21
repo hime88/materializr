@@ -964,8 +964,10 @@ private:
     TaperController m_taperCtl;
     ScaleFaceController m_scaleFaceCtl;
     ProjectSketchController m_projectSketchCtl;
-    std::array<InteractiveOpController*, 4> m_iops{
-        &m_shellCtl, &m_taperCtl, &m_scaleFaceCtl, &m_projectSketchCtl};
+    DefeatureController m_defeatureCtl;
+    std::array<InteractiveOpController*, 5> m_iops{
+        &m_shellCtl, &m_taperCtl, &m_scaleFaceCtl, &m_projectSketchCtl,
+        &m_defeatureCtl};
     IopContext iopContext();
     bool anyIopActive() const {
         for (auto* c : m_iops) if (c->active()) return true;

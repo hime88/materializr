@@ -530,6 +530,11 @@ ToolAction Toolbar::renderFaceTools() {
     if (ImGui::Button("Shell", ImVec2(-1, bh(30))))
         action = ToolAction::Shell;
     tip("Hollow the body, removing the picked face. Wall thickness in the popup.");
+    if (ImGui::Button("Repair Geometry", ImVec2(-1, bh(30))))
+        action = ToolAction::RemoveFace;
+    tip("Delete the picked face(s) and heal the surrounding faces back together "
+        "— take a baked fillet/chamfer back to a sharp edge so it can be "
+        "re-applied, or clean a round/hole off an imported part.");
     if (ImGui::Button("Projection", ImVec2(-1, bh(30))))
         action = ToolAction::ProjectSketch;
     tip("Project a sketch onto this face along the sketch's normal, then "
