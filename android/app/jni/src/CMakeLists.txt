@@ -75,4 +75,4 @@ target_link_libraries(main PRIVATE ${GLES3_LIB} ${EGL_LIB} ${LOG_LIB} ${ANDROID_
 # Android native build is SEPARATE from the root CMakeLists, so this version
 # must be bumped by hand to match root project(VERSION ...) / build.gradle
 # versionName on every release. (It silently drifted to 0.9.7.1 through 1.0.x.)
-target_compile_definitions(main PRIVATE MATERIALIZR_VERSION="1.1.0")
+target_compile_definitions(main PRIVATE MATERIALIZR_VERSION="1.2.0")

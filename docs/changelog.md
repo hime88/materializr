@@ -3,6 +3,55 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [1.2.0] — 2026-06-20
+
+Features that were long overlooked, plus a round of parametric-reliability and
+viewport fixes. Backward compatible — existing projects open unchanged.
+
+### Added
+
+- **Move Hole** — slide a through-hole laterally across the face it pierces
+  (round, square, polygon; constant, countersunk, counterbored and stepped
+  holes). Reuses the Move tool + gizmo; under the hood a boolean re-cut, so
+  cavities are never filled. Survives save/reload as an editable step.
+- **Light theme for the viewport** — the background gradient, grid, and ViewCube
+  now follow the UI theme (dark-on-light grid + ink) instead of staying dark.
+- **Repair Geometry** (Face Operations) — remove a face and heal the surrounding
+  faces back together: take a baked fillet/chamfer back to a sharp edge so it can
+  be re-applied, or clean an unwanted round/hole off an imported part.
+- **Sketch grid opacity + shade** controls (Settings → Sketch) — dim the grid and
+  set its greyscale so it reads on a light/white body or a dark scene.
+- **Duplicate Sketch** + edit a sketch element's size (circle Ø / arc R) straight
+  from the Properties panel — for same-layout/different-holes variants.
+- **Editable circle diameter from history**, and **symmetry + pre-placement
+  alignment** sketch inferences.
+
+### Changed
+
+- **History** names each sketch step by its geometry and size ("Rectangle
+  80 × 45 mm") instead of a generic "Add sketch element"; **frozen (baked) steps
+  are marked amber** so they're easy to spot.
+- **Section view** offset range now adapts to the model's size (was a fixed
+  ±100 mm that couldn't traverse bigger parts).
+- The load-time "older save" warning is honest (no impossible "re-apply" advice —
+  it points at Repair Geometry) and dwells longer.
+
+### Fixed
+
+- **Grid no longer bleeds through bodies / punches through the face you sketch
+  on** (it's drawn after geometry with depth-writes off), and it now fades
+  cleanly under the opacity slider instead of leaving a grey ghost.
+- **Sketch on a flat-but-non-planar-surface face** (e.g. the slanted sides of a
+  scaled-down box) now works, and the grid aligns to the face edge instead of
+  sitting ~45° off.
+- **Parametric edits survive reload**: editing an op upstream of a boolean/delete
+  now propagates; sketch ids are preserved (sketch edits no longer bake);
+  circle-diameter edits reach the body; a failed sketch edit reverts cleanly
+  instead of half-building. **Move-hole now reloads editable** (was always baked).
+- **Push/pull no longer inverts** on a holed / annular face.
+- **Startup "(not responding)" freeze** — the launch update-check runs off the
+  main thread.
+
 ## [1.1.0] — 2026-06-18
 
 Feature + fix release, with a large pass on the Android touch experience.
