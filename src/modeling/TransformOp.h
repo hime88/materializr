@@ -32,6 +32,12 @@ public:
     // the sketch block; this only restores it for in-session undo.
     void addDetachSketch(int sketchId) { m_detachSketchIds.push_back(sketchId); }
 
+    // Sketches that move RIGIDLY WITH this body (a unison move: the user selected
+    // the body and its driving sketch and moved them together). Applying the same
+    // transform to the sketch's plane in this one op keeps it a single, atomic
+    // undo/redo step — the sketch always follows the body.
+    void addFollowSketch(int sketchId) { m_followSketchIds.push_back(sketchId); }
+
     // Getters
     int getBodyId() const { return m_bodyId; }
     TransformType getType() const { return m_type; }
@@ -80,4 +86,6 @@ private:
     std::vector<int> m_detachSketchIds;
     std::vector<std::pair<int, bool>> m_detachBefore;
     bool m_haveDetachBefore = false;
+    // Sketches that ride along rigidly with the body (unison move).
+    std::vector<int> m_followSketchIds;
 };

@@ -3157,39 +3157,39 @@ void Application::renderViewport() {
                             }
 
                             // ---- Parametric link classification (link model) ----
-                            // Tell apart a unison move (a sketch moved together
-                            // with the body it drives → stay linked, body follows
-                            // by re-derivation) from a lone move (sketch OR body
-                            // moved on its own → break the link / detach).
+                            // A 3D move breaks the parametric link and is applied as
+                            // a RIGID transform: the body translates/rotates as-is
+                            // (fillets, chamfers and features from other sketches all
+                            // ride along), which never fails — unlike re-deriving the
+                            // body at a new position, which can't re-attach a fillet
+                            // or a cut from an un-moved sketch. So a moved sketch (and
+                            // any sketch driving a moved body) is detached; parametric
+                            // editing stays available on sketches you DON'T move.
                             std::set<int> inDragBodies, inDragSketches;
                             for (auto& [id, _] : m_gizmoDragOriginals) inDragBodies.insert(id);
                             for (auto& [sid, _] : m_sketchGizmoDragSketches) inDragSketches.insert(sid);
                             std::map<int, std::set<int>> skLinks = sketchBodyLinks();
-                            std::set<int> cascadeDrivenBodies; // follow via re-derive (no transform)
-                            std::set<int> unisonSketches;      // moved WITH their body (re-link)
-                            std::set<int> detachSketches;      // link deliberately broken
-                            for (int s : inDragSketches) {
-                                auto it = skLinks.find(s);
-                                if (it == skLinks.end()) continue; // drives nothing → no link
-                                bool unison = false;
-                                for (int b : it->second)
-                                    if (inDragBodies.count(b)) {
-                                        unison = true;
-                                        cascadeDrivenBodies.insert(b);
-                                    }
-                                (unison ? unisonSketches : detachSketches).insert(s);
-                            }
-                            // A body moved without its driving sketch breaks that
-                            // sketch's link. These have no SketchTransformOp of
-                            // their own, so the body's op carries the de-link.
-                            std::set<int> bodyAloneDetach;
-                            for (int b : inDragBodies) {
-                                if (cascadeDrivenBodies.count(b)) continue;
+                            std::set<int> detachSketches;  // links to break (any moved, linked sketch)
+                            std::set<int> bodyAloneDetach; // detached sketches with no SketchTransformOp
+                            for (int s : inDragSketches)
+                                if (skLinks.count(s)) detachSketches.insert(s);
+                            for (int b : inDragBodies)
                                 for (auto& [s, bodies] : skLinks)
                                     if (bodies.count(b) && !inDragSketches.count(s)) {
                                         detachSketches.insert(s);
                                         bodyAloneDetach.insert(s);
                                     }
+                            // Unison sketches: in-drag sketches that drive an in-drag
+                            // body. On the single-body path these ride along inside the
+                            // body's TransformOp (one atomic op, so the sketch always
+                            // follows through undo/redo) and are skipped by the separate
+                            // SketchTransformOp loop. bodyFollowHandled tracks which.
+                            std::set<int> unisonSketches, bodyFollowHandled;
+                            for (int s : inDragSketches) {
+                                auto it = skLinks.find(s);
+                                if (it == skLinks.end()) continue;
+                                for (int b : it->second)
+                                    if (inDragBodies.count(b)) { unisonSketches.insert(s); break; }
                             }
 
                             // Shared pivot captured once at drag start.
@@ -3282,18 +3282,11 @@ void Application::renderViewport() {
                                     }
                                 }
                             } else if (isMulti) {
-                                // Batched commit: one ReplayOp covering all bodies
-                                // EXCEPT any that follow their sketch by re-derivation
-                                // (a unison move handles those via the cascade below).
+                                // Batched commit: one ReplayOp covering all bodies.
                                 ReplayOp::BodyState beforeState;
                                 for (auto& [id, orig] : m_gizmoDragOriginals) {
-                                    if (cascadeDrivenBodies.count(id)) continue;
                                     beforeState.push_back({id, orig});
                                 }
-                                afterState.erase(
-                                    std::remove_if(afterState.begin(), afterState.end(),
-                                        [&](const auto& e){ return cascadeDrivenBodies.count(e.first) > 0; }),
-                                    afterState.end());
                                 std::string label;
                                 std::string desc;
                                 if (gm == GizmoMode::Translate) {
@@ -3328,13 +3321,10 @@ void Application::renderViewport() {
                                 // in that state visually.
                                 op->execute(*m_document);
                                 m_history->pushExecuted(std::move(op));
-                            } else if (m_gizmoDragBodyId >= 0 &&
-                                       !cascadeDrivenBodies.count(m_gizmoDragBodyId)) {
+                            } else if (m_gizmoDragBodyId >= 0) {
                                 // Single body: keep the TransformOp path so the
                                 // Properties panel still lets the user edit the
                                 // translation/angle/scale after the fact.
-                                // (Skipped when this body is following its sketch in
-                                // a unison move — the cascade below re-derives it.)
                                 auto op = std::make_unique<TransformOp>();
                                 op->setBodyId(m_gizmoDragBodyId);
                                 op->setCenter(pivot.x, pivot.y, pivot.z);
@@ -3355,6 +3345,18 @@ void Application::renderViewport() {
                                 // Carry the body-only de-link so one undo reverts
                                 // both the move and the broken link.
                                 for (int s : bodyAloneDetach) op->addDetachSketch(s);
+                                // Unison: any in-drag sketch driving THIS body rides
+                                // along inside this op (moves + de-links atomically),
+                                // so it always follows the body through undo/redo.
+                                for (int s : unisonSketches) {
+                                    auto it = skLinks.find(s);
+                                    if (it != skLinks.end() &&
+                                        it->second.count(m_gizmoDragBodyId)) {
+                                        op->addFollowSketch(s);
+                                        op->addDetachSketch(s);
+                                        bodyFollowHandled.insert(s);
+                                    }
+                                }
                                 m_history->pushOperation(std::move(op), *m_document);
                             }
 
@@ -3379,17 +3381,19 @@ void Application::renderViewport() {
                                         ang * M_PI / 180.0);
                                 }
                                 for (auto& [sid, plnBefore] : m_sketchGizmoDragSketches) {
+                                    // Unison sketch already moved atomically inside the
+                                    // body's TransformOp (single-body path) — don't move
+                                    // it twice.
+                                    if (bodyFollowHandled.count(sid)) continue;
                                     auto op = std::make_unique<materializr::SketchTransformOp>();
                                     op->setSketch(sid);
                                     op->setTransform(trsf);
-                                    // Bundle the link change so undo reverts it too.
-                                    if (unisonSketches.count(sid))      op->setDetachTarget(0); // re-link
-                                    else if (detachSketches.count(sid)) op->setDetachTarget(1); // de-link
+                                    // Bundle the de-link so undo reverts it too.
+                                    if (detachSketches.count(sid)) op->setDetachTarget(1);
                                     m_history->pushOperation(std::move(op), *m_document);
                                 }
                             }
 
-                            // ---- Link-state for body-only de-links + unison follow ----
                             // bodyAloneDetach sketches have no SketchTransformOp; the
                             // single-body TransformOp branch above already absorbed
                             // them via addDetachSketch (undoable). For the rarer
@@ -3397,12 +3401,7 @@ void Application::renderViewport() {
                             if (isMulti)
                                 for (int s : bodyAloneDetach)
                                     if (auto sk = m_document->getSketch(s)) sk->setDetachedFromBody(true);
-                            // Unison: the body follows its now-moved sketch by
-                            // re-derivation (single source of truth → no double-move).
-                            for (int s : unisonSketches)
-                                cascadeFromSketchEdit(s);
-                            if (!detachSketches.empty() || !unisonSketches.empty())
-                                markDirty();
+                            if (!detachSketches.empty()) markDirty();
 
                             m_meshesDirty = true;
                         } catch (...) {}

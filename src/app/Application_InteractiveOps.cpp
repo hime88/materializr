@@ -2479,6 +2479,41 @@ std::map<int, std::set<int>> Application::sketchBodyLinks() const {
     return links;
 }
 
+std::string Application::linkHintFor(bool isBody, int id) const {
+    if (!m_document) return "";
+    auto links = sketchBodyLinks();
+    auto nameList = [&](const std::set<int>& ids, bool bodies) {
+        std::string s;
+        for (int v : ids) {
+            if (!s.empty()) s += ", ";
+            s += bodies ? m_document->getBodyName(v) : m_document->getSketchName(v);
+        }
+        return s;
+    };
+    if (isBody) {
+        std::set<int> live, detached;
+        for (const auto& [sid, bodyIds] : links) {
+            if (!bodyIds.count(id)) continue;
+            auto sk = m_document->getSketch(sid);
+            (sk && sk->isDetachedFromBody() ? detached : live).insert(sid);
+        }
+        if (live.empty() && detached.empty()) return "";
+        if (!live.empty())
+            return "Built from " + nameList(live, false) +
+                   " — editing it updates this body.";
+        return "Detached from " + nameList(detached, false) +
+               " — moved independently; sketch edits won't update this body.";
+    }
+    // Sketch: what body it drives + whether it's detached.
+    auto it = links.find(id);
+    if (it == links.end() || it->second.empty()) return "";
+    auto sk = m_document->getSketch(id);
+    std::string bodies = nameList(it->second, true);
+    if (sk && sk->isDetachedFromBody())
+        return "Detached — moved independently; edits won't update " + bodies + ".";
+    return "Drives " + bodies + " — editing this sketch updates it.";
+}
+
 void Application::cascadeFromSketchEdit(int sketchId) {
     if (sketchId < 0 || !m_history || !m_document) return;
     // A detached sketch has been deliberately broken out of unison with its

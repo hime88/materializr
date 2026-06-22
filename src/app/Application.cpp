@@ -262,6 +262,8 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
     m_propertiesPanel->setEventBus(m_eventBus.get());
     m_propertiesPanel->setRotatePlaneCallback([this](int planeId) { beginRotatePlaneAboutAxis(planeId); });
     m_propertiesPanel->setDirtyCallback([this]() { markDirty(); });
+    m_propertiesPanel->setLinkInfoCallback(
+        [this](bool isBody, int id) { return linkHintFor(isBody, id); });
     // Element-size edits from the Properties panel while sketching: snapshot +
     // re-solve inside recordSketchMutation (so it's one undoable SketchEditOp),
     // then cascade to any body built from the sketch.

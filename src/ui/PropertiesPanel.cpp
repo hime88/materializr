@@ -164,6 +164,18 @@ bool PropertiesPanel::render() {
             m_document->setBodyVisible(bodyId, visible);
         }
 
+        // Parametric-link hint (which sketch drives this body, and whether the
+        // link is live or was broken by moving one of them independently).
+        if (m_linkInfo) {
+            std::string hint = m_linkInfo(/*isBody=*/true, bodyId);
+            if (!hint.empty()) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", hint.c_str());
+                ImGui::PopTextWrapPos();
+            }
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
 
@@ -277,6 +289,18 @@ bool PropertiesPanel::render() {
         std::snprintf(selText, sizeof(selText), "%d %s(s) selected", count, typeName);
         ImGui::TextColored(materializr::accentText(), "%s", selText);
         ImGui::Separator();
+
+        // Parametric-link hint for a selected sketch (what it drives, and whether
+        // moving it independently has detached it from that body).
+        if (sketchLike && parentSketchId >= 0 && m_linkInfo) {
+            std::string hint = m_linkInfo(/*isBody=*/false, parentSketchId);
+            if (!hint.empty()) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", hint.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::Spacing();
+            }
+        }
 
         if (sketchLike && m_document && m_history && parentSketchId >= 0) {
             renderSketchConstraintsPanel(parentSketchId, modified);

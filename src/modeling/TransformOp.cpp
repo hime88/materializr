@@ -80,14 +80,17 @@ bool TransformOp::execute(Document& doc) {
         // Scale is deliberately skipped: it changes physical dimensions, which
         // a dimension-driven sketch shouldn't silently absorb. Effectively the
         // sketch detaches on Scale.
-        // Link model (2026-06): a body move no longer auto-drags its source
-        // sketch. Moving a body alone deliberately breaks it out of unison with
-        // its sketch (the gizmo commit marks the sketch detached); moving both
-        // together is handled by re-deriving the body from the moved sketch, not
-        // by a body transform. Auto-propagation here was also the root of the
-        // edit-after-move double-transform — so it's gone. m_previousSketchPlanes
-        // stays empty (the apply/undo loops below become no-ops).
+        // Link model (2026-06): a body move no longer AUTO-drags its source
+        // sketch (that auto-propagation caused the edit-after-move double-
+        // transform). Instead the gizmo commit explicitly lists the sketches that
+        // should ride along — a unison move (body + its driving sketch moved
+        // together). Capture their current planes so the apply loop below
+        // transforms them by the same rigid trsf, and undo restores them. This
+        // keeps the unison move a single atomic op: the sketch always follows.
         m_previousSketchPlanes.clear();
+        for (int sid : m_followSketchIds)
+            if (auto sk = doc.getSketch(sid))
+                m_previousSketchPlanes.push_back({sid, sk->getPlane()});
 
         // De-link any sketches this body-only move broke from the body. Capture
         // their prior detached state once so undo can restore the link.

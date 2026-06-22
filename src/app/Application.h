@@ -362,6 +362,10 @@ private:
     // sketch-sourced extrude / push-pull). Used by the gizmo commit to tell a
     // unison move (body + its driving sketch) from a lone move that de-links.
     std::map<int, std::set<int>> sketchBodyLinks() const;
+    // Human-readable parametric-link summary for the Properties panel: for a body
+    // (isBody=true) which sketch drives it, for a sketch which body it drives, plus
+    // whether the link is live or was broken by an independent 3D move. "" = none.
+    std::string linkHintFor(bool isBody, int id) const;
     void updateInteractiveExtrude();
     // Signed distance to pass to ExtrudeOp: Subtract cuts into the body (the
     // profile normal points outward), so it uses the negated distance.

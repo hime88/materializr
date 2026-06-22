@@ -47,6 +47,12 @@ public:
     // Called for non-history plane mutations (Flip Normal) so the host marks
     // the project dirty.
     void setDirtyCallback(std::function<void()> cb) { m_markDirty = std::move(cb); }
+    // Returns a human-readable parametric-link hint for a selected body
+    // (isBody=true) or sketch (isBody=false), or "" if there's no link to show.
+    // The host (Application) computes it from the sketch→body op graph.
+    void setLinkInfoCallback(std::function<std::string(bool, int)> cb) {
+        m_linkInfo = std::move(cb);
+    }
 
     // Set which history step is being edited (-1 for none)
     void setEditingStep(int step);
@@ -88,6 +94,7 @@ private:
     int m_activeSketchId = -1;
     materializr::SketchTool* m_sketchTool = nullptr;
     std::function<void(const std::function<void()>&)> m_sketchMutate;
+    std::function<std::string(bool, int)> m_linkInfo;
 
     // Buffered text for each editable constraint value in the panel above.
     // Keyed by `constraint id`. Wiped when the panel switches to a
