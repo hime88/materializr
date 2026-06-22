@@ -97,6 +97,13 @@ void Window::swapBuffers() {
     SDL_GL_SwapWindow(m_window);
 }
 
+bool Window::isForeground() const {
+    if (!m_window) return true;
+    Uint32 f = SDL_GetWindowFlags(m_window);
+    if (f & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) return false;
+    return (f & SDL_WINDOW_INPUT_FOCUS) != 0;
+}
+
 int Window::pollEvents(int waitMs) {
     if (waitMs > 0) SDL_WaitEventTimeout(nullptr, waitMs);
     // 0 = nothing, 1 = trivial (motion / expose), 2 = significant (click / key / scroll …)

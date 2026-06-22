@@ -4528,22 +4528,30 @@ void Application::run() {
         // True while any interactive tool or animation is in flight and needs
         // continuous rendering even with no user input.
         auto hasActiveWork = [&]() -> bool {
-            if (m_pushPullActive || m_gizmoDragging || m_edgeOpActive ||
-                m_resizeCylActive || m_moveFaceActive || m_revolveActive ||
-                m_deferredHeavyTask || m_showUpdatePopup ||
-                !m_toastText.empty())
+            // Always-on: self-completing work that needs frames to FINISH —
+            // a pending heavy task to run, a toast that must tick down and clear
+            // (regressed once as "toast never clears"), a modal popup, or an
+            // extension tool that may animate on its own.
+            if (m_deferredHeavyTask || m_showUpdatePopup || !m_toastText.empty())
                 return true;
-            // Sketch mode renders continuously ONLY for a short grace window
-            // after the last input (m_sketchActiveUntil, refreshed on any event
-            // below), then idles like the main viewport. The grace comfortably
-            // covers the ~0.3s hover-dwell charge and keeps interaction smooth;
-            // previously sketch-idle pinned a flat 60fps for nothing (no input,
-            // nothing animating) — wasteful on the desktop iGPU and a battery/
-            // thermal sink on mobile.
-            if (m_inSketchMode && SDL_GetTicks() / 1000.0 < m_sketchActiveUntil)
-                return true;
-            for (auto* c : m_iops) if (c && c->active()) return true;
             if (PluginRegistry::instance().activeTool()) return true;
+            // Interactive manipulation states (sketch + every live preview/op)
+            // are INPUT-driven: they only need continuous frames while the user
+            // is acting on them. Render for a short grace window after the last
+            // input (m_interactiveGraceUntil, refreshed on any event below), then
+            // idle — the preview stays on screen, frozen, and wakes instantly on
+            // the next drag/keypress. The grace also covers the ~0.3s sketch
+            // hover-dwell charge. Previously each of these pinned a flat 60fps
+            // the whole time it was open (e.g. a push/pull left mid-edit) —
+            // wasteful on the iGPU, a battery/thermal sink on mobile.
+            bool interactive =
+                m_inSketchMode || m_pushPullActive || m_gizmoDragging ||
+                m_edgeOpActive || m_resizeCylActive || m_moveFaceActive ||
+                m_revolveActive;
+            if (!interactive)
+                for (auto* c : m_iops) if (c && c->active()) { interactive = true; break; }
+            if (interactive && SDL_GetTicks() / 1000.0 < m_interactiveGraceUntil)
+                return true;
             return false;
         };
 
@@ -4574,10 +4582,18 @@ void Application::run() {
             }
         }
 
-        // When idle, block up to 500 ms for the next event. 500 ms is enough
-        // for autosave / update-check polling; anything interactive wakes us
-        // immediately via SDL events.
-        int waitMs = (m_wakeFrames == 0 && !hasActiveWork()) ? 500 : 0;
+        // Suspend rendering entirely while backgrounded (not the focused window,
+        // or minimized): a backgrounded GL app still composited at 60fps is what
+        // makes the whole desktop's cursor lag on a shared GPU, and it's pure
+        // waste on mobile. Autosave + deferred tasks below still run; FOCUS_GAINED
+        // is a significant event so we repaint instantly on return.
+        const bool foreground = m_window->isForeground();
+
+        // When idle (or backgrounded), block up to 500 ms for the next event.
+        // 500 ms is enough for autosave / update-check polling; anything
+        // interactive wakes us immediately via SDL events. Force the wait when
+        // backgrounded so an active preview can't busy-spin pollEvents(0).
+        int waitMs = (!foreground || (m_wakeFrames == 0 && !hasActiveWork())) ? 500 : 0;
         int eventLevel = m_window->pollEvents(waitMs);
         // Significant events (click, key, scroll, resize, focus): 5 frames.
         // Trivial events (mouse motion, expose): 25 frames — at 60 fps that is
@@ -4591,14 +4607,14 @@ void Application::run() {
         else if (eventLevel == 1)
             m_wakeFrames = std::max(m_wakeFrames, 25);
 
-        // Any input refreshes the sketch-mode render grace (see hasActiveWork):
-        // keep rendering for kSketchGraceSec after the last event, then idle.
+        // Any input refreshes the interactive-state render grace (see
+        // hasActiveWork): keep rendering for kGraceSec after the last event,
+        // then idle. 1s comfortably covers the ~0.3s sketch hover-dwell charge;
+        // rendering resumes instantly on the next event, so it feels snappy while
+        // keeping idle previews (sketch, push/pull, …) at ~0fps.
         if (eventLevel > 0) {
-            // 1s comfortably covers the ~0.3s hover-dwell charge; rendering
-            // resumes instantly on the next event, so a short grace feels snappy
-            // while keeping sketch-idle at ~0fps (mobile battery/thermal).
-            constexpr double kSketchGraceSec = 1.0;
-            m_sketchActiveUntil = SDL_GetTicks() / 1000.0 + kSketchGraceSec;
+            constexpr double kGraceSec = 1.0;
+            m_interactiveGraceUntil = SDL_GetTicks() / 1000.0 + kGraceSec;
         }
 
         // Last frame's GL (driver/ImGui render) can leave the SSE FPU in
@@ -4697,7 +4713,7 @@ void Application::run() {
         // Skip rendering entirely when nothing has changed — saves ~30 % idle
         // GPU on a static viewport. hasActiveWork() is re-evaluated after the
         // deferred task and close checks above may have changed state.
-        if (m_wakeFrames == 0 && !hasActiveWork()) continue;
+        if (!foreground || (m_wakeFrames == 0 && !hasActiveWork())) continue;
         if (m_wakeFrames > 0) m_wakeFrames--;
         ++perfRendered;   // passed the idle skip → this iteration renders a frame
 

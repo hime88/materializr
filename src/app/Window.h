@@ -31,6 +31,11 @@ public:
     //          2 = significant (click, key, scroll, resize, focus, touch).
     int pollEvents(int waitMs = 0);
 
+    // True when this is the active foreground window (has input focus and is not
+    // minimized/hidden). The main loop suspends rendering when false so a
+    // backgrounded app uses ~no GPU (and stops contending with the compositor).
+    bool isForeground() const;
+
     // Drawable (framebuffer) size in pixels — may exceed window size on HiDPI.
     void framebufferSize(int& w, int& h) const;
 
