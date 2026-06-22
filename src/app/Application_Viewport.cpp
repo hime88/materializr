@@ -4215,6 +4215,22 @@ void Application::renderViewport() {
                             }
                         }
                     }
+                    // Selected circles/arcs: dragging their defining points moves the
+                    // whole curve rigidly (centre carries the circle; centre+ends carry
+                    // the arc), so the gizmo arms on a rim-selected circle too.
+                    for (int cid : m_sketchTool->getSelectedCircles()) {
+                        for (const auto& c : m_activeSketch->getCircles())
+                            if (c.id == cid) { involved.insert(c.centerPointId); break; }
+                    }
+                    for (int aid : m_sketchTool->getSelectedArcs()) {
+                        for (const auto& a : m_activeSketch->getArcs())
+                            if (a.id == aid) {
+                                involved.insert(a.centerPointId);
+                                involved.insert(a.startPointId);
+                                involved.insert(a.endPointId);
+                                break;
+                            }
+                    }
                     glm::vec2 c{0.0f};
                     int nInv = 0;
                     for (int id : involved)
@@ -4541,8 +4557,9 @@ void Application::renderViewport() {
                 // Hit-test helper shared by box-select start and chain-select
                 // (double-click). Mirrors handleSelectTool: nearest point first,
                 // then a nearby line, within the same tolerance.
-                auto pickSketchAt = [&](glm::vec2 pos, int& outPointId, int& outLineId) {
-                    outPointId = -1; outLineId = -1;
+                auto pickSketchAt = [&](glm::vec2 pos, int& outPointId, int& outLineId,
+                                        int& outCurveId) {
+                    outPointId = -1; outLineId = -1; outCurveId = -1;
                     const float pointTol = 0.3f; // matches SketchTool::findCoincidentPoint
                     for (const auto& pt : m_activeSketch->getPoints()) {
                         if (glm::length(pos - pt.pos) < pointTol) { outPointId = pt.id; return; }
@@ -4563,6 +4580,30 @@ void Application::renderViewport() {
                             outLineId = l.id; bestD = d;
                         }
                     }
+                    // Circle / arc perimeters — only consulted when no line landed,
+                    // mirroring SketchTool::handleSelectTool. Clicking the blue rim
+                    // (not just the tiny centre point) counts as hitting the element.
+                    if (outLineId < 0) {
+                        float bestC = 0.0f;
+                        for (const auto& c : m_activeSketch->getCircles()) {
+                            const SketchPoint* ctr = m_activeSketch->getPoint(c.centerPointId);
+                            if (!ctr) continue;
+                            float d = std::abs(glm::distance(pos, ctr->pos) -
+                                               static_cast<float>(c.radius));
+                            if (d < lineTol && (outCurveId < 0 || d < bestC)) {
+                                outCurveId = c.id; bestC = d;
+                            }
+                        }
+                        for (const auto& a : m_activeSketch->getArcs()) {
+                            const SketchPoint* ctr = m_activeSketch->getPoint(a.centerPointId);
+                            if (!ctr) continue;
+                            float d = std::abs(glm::distance(pos, ctr->pos) -
+                                               static_cast<float>(a.radius));
+                            if (d < lineTol && (outCurveId < 0 || d < bestC)) {
+                                outCurveId = a.id; bestC = d;
+                            }
+                        }
+                    }
                 };
 
                 if (gizmoOwnsInput) {
@@ -4574,8 +4615,8 @@ void Application::renderViewport() {
                     //   on a line → select every line in its connected chain
                     //               (lines sharing endpoints, transitively),
                     //   empty space → select every element in the sketch.
-                    int hitPt = -1, hitLn = -1;
-                    pickSketchAt(sketchCoord, hitPt, hitLn);
+                    int hitPt = -1, hitLn = -1, hitCv = -1;
+                    pickSketchAt(sketchCoord, hitPt, hitLn, hitCv);
                     if (hitLn >= 0) {
                         // BFS over lines via shared endpoint ids.
                         std::set<int> selPts, selLns;
@@ -4637,9 +4678,9 @@ void Application::renderViewport() {
                     // that screen position underneath the popup.
                     // Pick first to decide between element-drag and box-select.
                     bool tryBoxSelect = (m_sketchTool->getMode() == SketchToolMode::Select);
-                    int hitPt = -1, hitLn = -1;
-                    if (tryBoxSelect) pickSketchAt(sketchCoord, hitPt, hitLn);
-                    bool hitElement = (hitPt >= 0 || hitLn >= 0);
+                    int hitPt = -1, hitLn = -1, hitCv = -1;
+                    if (tryBoxSelect) pickSketchAt(sketchCoord, hitPt, hitLn, hitCv);
+                    bool hitElement = (hitPt >= 0 || hitLn >= 0 || hitCv >= 0);
 
                     if (tryBoxSelect && !hitElement && m_boxSelect) {
                         // Empty space in Select mode → start a box-select drag.

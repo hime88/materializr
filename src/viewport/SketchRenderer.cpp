@@ -160,6 +160,59 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
             if (!lv.empty())
                 uploadAndDraw(lv, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
         }
+        const auto& selCircles = tool->getSelectedCircles();
+        if (!selCircles.empty()) {
+            const int segments = 64;
+            std::vector<float> cv;
+            for (const auto& c : sketch->getCircles()) {
+                if (!selCircles.count(c.id)) continue;
+                const SketchPoint* center = sketch->getPoint(c.centerPointId);
+                if (!center) continue;
+                float r = static_cast<float>(c.radius);
+                for (int i = 0; i < segments; i++) {
+                    float a1 = 2.0f * M_PI * i / segments;
+                    float a2 = 2.0f * M_PI * (i + 1) / segments;
+                    glm::vec3 w1 = toWorld(sketch, glm::vec2(center->pos.x + r * std::cos(a1),
+                                                             center->pos.y + r * std::sin(a1)));
+                    glm::vec3 w2 = toWorld(sketch, glm::vec2(center->pos.x + r * std::cos(a2),
+                                                             center->pos.y + r * std::sin(a2)));
+                    cv.push_back(w1.x); cv.push_back(w1.y); cv.push_back(w1.z);
+                    cv.push_back(w2.x); cv.push_back(w2.y); cv.push_back(w2.z);
+                }
+            }
+            if (!cv.empty())
+                uploadAndDraw(cv, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
+        }
+        const auto& selArcs = tool->getSelectedArcs();
+        if (!selArcs.empty()) {
+            const int segments = 32;
+            std::vector<float> av;
+            for (const auto& arc : sketch->getArcs()) {
+                if (!selArcs.count(arc.id)) continue;
+                const SketchPoint* center = sketch->getPoint(arc.centerPointId);
+                const SketchPoint* start = sketch->getPoint(arc.startPointId);
+                const SketchPoint* end = sketch->getPoint(arc.endPointId);
+                if (!center || !start || !end) continue;
+                float startAngle = std::atan2(start->pos.y - center->pos.y,
+                                              start->pos.x - center->pos.x);
+                float endAngle = std::atan2(end->pos.y - center->pos.y,
+                                            end->pos.x - center->pos.x);
+                if (endAngle < startAngle) endAngle += 2.0f * M_PI;
+                float r = static_cast<float>(arc.radius);
+                for (int i = 0; i < segments; i++) {
+                    float a1 = startAngle + (static_cast<float>(i) / segments) * (endAngle - startAngle);
+                    float a2 = startAngle + (static_cast<float>(i + 1) / segments) * (endAngle - startAngle);
+                    glm::vec3 w1 = toWorld(sketch, glm::vec2(center->pos.x + r * std::cos(a1),
+                                                             center->pos.y + r * std::sin(a1)));
+                    glm::vec3 w2 = toWorld(sketch, glm::vec2(center->pos.x + r * std::cos(a2),
+                                                             center->pos.y + r * std::sin(a2)));
+                    av.push_back(w1.x); av.push_back(w1.y); av.push_back(w1.z);
+                    av.push_back(w2.x); av.push_back(w2.y); av.push_back(w2.z);
+                }
+            }
+            if (!av.empty())
+                uploadAndDraw(av, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
+        }
         if (!selPoints.empty()) {
             std::vector<float> pv;
             for (const auto& p : sketch->getPoints()) {
