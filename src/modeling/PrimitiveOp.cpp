@@ -19,10 +19,17 @@ PrimitiveOp::PrimitiveOp() = default;
 
 namespace {
 
-// Axis2 placed at (ox, oy, oz) with +Z as the primary direction. OCCT's
-// MakeCylinder / MakeCone / MakeTorus need an Ax2; sphere takes a gp_Pnt.
+// The UI is Z-up (user Z = the floor-up axis) but the world is Y-up (the ground
+// grid is the world XZ plane). User (x,y,z) maps to world (x, z, y): user Z (up)
+// → world Y, user Y (depth) → world Z. Primitives are authored in user coords and
+// built in world here, so cylinders/cones/torus STAND UP along the user's up axis
+// instead of lying along OCCT's default Z (the user's depth).
+gp_Pnt worldPnt(double ox, double oy, double oz) {
+    return gp_Pnt(ox, oz, oy);
+}
+// Ax2 at the user origin with the user's up (world Y) as the primary direction.
 gp_Ax2 axisAt(double ox, double oy, double oz) {
-    return gp_Ax2(gp_Pnt(ox, oy, oz), gp_Dir(0.0, 0.0, 1.0));
+    return gp_Ax2(worldPnt(ox, oy, oz), gp_Dir(0.0, 1.0, 0.0));
 }
 
 const char* kindLabel(PrimitiveOp::Kind k) {
@@ -44,8 +51,9 @@ bool PrimitiveOp::execute(Document& doc) {
         switch (m_kind) {
             case Kind::Box:
                 if (m_x <= 0.0 || m_y <= 0.0 || m_z <= 0.0) return false;
-                s = BRepPrimAPI_MakeBox(gp_Pnt(m_ox, m_oy, m_oz),
-                                        m_x, m_y, m_z).Shape();
+                // User W(x)/D(y)/H(z) → world X / Z / Y so Height grows upward.
+                s = BRepPrimAPI_MakeBox(worldPnt(m_ox, m_oy, m_oz),
+                                        m_x, m_z, m_y).Shape();
                 break;
             case Kind::Cylinder:
                 if (m_radius <= 0.0 || m_height <= 0.0) return false;
@@ -54,7 +62,7 @@ bool PrimitiveOp::execute(Document& doc) {
                 break;
             case Kind::Sphere:
                 if (m_radius <= 0.0) return false;
-                s = BRepPrimAPI_MakeSphere(gp_Pnt(m_ox, m_oy, m_oz),
+                s = BRepPrimAPI_MakeSphere(worldPnt(m_ox, m_oy, m_oz),
                                            m_radius).Shape();
                 break;
             case Kind::Cone:

@@ -4570,6 +4570,10 @@ void Application::run() {
     const bool kPerf = std::getenv("MZR_PERF") != nullptr;
     uint32_t perfLastMs = SDL_GetTicks();
     int perfRendered = 0, perfIters = 0;
+    // Startup render-grace: keep drawing for the first few seconds regardless of
+    // reported window focus, so the UI always appears after the loading screen
+    // even if the WM is slow to hand the new window focus. See foreground below.
+    const uint32_t runStartMs = SDL_GetTicks();
 
     while (true) {
         // True while any interactive tool or animation is in flight and needs
@@ -4641,7 +4645,13 @@ void Application::run() {
         // froze the startup splash→UI handoff until the user tapped the screen.
         const bool foreground = true;
 #else
-        const bool foreground = m_window->isForeground();
+        // Desktop: respect window focus to suspend when backgrounded — BUT force
+        // rendering for a short grace after launch. The WM may not report
+        // INPUT_FOCUS for a beat (especially when launched from a terminal that
+        // keeps focus), and the idle-skip below would otherwise leave the first
+        // real UI frame undrawn behind the loading screen until the user clicks.
+        const bool foreground = m_window->isForeground() ||
+                                (SDL_GetTicks() - runStartMs < 3000u);
 #endif
 
         // When idle (or backgrounded), block up to 500 ms for the next event.
