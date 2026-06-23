@@ -232,23 +232,30 @@ void Application::renderViewport() {
                 }
                 if (s_hideMinor) minorAlpha = 0.0f;
             }
-            // Fade around the centre of the CURRENT VIEW (the view ray's
-            // intersection with the grid plane), not the orbit target —
-            // cursor-zoom walks the view away from the target, and with the
-            // fade still centred there, zooming in moved the whole viewport
-            // outside the (shrinking) fade radius: "the sketch grid
-            // disappears entirely".
-            glm::vec3 fadeCenter = cam.getTarget();
+            // Centre the fade on the point of the plane directly under the camera
+            // (the eye's projection onto the plane). It's always finite and moves
+            // with the camera, so the fade follows cursor-zoom (the reason we left
+            // the orbit target) WITHOUT the divergence the view-ray∩plane had: as
+            // the view approaches edge-on that intersection raced to the horizon
+            // and snapped back on crossing, a one-frame brightness pop that read as
+            // a glitch. The eye-projection has no such discontinuity. For a view
+            // ray that genuinely hits the plane near the camera, blend toward that
+            // hit so framing stays centred where you're looking at normal angles.
+            glm::vec3 ro = cam.getPosition();
+            float eyeH = glm::dot(ro - gp.origin, gp.normal);
+            glm::vec3 fadeCenter = ro - eyeH * gp.normal; // eye → plane
             {
-                glm::vec3 ro = cam.getPosition();
-                glm::vec3 rd = cam.getTarget() - cam.getPosition();
+                glm::vec3 rd = cam.getTarget() - ro;
                 float rl = glm::length(rd);
                 if (rl > 1e-6f) {
                     rd /= rl;
                     float denom = glm::dot(rd, gp.normal);
                     if (std::abs(denom) > 1e-6f) {
                         float t = glm::dot(gp.origin - ro, gp.normal) / denom;
-                        if (t > 0.0f) fadeCenter = ro + rd * t;
+                        // Only adopt the look-point when it's a sane, near hit —
+                        // not the horizon-bound intersection at grazing angles.
+                        float cap = std::max(fadeDist, 10.0f) * 4.0f;
+                        if (t > 0.0f && t < cap) fadeCenter = ro + rd * t;
                     }
                 }
             }
@@ -261,13 +268,31 @@ void Application::renderViewport() {
             // opacity drops; flatten it (huge fade distance) so opacity is the
             // only thing dimming the grid. The angled world view keeps its soft
             // horizon fade.
-            float gridFade = sketching ? 1.0e6f : std::max(fadeDist, 10.0f);
+            float gridFade;
+            float worldGridAlpha = m_sketchGridOpacity;
+            if (sketching) {
+                gridFade = 1.0e6f;
+            } else {
+                gridFade = std::max(fadeDist, 10.0f);
+                // Near edge-on the whole visible grid sits beyond the fade disc and
+                // vanishes. Grow the fade radius hard as the view grazes the plane
+                // so the grid reaches the horizon and stays drawn (the pristine-grid
+                // coverage greys distant cells, so no moiré). NOTE: no alpha fade
+                // here — basing it on the view-to-target angle wrongly blanked the
+                // grid whenever you looked horizontally at something ABOVE it.
+                glm::vec3 vd = cam.getTarget() - cam.getPosition();
+                float vl = glm::length(vd);
+                if (vl > 1e-6f) {
+                    float graze = std::abs(glm::dot(vd / vl, gp.normal)); // 0=edge-on,1=face-on
+                    gridFade /= std::max(graze, 0.005f);                  // up to ~200× near grazing
+                }
+            }
             // depthBias: + draws the grid ON the coplanar sketch face; - lets a
             // coplanar body face (e.g. a body sitting on the XZ ground) occlude
             // the ground grid instead of it bleeding through.
             m_grid->render(view, proj, fadeCenter, gridFade,
                            gp, std::max(m_sketchGridStep, 0.01f),
-                           minorAlpha, m_sketchGridOpacity /*globalAlpha*/,
+                           minorAlpha, worldGridAlpha /*globalAlpha*/,
                            sketching ? 1.0f : 0.0f /*sketchGrid: uniform single tier*/,
                            sketching ? 0.0005f : -0.0005f /*depthBias*/,
                            lightBg ? 1.0f : 0.0f /*lightBg palette*/,
