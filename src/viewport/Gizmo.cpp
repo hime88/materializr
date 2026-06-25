@@ -33,11 +33,11 @@ void main() {
 )";
 
 static constexpr float kAxisLength = 1.0f;
-static constexpr float kConeBaseRadius = 0.06f;
+static constexpr float kConeBaseRadius = 0.08f;
 static constexpr float kConeHeight = 0.2f;
-static constexpr float kShaftRadius = 0.015f;
+static constexpr float kShaftRadius = 0.025f;
 static constexpr float kRingRadius = 0.75f;
-static constexpr float kRingTubeRadius = 0.015f;
+static constexpr float kRingTubeRadius = 0.025f;
 static constexpr float kCubeSize = 0.08f;
 static constexpr float kCubeOffset = 1.05f;
 static constexpr int kSegments = 16;
