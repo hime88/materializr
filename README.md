@@ -57,10 +57,13 @@ tangent, 15° increments) and opt-in dimensions & constraints. **Text** as
 real outline geometry (three bundled fonts) and **SVG import** with live
 placement preview — both become ordinary closed regions you can extrude.
 
-**Model** — push/pull, extrude, revolve, sweep, loft, booleans,
-fillet/chamfer, shell, mirror, linear & radial patterns, split, align.
-Direct face editing: **taper** (draft), **scale face** (pinch a wing tip
-into a winglet), edit a hole or boss to an exact diameter.
+**Model** — push/pull, extrude, **lathe** (spin a sketch profile around an
+axis into a solid), **revolve** (rotate a body around an axis — watch a fan
+spin or a hinge open), sweep, loft, booleans, fillet/chamfer, shell, mirror,
+linear & circular patterns, split, align. Drop in a **primitive** (box,
+cylinder, sphere, cone, torus) when that's the faster start. Direct face
+editing: **taper** (draft), **scale face** (pinch a wing tip into a winglet),
+edit a hole or boss to an exact diameter.
 
 **Detail** — validated **screw threads** (internal & external, standard
 coarse defaults from the diameter), and **Projection**: engrave or emboss
@@ -77,6 +80,30 @@ auto-save, undo everywhere.
 cutters and 2.5D CNC), SVG import, PNG viewport export, and a
 compact native `.materializr` format that stores bodies, sketches, and
 the full history.
+
+## Known limitations
+
+A few rough edges are deliberate trade-offs for now, not bugs — worth knowing
+up front:
+
+- **Editing a body *after* you move it works only if it has no fillets,
+  chamfers, or booleans.** Move a plain extruded body and its sketch stays
+  linked, so you can keep tweaking dimensions. Move one that's been filleted or
+  cut, and the link is dropped (the move is still fine — you just can't
+  re-derive it from the sketch afterward). *Why:* re-deriving means re-applying
+  those features to the moved shape, and that needs stable face/edge IDs that
+  survive the move (the classic "topological naming" problem). Until that
+  subsystem lands, a featured body de-links on move rather than risk a wrong or
+  broken result.
+
+- **Threads have to be the last thing you do to a body.** Once a part is
+  threaded, further operations on it are refused with a prompt to delete the
+  thread, make your change, and re-apply it. *Why:* a thread is heavy,
+  per-turn geometry; re-running cuts or fillets across it is unreliable, so
+  threading is treated as a terminal finishing step rather than something you
+  build on top of.
+
+These are tracked and on the roadmap; both ease once topological naming is in.
 
 ## Documentation
 
