@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 project(Materializr VERSION 1.2.6 LANGUAGES CXX)
 
+# macOS: deliberately do NOT pin CMAKE_OSX_DEPLOYMENT_TARGET. The bundled Homebrew
+# OpenCASCADE/SDL2 dylibs are built for the build host's macOS, so they — not our
+# compile flag — set the real floor of a packaged .dmg. Letting the binary inherit
+# the host target keeps it consistent with those dylibs (no "built for newer
+# version" linker warnings), and packaging/macos/build-dmg.sh derives the true
+# LSMinimumSystemVersion from the actual binaries so the plist can't lie. (Override
+# with -DCMAKE_OSX_DEPLOYMENT_TARGET=… only alongside dylibs built for that target.)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -73,10 +81,12 @@ target_link_libraries(imgui_lib PUBLIC ${MZ_SDL2_TARGET})
 find_package(OpenGL REQUIRED)
 
 # OpenCASCADE
-if(WIN32)
-    # Windows: OpenCASCADE is provided by vcpkg (see vcpkg.json). Its CMake config
-    # exports the same TK* targets and sets OpenCASCADE_INCLUDE_DIR, so the rest
-    # of this file is identical to the Linux path.
+if(WIN32 OR APPLE)
+    # Windows (vcpkg) and macOS (Homebrew: `brew install opencascade`) both ship a
+    # clean OpenCASCADE CMake config that exports the TK* targets and sets
+    # OpenCASCADE_INCLUDE_DIR directly — no path patching needed (unlike the Debian
+    # packages handled in the else branch). The Homebrew config lives under the brew
+    # prefix; pass -DCMAKE_PREFIX_PATH="$(brew --prefix)" if CMake doesn't find it.
     find_package(OpenCASCADE CONFIG REQUIRED)
 else()
 # Linux: work around missing libtbb-dev symlinks by patching cmake files locally.
@@ -291,9 +301,13 @@ if(WIN32)
     message(STATUS "OpenCASCADE libraries: ${OpenCASCADE_LIBRARIES}")
     target_link_libraries(materializr PRIVATE ${OpenCASCADE_LIBRARIES})
 else()
-    # OCCT 7.8 renamed the data-exchange toolkits (TKSTEP -> TKDESTEP, etc.).
-    # Pick names by version so we link on both pre- and post-refactor system
-    # OCCT (Linux distros are now shipping 7.9+).
+    # Linux (system OCCT) and macOS (Homebrew) link the explicit set of toolkits
+    # the app actually uses. This is deliberately NOT OCCT's umbrella
+    # ${OpenCASCADE_LIBRARIES}: that pulls in the Draw/test harnesses (TKDraw,
+    # TKViewerTest, TKQADraw, ...), which the app never calls and which bloat the
+    # bundled macOS .dmg with ~dozens of extra dylibs. OCCT 7.8 renamed the
+    # data-exchange toolkits (TKSTEP -> TKDESTEP, etc.); pick names by version so
+    # we link on both pre- and post-refactor OCCT (distros + Homebrew ship 7.9+).
     if(OpenCASCADE_VERSION VERSION_GREATER_EQUAL 7.8)
         set(OCCT_DATAEXCHANGE_LIBS TKDESTEP TKDEIGES TKDESTL)
     else()
@@ -345,6 +359,15 @@ if(MSVC)
     target_compile_definitions(materializr PRIVATE
         _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(materializr PRIVATE /bigobj)
+endif()
+
+if(APPLE)
+    # OpenGL was deprecated on macOS 10.14; silence the framework headers app-wide.
+    # gl_common.h also defines this, but ImGui's GL3 backend pulls <OpenGL/gl3.h>
+    # in on its own, so define it on both targets. Apple still ships/supports the
+    # framework, and there's no Metal/MoltenVK port yet.
+    target_compile_definitions(materializr PRIVATE GL_SILENCE_DEPRECATION)
+    target_compile_definitions(imgui_lib PRIVATE GL_SILENCE_DEPRECATION)
 endif()
 
 # Surface the project version to the C++ code so About / update-checker can use

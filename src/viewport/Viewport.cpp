@@ -73,36 +73,6 @@ void Viewport::setSamples(int samples)
     createFramebuffer();
 }
 
-void Viewport::renderImGuiWindow()
-{
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::Begin("Viewport");
-
-    // Check if the viewport content area has changed size
-    ImVec2 contentSize = ImGui::GetContentRegionAvail();
-    int newWidth = static_cast<int>(contentSize.x);
-    int newHeight = static_cast<int>(contentSize.y);
-
-    if (newWidth > 0 && newHeight > 0) {
-        resize(newWidth, newHeight);
-    }
-
-    // Display the FBO color texture
-    ImGui::Image(
-        static_cast<ImTextureID>(m_colorTexture),
-        contentSize,
-        ImVec2(0, 1), // UV0: flip Y for OpenGL
-        ImVec2(1, 0)  // UV1
-    );
-
-    // Handle mouse input when hovered
-    m_isHovered = ImGui::IsItemHovered();
-    handleInput();
-
-    ImGui::End();
-    ImGui::PopStyleVar();
-}
-
 void Viewport::handleInput()
 {
     if (!m_isHovered) {

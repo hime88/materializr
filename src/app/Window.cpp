@@ -43,6 +43,15 @@ Window::Window(int width, int height, const std::string& title)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+#if defined(__APPLE__)
+    // macOS only grants a 3.2+ context to a forward-compatible CORE profile;
+    // without this flag the request silently falls back to legacy GL 2.1, which
+    // can't compile the GLSL 330 shaders. (Forward-compatible drops removed-in-
+    // core legacy entry points — none of which this renderer uses.) This is the
+    // only writer of SDL_GL_CONTEXT_FLAGS; if a debug-context flag is ever added,
+    // OR it in rather than overwrite.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -80,6 +89,18 @@ Window::Window(int width, int height, const std::string& title)
         throw std::runtime_error("Failed to initialize GLEW (OpenGL loader)");
     }
 #endif
+
+    // Log the context we actually got. The 3.3-core request can be silently
+    // downgraded (notably on macOS without the forward-compatible flag → GL 2.1,
+    // where the GLSL 330 shaders won't compile); surfacing the version here turns
+    // that from a mystery black screen into a one-line diagnostic.
+    {
+        const char* ver = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        const char* glsl = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+        const char* rend = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        std::cout << "GL " << (ver ? ver : "?") << " | GLSL " << (glsl ? glsl : "?")
+                  << " | " << (rend ? rend : "?") << std::endl;
+    }
 
     SDL_GL_SetSwapInterval(1); // vsync
 

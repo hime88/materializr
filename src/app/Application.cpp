@@ -142,6 +142,8 @@ namespace materializr { namespace force_link { void linkAll(); } }
 #include <cstdio>
 #ifdef _WIN32
 #include <windows.h> // GetModuleFileNameA for exe dir (font path lookup)
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h> // _NSGetExecutablePath for exe dir (no /proc on macOS)
 #else
 #include <unistd.h>  // readlink for resolving /proc/self/exe → exe dir (font path lookup)
 #endif
@@ -416,9 +418,10 @@ static const char* computeImguiIniPath() {
 
 // Resolve a TTF shipped in assets/fonts against the layouts we run from:
 //   1. <exe>/../share/materializr/fonts/  (AppImage)
-//   2. <exe>/../assets/fonts/             (dev: binary in build/)
-//   3. <exe>/assets/fonts/                (Windows portable zip: assets next to exe)
-//   4. <cwd>/assets/fonts/                (dev: launched from repo root)
+//   2. <exe>/../Resources/assets/fonts/   (macOS .app bundle)
+//   3. <exe>/../assets/fonts/             (dev: binary in build/)
+//   4. <exe>/assets/fonts/                (Windows portable zip: assets next to exe)
+//   5. <cwd>/assets/fonts/                (dev: launched from repo root)
 // Returns "" when the font isn't found anywhere — callers degrade gracefully.
 std::string Application::resolveBundledFont(const std::string& fname) const {
     char exePath[4096];
@@ -429,6 +432,15 @@ std::string Application::resolveBundledFont(const std::string& fname) const {
         exePath[n] = '\0';
         std::string p(exePath);
         auto slash = p.find_last_of("\\/");
+        if (slash != std::string::npos) exeDir = p.substr(0, slash);
+    }
+#elif defined(__APPLE__)
+    // No /proc on macOS — ask dyld for the executable path. The buffer is sized
+    // generously; _NSGetExecutablePath fills it and NUL-terminates on success.
+    uint32_t n = sizeof(exePath);
+    if (_NSGetExecutablePath(exePath, &n) == 0) {
+        std::string p(exePath);
+        auto slash = p.find_last_of('/');
         if (slash != std::string::npos) exeDir = p.substr(0, slash);
     }
 #else
@@ -442,6 +454,7 @@ std::string Application::resolveBundledFont(const std::string& fname) const {
 #endif
     const std::string candidates[] = {
         exeDir + "/../share/materializr/fonts/" + fname,
+        exeDir + "/../Resources/assets/fonts/" + fname,
         exeDir + "/../assets/fonts/" + fname,
         exeDir + "/assets/fonts/" + fname,
         "assets/fonts/" + fname,
@@ -526,13 +539,10 @@ void Application::initImGui() {
     }
 
     // Swap ImGui's default ProggyClean for JetBrains Mono — slashed zero,
-    // distinct 0/8/B/6, designed for engineering UIs. Resolved from a small
-    // list of candidate paths so both AppImage and dev builds find it:
-    //   1. <exe>/../share/materializr/fonts/    (AppImage layout)
-    //   2. <exe>/../assets/fonts/               (dev: binary in build/)
-    //   3. <cwd>/assets/fonts/                  (dev: launched from repo root)
-    // Falls through to the bundled default if the TTF isn't present, so
-    // a font miss never bricks the UI.
+    // distinct 0/8/B/6, designed for engineering UIs. resolveBundledFont() tries
+    // the AppImage, macOS .app Resources/, dev-build, and cwd layouts (see its
+    // candidate list). Falls through to the bundled default if the TTF isn't
+    // present, so a font miss never bricks the UI.
     {
         std::string path = resolveBundledFont("JetBrainsMono-Regular.ttf");
         if (!path.empty()) {

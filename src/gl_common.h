@@ -28,6 +28,19 @@ void glShaderSourceAdapt(GLuint shader, GLsizei count,
 // points with GLEW (provided by vcpkg). glewInit() runs once after the context
 // is current — see Window.cpp. GLEW must precede any other GL header.
 #include <GL/glew.h>
+#elif defined(__APPLE__)
+// macOS: OpenGL.framework exports the 3.2+ core-profile entry points directly
+// via <OpenGL/gl3.h> (up to GL 4.1 — the platform ceiling, which still covers
+// every GLSL 330 shader here), so no GLEW-style loader is needed. The context
+// must be created with the forward-compatible core profile — see Window.cpp.
+// GL was deprecated on macOS 10.14; silence those headers (Apple still ships
+// and supports the framework, and there's no Metal/MoltenVK port yet). The
+// CMake build also defines this for ImGui's GL backend, so guard against the
+// redefinition for translation units that get both.
+#ifndef GL_SILENCE_DEPRECATION
+#define GL_SILENCE_DEPRECATION
+#endif
+#include <OpenGL/gl3.h>
 #else
 // Linux desktop with Mesa: GL_GLEXT_PROTOTYPES gives direct access to GL 3.3+.
 #define GL_GLEXT_PROTOTYPES

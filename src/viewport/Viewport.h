@@ -36,9 +36,6 @@ public:
     int getWidth() const { return m_width; }
     int getHeight() const { return m_height; }
 
-    /// Render the viewport as an ImGui window. Handles mouse input.
-    void renderImGuiWindow();
-
     /// Access the camera.
     Camera& getCamera() { return m_camera; }
     const Camera& getCamera() const { return m_camera; }
