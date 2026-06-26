@@ -3,6 +3,24 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [1.2.6] — 2026-06-25
+
+Crash safety and grid polish.
+
+### Added
+
+- **Crash/hang recovery autosave.** The whole project — including an **unsaved**
+  one with no file yet — is snapshotted to a recovery sidecar as you work, so a
+  crash, hang, or kill no longer loses your model. On the next launch it offers
+  to restore the recovered work. Independent of the (off-by-default) autosave,
+  which only writes an already-saved file.
+
+### Changed
+
+- **Grid:** removed the "Grid shade" slider (it only tinted the sketch-plane
+  grid and looked inert in the normal view), and gave the every-10th decade
+  lines more contrast against the rest in both the ground and sketch grids.
+
 ## [1.2.5] — 2026-06-25
 
 Modeling and viewport polish.
