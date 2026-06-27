@@ -69,8 +69,8 @@ placement preview — both become ordinary closed regions you can extrude.
 
 **Model** — push/pull, extrude, **lathe** (spin a sketch profile around an
 axis into a solid), **revolve** (rotate a body around an axis — watch a fan
-spin or a hinge open), sweep, loft, booleans, fillet/chamfer, shell, mirror,
-linear & circular patterns, split, align. Drop in a **primitive** (box,
+spin or a hinge open), loft, booleans, fillet/chamfer, shell, mirror,
+linear & circular patterns, split. Drop in a **primitive** (box,
 cylinder, sphere, cone, torus) when that's the faster start. Direct face
 editing: **taper** (draft), **scale face** (pinch a wing tip into a winglet),
 edit a hole or boss to an exact diameter.

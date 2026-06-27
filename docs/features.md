@@ -11,7 +11,6 @@ Full list of what's in the box, grouped by area.
 - **Extrude** — interactive extrude with live preview, draft angle,
   boolean modes.
 - **Revolve** — profile around an axis, 0–360°.
-- **Sweep** — profile along a path curve.
 - **Loft** — through multiple cross-section profiles.
 - **Fillet** — pick edge(s) → **Fillet** → drag the outward handle (or type) to
   set the radius, with live preview and a measurement readout.
@@ -183,8 +182,6 @@ as you drag or type:
   history step.
 - **Material panel** — assign PBR materials to bodies.
 - **Measure tool** — distance, area, edge length, bounding box.
-- **2D Drawing workspace** — Front/Top/Right/Isometric projections with
-  DXF/SVG export.
 - **Section View** — cut through solids with interactive clipping plane.
 - **Transform Gizmo** — 3-axis arrows + rotation rings + scale cubes.
 - **Box / Marquee selection**.
@@ -210,7 +207,5 @@ as you drag or type:
 | STEP (.step / .stp) | yes | yes |
 | IGES (.iges / .igs) | yes | yes |
 | STL (.stl) | — | yes |
-| DXF (.dxf, 2D drawings) | — | yes |
-| SVG (.svg, 2D drawings) | — | yes |
+| SVG (.svg, per-sketch export) | — | yes |
 | glTF / GLB (.glb) | — | yes |
-| TGA / PPM screenshot | — | yes |

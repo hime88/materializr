@@ -151,7 +151,6 @@ add_executable(materializr
     src/plugins/IgesIOPlugin.cpp
     src/plugins/StlExportPlugin.cpp
     src/plugins/GltfExportPlugin.cpp
-    src/plugins/ImageExportPlugin.cpp
     src/plugins/BooleanPlugin.cpp
     src/plugins/DeletePlugin.cpp
     src/plugins/TransformPlugin.cpp

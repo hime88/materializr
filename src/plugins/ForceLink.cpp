@@ -6,7 +6,6 @@ void forceLink_StepIO();
 void forceLink_IgesIO();
 void forceLink_StlExport();
 void forceLink_GltfExport();
-void forceLink_ImageExport();
 
 // Phase 2 plugins
 void forceLink_Boolean();
@@ -44,7 +43,6 @@ void linkAll() {
     forceLink_IgesIO();
     forceLink_StlExport();
     forceLink_GltfExport();
-    forceLink_ImageExport();
     // Phase 2
     forceLink_Boolean();
     forceLink_Delete();
