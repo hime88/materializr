@@ -24,6 +24,7 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 | Windows (portable) | `Materializr-windows-x64.zip` | unzip anywhere, run `materializr.exe` |
 | Android (F-Droid) | [on F-Droid](https://f-droid.org/packages/com.materializr.app/) | install + auto-update from the F-Droid app; tablets recommended |
 | Android (latest APK) | `Materializr-*-arm64-v8a.apk` | sideload (enable "install unknown apps") for the freshest fixes; tablets recommended |
+| macOS | — | coming next release |
 
 > **Prefer F-Droid?** It builds each release from source on its own
 > roughly-weekly cadence, so a brand-new bug fix can take a few days to reach it.
@@ -150,6 +151,7 @@ Join the community on **[Discord](https://discord.gg/BRjzbMGZvE)** for questions
 
 - **R4stl1n** — original project.
 - **stevebushwa** — design, testing, direction.
+- **TechHQUSA** — security hardening, OCCT thread-safety fix, undo/redo robustness.
 - **Claude (Anthropic)** — pair-coding collaborator.
 
 ## Acknowledgments
