@@ -12,12 +12,20 @@
 #include <BRep_Builder.hxx>
 #include <Interface_Static.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Standard_Failure.hxx>
+#include <Standard_ErrorHandler.hxx>
 
 namespace materializr {
 
 ImportResult IgesIO::import(const std::string& filePath, Document& doc) {
     ImportResult result;
 
+    // OCCT can throw Standard_Failure / std::bad_alloc on malformed or adversarial
+    // IGES geometry (during TransferRoots / shape handling). Catch it so a bad
+    // import is a graceful error rather than an uncaught exception that aborts the
+    // whole process (an instant crash, notably on Android) — mirrors StepIO::import.
+    try {
+    OCC_CATCH_SIGNALS // convert an OCCT kernel fault on a crafted file into the catch below
     IGESControl_Reader reader;
     IFSelect_ReturnStatus status = reader.ReadFile(filePath.c_str());
 
@@ -100,6 +108,17 @@ ImportResult IgesIO::import(const std::string& filePath, Document& doc) {
 
     result.success = true;
     result.bodiesImported = importCount;
+    return result;
+    } catch (const Standard_Failure& e) {
+        result.success = false;
+        result.errorMessage = std::string("IGES import failed: ") + e.GetMessageString();
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.errorMessage = std::string("IGES import failed: ") + e.what();
+    } catch (...) {
+        result.success = false;
+        result.errorMessage = "IGES import failed: unrecognized error";
+    }
     return result;
 }
 

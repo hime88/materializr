@@ -183,8 +183,20 @@ bool findFirstUse(const std::string& svg, size_t& outStart, size_t& outEnd,
 
 void expandSvgUses(std::string& svg) {
     const int maxIter = 1024; // termination guard — pathological self-refs only
+    // Output-size cap defusing the "billion laughs" amplification: when a <use>
+    // target itself contains <use>, each expansion roughly doubles the buffer
+    // (L_k ~= 2^k * L0), so the iteration cap alone lets a few-hundred-byte file
+    // reach gigabytes. Abort once the working buffer crosses this bound.
+    const size_t maxOutput = std::min<size_t>(
+        std::max<size_t>(8u * 1024 * 1024, svg.size() * 32), 256u * 1024 * 1024);
     int expansions = 0;
     for (int it = 0; it < maxIter; ++it) {
+        if (svg.size() > maxOutput) {
+            std::fprintf(stderr,
+                "[SVG] <use> expansion exceeded %zu-byte cap — aborting\n",
+                maxOutput);
+            return;
+        }
         size_t us, ue;
         std::string href, attrs;
         if (!findFirstUse(svg, us, ue, href, attrs)) {
@@ -333,6 +345,15 @@ void inlineSvgCss(std::string& svg) {
     out.reserve(svg.size() + 1024);
     int injected = 0;
     for (size_t k = 0; k < svg.size(); ) {
+        // Amplification guard: CSS inlining injects a class's declarations into
+        // every matching element, so a large declaration across many elements is
+        // O(input^2). Stop once the output crosses an absolute ceiling and copy
+        // the remainder verbatim.
+        if (out.size() > 256u * 1024 * 1024) {
+            std::fprintf(stderr, "[SVG] inlineSvgCss exceeded byte budget — stopping\n");
+            out.append(svg, k, std::string::npos);
+            break;
+        }
         if (svg[k] != '<' || k + 1 >= svg.size() ||
             svg[k + 1] == '/' || svg[k + 1] == '!' || svg[k + 1] == '?') {
             out += svg[k++]; continue;
@@ -637,6 +658,13 @@ bool SvgImport::load(const std::string& path, SvgPaths& out) {
     std::ostringstream ss;
     ss << in.rdbuf();
     std::string text = ss.str();
+    // Absolute input cap: an SVG is vector art, not a bulk data file. Reject an
+    // oversized one before the (amplifying) preprocessing stages run, so the
+    // input N that drives their expansion/O(N^2) behaviour is itself bounded.
+    if (text.size() > 32u * 1024 * 1024) {
+        std::fprintf(stderr, "[SVG] file too large (%zu bytes) — refusing\n", text.size());
+        return false;
+    }
     inlineSvgCss(text);   // resolve <style> class fills → presentation attrs
     expandSvgText(text);  // render live <text> to glyph-outline <path>s
     expandSvgUses(text);

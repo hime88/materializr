@@ -1,17 +1,11 @@
 #include "UiTheme.h"
 #include "ui_scale.h"
 #include "AboutDialog.h"
+#include "url_open.h"
 #include <imgui.h>
 
-#include <cstdlib>
 #include <cstring>
 #include <string>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <shellapi.h>
-#endif
 
 #ifndef MATERIALIZR_VERSION
 #define MATERIALIZR_VERSION "0.0.0"
@@ -21,16 +15,11 @@ namespace materializr {
 
 namespace {
 
-// Open a URL in the user's default browser. POSIX uses xdg-open; Windows uses
-// ShellExecuteA. No-op (and silently ignored) if the call fails — used only
-// for the GitHub link from the About dialog, which is a convenience.
+// Open a URL in the user's default browser via the shared shell-free helper
+// (see url_open.h). The About links are hardcoded https constants; openUrl
+// still validates the scheme and uses SDL_OpenURL rather than a shell.
 void openInBrowser(const char* url) {
-#ifdef _WIN32
-    ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
-#else
-    std::string cmd = std::string("xdg-open ") + "\"" + url + "\" >/dev/null 2>&1 &";
-    [[maybe_unused]] int rc = std::system(cmd.c_str());
-#endif
+    materializr::openUrl(url);
 }
 
 } // namespace

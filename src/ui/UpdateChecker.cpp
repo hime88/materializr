@@ -18,7 +18,13 @@ namespace {
 // libcurl write callback: append into a std::string.
 size_t writeToString(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total = size * nmemb;
-    static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total);
+    std::string* out = static_cast<std::string*>(userp);
+    // Response-size cap: the GitHub release JSON is a few KB. Refuse to grow past
+    // this so a hostile/huge response can't exhaust memory. Returning less than
+    // `total` makes libcurl abort the transfer with CURLE_WRITE_ERROR.
+    const size_t kMaxResponse = 4u * 1024 * 1024;
+    if (out->size() + total > kMaxResponse) return 0;
+    out->append(static_cast<char*>(contents), total);
     return total;
 }
 
@@ -68,7 +74,13 @@ std::vector<int> parseNumericComponents(const std::string& v) {
         size_t i = 0;
         while (i < tok.size() && std::isdigit(static_cast<unsigned char>(tok[i]))) ++i;
         if (i == 0) parts.push_back(0);
-        else parts.push_back(std::stoi(tok.substr(0, i)));
+        else {
+            // A hostile/oversized version token (e.g. a crafted tag_name with a
+            // 40-digit number) would make std::stoi throw out_of_range and crash
+            // the app on an uncaught exception — treat as 0 instead.
+            try { parts.push_back(std::stoi(tok.substr(0, i))); }
+            catch (...) { parts.push_back(0); }
+        }
     }
     return parts;
 }
@@ -107,6 +119,17 @@ UpdateChecker::Result UpdateChecker::check(const std::string& owner,
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+    // Pin the request and any redirect target to HTTPS, so a redirect can't
+    // downgrade to http or jump to file://, etc. The *_STR forms are libcurl
+    // 7.85+; fall back to the numeric protocol bitmask on older libcurl.
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+#else
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
+#endif
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);

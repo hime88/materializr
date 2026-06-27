@@ -2,6 +2,7 @@
 #include "ui_scale.h"
 #include "touch_mode.h"
 #include "gl_common.h"
+#include "url_open.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -584,16 +585,11 @@ void Application::renderUpdatePopup() {
                                "installer or portable zip will replace this one.");
             ImGui::Spacing();
             if (ImGui::Button("Open Release Page", ImVec2(180, 0))) {
-                // openInBrowser lives in AboutDialog.cpp — duplicate the tiny
-                // platform helper inline so this file doesn't add a dependency.
-#ifdef _WIN32
-                ShellExecuteA(nullptr, "open", m_updateReleaseUrl.c_str(),
-                              nullptr, nullptr, SW_SHOWNORMAL);
-#else
-                std::string cmd = std::string("xdg-open ") + "\"" +
-                                  m_updateReleaseUrl + "\" >/dev/null 2>&1 &";
-                [[maybe_unused]] int rc = std::system(cmd.c_str());
-#endif
+                // m_updateReleaseUrl is the GitHub API's html_url — server
+                // controlled — so open it via the shell-free helper, pinned to
+                // github.com (a tampered response can neither inject a shell
+                // command nor redirect the user elsewhere).
+                materializr::openUrl(m_updateReleaseUrl, "https://github.com/");
             }
         } else {
             ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),

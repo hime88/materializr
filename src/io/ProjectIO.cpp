@@ -13,8 +13,10 @@
 #include <gp_Ax3.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
+#include <Standard_Failure.hxx>
 
 #include <zlib.h>
+#include <cstdio>
 
 #include <cstddef>
 #include <fstream>
@@ -85,6 +87,21 @@ bool readBodyBlockV3(std::istream& ifs, const std::string& sbLine,
     std::string tok; std::size_t byteCount = 0;
     iss >> tok >> idOut >> byteCount;
     if (iss.fail()) return false;
+    // Bound the length-prefix against the bytes actually left before allocating
+    // from it (a crafted header could claim gigabytes). The loader feeds a
+    // seekable in-memory stream; on a non-seekable one tellg() is -1 and we fall
+    // back to an absolute ceiling.
+    {
+        std::streampos cur = ifs.tellg();
+        std::size_t remaining = 256u * 1024 * 1024;
+        if (cur >= 0) {
+            ifs.seekg(0, std::ios::end);
+            std::streampos endp = ifs.tellg();
+            ifs.seekg(cur);
+            remaining = (endp >= cur) ? static_cast<std::size_t>(endp - cur) : 0;
+        }
+        if (byteCount > remaining) return false;
+    }
     std::string data(byteCount, '\0');
     ifs.read(&data[0], static_cast<std::streamsize>(byteCount));
     if (static_cast<std::size_t>(ifs.gcount()) != byteCount) return false;
@@ -149,11 +166,20 @@ std::string gunzipInflate(const std::string& src) {
     std::string out;
     char buf[1 << 15];
     int ret;
+    // Decompression-bomb guard: a project is binary BREP + ASCII metadata; even
+    // large assemblies stay well under this. Without a ceiling a ~1 MB crafted
+    // .materializr (or autosave/recovery snapshot) inflates to many GB and OOMs.
+    const size_t maxOutput = 512u * 1024 * 1024; // 512 MB hard cap
     do {
         zs.next_out  = reinterpret_cast<Bytef*>(buf);
         zs.avail_out = sizeof(buf);
         ret = inflate(&zs, Z_NO_FLUSH);
         out.append(buf, sizeof(buf) - zs.avail_out);
+        if (out.size() > maxOutput) {
+            std::fprintf(stderr, "[ProjectIO] inflated size exceeded %zu bytes — refusing\n", maxOutput);
+            inflateEnd(&zs);
+            return {};
+        }
     } while (ret == Z_OK);
     inflateEnd(&zs);
     return (ret == Z_STREAM_END) ? out : std::string{};
@@ -165,6 +191,12 @@ ProjectSaveResult ProjectIO::save(const std::string& filePath, const Document& d
                                   const ProjectHistory* history) {
     ProjectSaveResult result;
 
+    // OCCT BinTools::Write (per body and inside the HISTORY blocks) can throw
+    // Standard_Failure on a degenerate in-memory shape; the inner per-body catch
+    // only handles std::exception and the history writes are unguarded. Wrap the
+    // whole save so Ctrl+S / autosave reports a graceful error instead of
+    // aborting the process and losing the document — mirrors load().
+    try {
     // Build the entire file content in memory first (binary-safe stringstream
     // so writeBodyBlockV3's raw bytes pass through unmodified), then gzip-
     // deflate the result and write it to disk as one binary blob. Lets the
@@ -435,6 +467,17 @@ ProjectSaveResult ProjectIO::save(const std::string& filePath, const Document& d
     out.close();
     result.success = true;
     return result;
+    } catch (const Standard_Failure& e) {
+        result.success = false;
+        result.errorMessage = std::string("Project save failed: ") + e.GetMessageString();
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.errorMessage = std::string("Project save failed: ") + e.what();
+    } catch (...) {
+        result.success = false;
+        result.errorMessage = "Project save failed: unrecognized error";
+    }
+    return result;
 }
 
 namespace {
@@ -506,7 +549,7 @@ void parseSketchBodyImpl(std::istream& ifs, materializr::Sketch& sk,
             for (int i = 0; i < n && std::getline(ifs, line); ++i) {
                 std::istringstream s(line); std::string t; SketchSpline sp; int c = 0, cnt = 0;
                 s >> t >> sp.id >> c >> cnt; sp.isConstruction = (c != 0);
-                for (int k = 0; k < cnt; ++k) { int id = 0; s >> id; sp.controlPointIds.push_back(id); }
+                for (int k = 0; k < cnt; ++k) { int id = 0; if (!(s >> id)) break; sp.controlPointIds.push_back(id); }
                 bump(sp.id); sk.addRawSpline(sp);
             }
         } else if (tok == "POLYGON_COUNT") {
@@ -515,9 +558,9 @@ void parseSketchBodyImpl(std::istream& ifs, materializr::Sketch& sk,
                 std::istringstream s(line); std::string t; SketchPolygon g; int c = 0, nv = 0, nl = 0;
                 s >> t >> g.id >> g.centerPointId >> g.radius >> g.sides >> c >> nv;
                 g.isConstruction = (c != 0);
-                for (int k = 0; k < nv; ++k) { int id = 0; s >> id; g.vertexPointIds.push_back(id); }
+                for (int k = 0; k < nv; ++k) { int id = 0; if (!(s >> id)) break; g.vertexPointIds.push_back(id); }
                 s >> nl;
-                for (int k = 0; k < nl; ++k) { int id = 0; s >> id; g.lineIds.push_back(id); }
+                for (int k = 0; k < nl; ++k) { int id = 0; if (!(s >> id)) break; g.lineIds.push_back(id); }
                 bump(g.id); sk.addRawPolygon(g);
             }
         } else if (tok == "CONSTRAINT_COUNT") {
@@ -577,11 +620,26 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
                                   ProjectHistory* historyOut) {
     ProjectLoadResult result;
 
+    // OCCT BinTools::Read / BRepTools::Read run on untrusted bytes below and throw
+    // Standard_Failure (NOT std::exception-derived) on malformed BREP; std parsing
+    // can throw too. Wrap the whole load so a hostile file is a graceful error
+    // rather than an uncaught exception that aborts the process.
+    try {
     // Slurp the whole file (binary). v2 files are plain ASCII; v3 files start
     // with the gzip magic and we inflate them in memory before parsing.
     std::ifstream raw(filePath, std::ios::in | std::ios::binary);
     if (!raw.is_open()) {
         result.errorMessage = "Failed to open file for reading: " + filePath;
+        return result;
+    }
+    // Reject an absurdly large file before pulling it into memory: the 512 MB
+    // gunzip cap only bounds *inflated* output, so a plain uncompressed v2 file
+    // would otherwise have no size gate at all.
+    raw.seekg(0, std::ios::end);
+    std::streampos rawSize = raw.tellg();
+    raw.seekg(0, std::ios::beg);
+    if (rawSize > static_cast<std::streampos>(512LL * 1024 * 1024)) {
+        result.errorMessage = "Project file too large (> 512 MB) — refusing to load";
         return result;
     }
     std::ostringstream slurp;
@@ -695,7 +753,19 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
         TopoDS_Shape shape;
         if (fileVersion >= 3 && haveByteCount) {
             // v3 binary: read exactly bodyByteCount bytes, then expect a
-            // newline + "BODY_END" line.
+            // newline + "BODY_END" line. Bound the (untrusted) length-prefix
+            // against the bytes left in the file before allocating from it.
+            {
+                std::streampos here = ifs.tellg();
+                std::size_t remaining = (here >= 0 && static_cast<std::size_t>(here) <= contents.size())
+                                      ? contents.size() - static_cast<std::size_t>(here) : 0;
+                if (bodyByteCount > remaining) {
+                    result.errorMessage = "Body " + std::to_string(bodyId) + " claims " +
+                        std::to_string(bodyByteCount) + " bytes but only " +
+                        std::to_string(remaining) + " remain";
+                    return result;
+                }
+            }
             std::string data(bodyByteCount, '\0');
             ifs.read(&data[0], static_cast<std::streamsize>(bodyByteCount));
             if (static_cast<std::size_t>(ifs.gcount()) != bodyByteCount) {
@@ -929,8 +999,22 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
                         // / arbitrary content, used for SketchEditOp's full
                         // before+after sketch snapshots.
                         std::size_t n = 0; ls >> n;
+                        // Bound the (untrusted) length-prefix against the bytes
+                        // left before allocating — same class as the body
+                        // byteCount guard, and reached on every project open.
+                        std::streampos here = ifs.tellg();
+                        std::size_t remaining = (here >= 0 && static_cast<std::size_t>(here) <= contents.size())
+                                              ? contents.size() - static_cast<std::size_t>(here) : 0;
+                        if (n > remaining) {
+                            result.errorMessage = "PARAMS_LEN exceeds remaining file size";
+                            return result;
+                        }
                         std::string data(n, '\0');
                         ifs.read(&data[0], static_cast<std::streamsize>(n));
+                        if (static_cast<std::size_t>(ifs.gcount()) != n) {
+                            result.errorMessage = "Short read on PARAMS_LEN blob";
+                            return result;
+                        }
                         // Consume the trailing newline after the blob.
                         std::string skip; std::getline(ifs, skip);
                         st.params = std::move(data);
@@ -945,7 +1029,7 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
                         }
                     } else if (t == "DELETED_COUNT") {
                         int p = 0; ls >> p;
-                        for (int j = 0; j < p; ++j) { int id = 0; ls >> id; st.deleted.push_back(id); }
+                        for (int j = 0; j < p; ++j) { int id = 0; if (!(ls >> id)) break; st.deleted.push_back(id); }
                     } else if (t == "TIMESTAMP") {
                         ls >> st.timestampUnix;
                     }
@@ -958,6 +1042,17 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
 
     result.success = true;
     result.bodiesLoaded = loadedCount;
+    return result;
+    } catch (const Standard_Failure& e) {
+        result.success = false;
+        result.errorMessage = std::string("Project load failed: ") + e.GetMessageString();
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.errorMessage = std::string("Project load failed: ") + e.what();
+    } catch (...) {
+        result.success = false;
+        result.errorMessage = "Project load failed: unrecognized error";
+    }
     return result;
 }
 

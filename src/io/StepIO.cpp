@@ -18,6 +18,7 @@
 #include <Interface_Static.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Standard_Failure.hxx>
+#include <Standard_ErrorHandler.hxx>
 
 #include <cmath>
 
@@ -35,6 +36,7 @@ ImportResult StepIO::import(const std::string& filePath, Document& doc) {
     // surfaces as a graceful error instead of an uncaught exception that aborts
     // the whole process — which on Android shows up as an instant crash.
     try {
+    OCC_CATCH_SIGNALS // convert an OCCT kernel fault on a crafted file into the catch below
     STEPControl_Reader reader;
     IFSelect_ReturnStatus status = reader.ReadFile(filePath.c_str());
 
