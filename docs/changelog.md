@@ -23,10 +23,23 @@ resizable after they're drawn.
     its swept angle.
   - These edits are proper undoable history steps, and selecting an element
     highlights its history step (and vice-versa).
+- **ViewCube edge clicks for two-face views.** The cube could snap to a single
+  face or a three-face corner; now hovering near a visible edge highlights that
+  seam, and clicking looks straight down it so both adjacent faces are seen at
+  once (12 edge spots — 4 vertical, 4 top, 4 bottom). Hover-revealed, no
+  persistent marker, so the cube stays uncluttered.
 - **Beta update channel.** A new *Settings → Include pre-release (beta) builds*
   opt-in. With it on, the in-app update check also offers pre-releases (like
   this one); left off, you stay on stable releases only. The two channels are
   kept apart automatically — stable users are never shown betas.
+
+### Fixed
+
+- **ViewCube clicks no longer go dead.** A regression gated cube clicks on
+  `WantCaptureMouse`, which is true across the whole docked viewport — so faces,
+  corners, rotate arrows, roll arcs, Home, and drag-to-orbit all stopped
+  responding. Clicks are now gated on window hover instead, restoring every
+  cube interaction.
 
 ## [1.2.8] — 2026-06-27
 
