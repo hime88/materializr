@@ -3,6 +3,16 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [1.3.0-beta.3] — 2026-06-28 (pre-release)
+
+### Fixed
+
+- **Splash screen no longer hangs until you touch the window.** The post-launch
+  render grace only overrode the focus check, not the idle-skip — so at a fresh,
+  idle startup the first real UI frame stayed undrawn behind the loading screen
+  until a tap or mouse-move woke the loop. The grace now overrides the idle-skip
+  too, so the splash→UI handoff always completes on its own.
+
 ## [1.3.0-beta.2] — 2026-06-28 (pre-release)
 
 ### Fixed
