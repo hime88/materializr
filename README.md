@@ -24,7 +24,7 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 | Windows (portable) | `Materializr-windows-x64.zip` | unzip anywhere, run `materializr.exe` |
 | Android (F-Droid) | [on F-Droid](https://f-droid.org/packages/com.materializr.app/) | install + auto-update from the F-Droid app; tablets recommended |
 | Android (latest APK) | `Materializr-*-arm64-v8a.apk` | sideload (enable "install unknown apps") for the freshest fixes; tablets recommended |
-| macOS | — | coming next release |
+| macOS (Apple Silicon) | `Materializr-*-arm64.dmg` | open the `.dmg`, drag **Materializr** to Applications — see the first-launch note below |
 
 > **Prefer F-Droid?** It builds each release from source on its own
 > roughly-weekly cadence, so a brand-new bug fix can take a few days to reach it.
@@ -34,6 +34,13 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 > rejects the signature change. Switching sources means uninstalling first,
 > which clears the app's on-device files, so export any projects you want to
 > keep beforehand. Easiest is to pick one source and stick with it.
+
+> **macOS first launch:** the app is Apple-Silicon only (M1 or newer) and is
+> ad-hoc signed, not notarized — so the first time you open it, macOS
+> Gatekeeper will say it "cannot be opened because the developer cannot be
+> verified." Right-click (or Control-click) the app in Applications and choose
+> **Open**, then **Open** again in the dialog — this is a one-time approval.
+> (Equivalently: System Settings → Privacy & Security → **Open Anyway**.)
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![CMake](https://img.shields.io/badge/CMake-3.20%2B-blue)
