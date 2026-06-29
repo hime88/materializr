@@ -38,6 +38,7 @@ add_library(materializr_core STATIC
     ${CMAKE_SOURCE_DIR}/src/modeling/SketchSolver.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/SubShapeIndex.cpp
     ${CMAKE_SOURCE_DIR}/src/io/ProjectIO.cpp
+    ${CMAKE_SOURCE_DIR}/src/io/StlIO.cpp
 )
 
 target_include_directories(materializr_core PUBLIC
@@ -64,6 +65,8 @@ target_link_libraries(materializr_core PUBLIC
     TKOffset
     TKBO
     TKBin
+    TKDESTL      # RWStl (STL read) for StlIO
+    TKShHealing  # ShapeUpgrade_UnifySameDomain for StlIO
     ZLIB::ZLIB
 )
 
@@ -103,3 +106,8 @@ add_test(NAME test_move_hole COMMAND test_move_hole)
 add_executable(test_pushpull_normal test_pushpull_normal.cpp)
 target_link_libraries(test_pushpull_normal PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_pushpull_normal COMMAND test_pushpull_normal)
+
+# test_stl_import — STL triangle soup sews into a clean 6-face solid (parked feature)
+add_executable(test_stl_import test_stl_import.cpp)
+target_link_libraries(test_stl_import PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_stl_import COMMAND test_stl_import)

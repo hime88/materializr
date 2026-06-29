@@ -4,6 +4,7 @@ namespace materializr { namespace force_link {
 void forceLink_CoreCommands();
 void forceLink_StepIO();
 void forceLink_IgesIO();
+void forceLink_StlImport();
 void forceLink_StlExport();
 void forceLink_GltfExport();
 
@@ -41,6 +42,7 @@ void linkAll() {
     forceLink_CoreCommands();
     forceLink_StepIO();
     forceLink_IgesIO();
+    forceLink_StlImport();
     forceLink_StlExport();
     forceLink_GltfExport();
     // Phase 2

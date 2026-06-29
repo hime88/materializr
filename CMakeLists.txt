@@ -166,6 +166,7 @@ add_executable(materializr
     src/plugins/CoreCommandsPlugin.cpp
     src/plugins/StepIOPlugin.cpp
     src/plugins/IgesIOPlugin.cpp
+    src/plugins/StlImportPlugin.cpp
     src/plugins/StlExportPlugin.cpp
     src/plugins/GltfExportPlugin.cpp
     src/plugins/BooleanPlugin.cpp
@@ -276,6 +277,7 @@ add_executable(materializr
     src/io/ProjectRecovery.cpp
     src/io/Settings.cpp
     src/io/StepIO.cpp
+    src/io/StlIO.cpp
     src/io/StlExport.cpp
     src/io/SvgExport.cpp
     src/io/IgesIO.cpp
