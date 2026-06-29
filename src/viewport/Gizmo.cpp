@@ -1,6 +1,7 @@
 #include "gl_common.h"
 #include "Gizmo.h"
 #include "Camera.h"
+#include "../touch_mode.h"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -43,6 +44,14 @@ static constexpr float kCubeOffset = 1.05f;
 static constexpr int kSegments = 16;
 static constexpr int kRingSegments = 48;
 static constexpr float kPickThreshold = 0.04f;
+
+// World-size factor the gizmo scales by (× camera distance). A fingertip is far
+// less precise than a cursor, so grow the whole widget on touch — the visual
+// arrows/rings AND their hit-tests both derive from this, so they enlarge
+// together (same approach as the ViewCube).
+static float gizmoScale() {
+    return materializr::touchMode() ? 0.225f : 0.15f;
+}
 
 Gizmo::Gizmo() {}
 
@@ -250,7 +259,7 @@ void Gizmo::renderArrowAlong(const glm::mat4& view, const glm::mat4& projection,
                             glm::vec3 position, glm::vec3 dir, glm::vec3 color) {
     if (!m_program || !m_arrowVao) return;
     glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
-    float scale = glm::length(camPos - position) * 0.15f;
+    float scale = glm::length(camPos - position) * gizmoScale();
     if (scale < 0.01f) scale = 0.01f;
 
     // Rotation mapping the +Z canonical arrow onto `dir`.
@@ -283,7 +292,7 @@ void Gizmo::renderRingAbout(const glm::mat4& view, const glm::mat4& projection,
                             glm::vec3 position, glm::vec3 axisDir, glm::vec3 color) {
     if (!m_program || !m_ringVao) return;
     glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
-    float scale = glm::length(camPos - position) * 0.15f;
+    float scale = glm::length(camPos - position) * gizmoScale();
     if (scale < 0.01f) scale = 0.01f;
 
     // The ring mesh lies in the XY plane (axis +Z); rotate +Z onto axisDir so it
@@ -317,7 +326,7 @@ void Gizmo::renderCubeAlong(const glm::mat4& view, const glm::mat4& projection,
                             glm::vec3 position, glm::vec3 dir, glm::vec3 color) {
     if (!m_program || !m_cubeVao) return;
     glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
-    float scale = glm::length(camPos - position) * 0.15f;
+    float scale = glm::length(camPos - position) * gizmoScale();
     if (scale < 0.01f) scale = 0.01f;
 
     glm::vec3 d = glm::normalize(dir);
@@ -350,7 +359,7 @@ void Gizmo::render(const glm::mat4& view, const glm::mat4& projection) {
 
     glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
     float dist = glm::length(camPos - m_position);
-    float scale = dist * 0.15f;
+    float scale = dist * gizmoScale();
     if (scale < 0.01f) scale = 0.01f;
 
     glm::mat4 vp = projection * view;
@@ -425,12 +434,15 @@ Gizmo::PickResult Gizmo::pickNearest(float mx, float my, float vpW, float vpH,
     PickResult best;
     best.axis = GizmoAxis::None;
     best.mode = GizmoMode::Translate;
-    best.dist = kPickThreshold;
+    // Widen the catch radius on touch — a fingertip can't land on a thin arrow
+    // line as precisely as a cursor. (The widget itself is also larger on touch
+    // via gizmoScale(), so this is the matching slack around it.)
+    best.dist = kPickThreshold * (materializr::touchMode() ? 2.5f : 1.0f);
 
     glm::mat4 vp = camera.getProjectionMatrix() * camera.getViewMatrix();
     glm::vec3 camPos = camera.getPosition();
     float dist = glm::length(camPos - m_position);
-    float scale = dist * 0.15f;
+    float scale = dist * gizmoScale();
 
     float ndcX = (mx / vpW) * 2.0f - 1.0f;
     float ndcY = 1.0f - (my / vpH) * 2.0f;

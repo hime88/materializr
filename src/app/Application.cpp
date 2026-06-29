@@ -1826,8 +1826,16 @@ void Application::handleToolAction(int action) {
         // --- Sketch element transforms (operate on the Select-mode selection) ---
         // Rotate is handled by the sketch gizmo's ring handle (see Application_
         // Viewport.cpp), not as a toolbar action.
-        case ToolAction::SketchCopy:
         case ToolAction::SketchMirror: {
+            // Interactive mirror: arm a draggable/rotatable mirror line with a
+            // live preview; the dialog's "Mirror" button commits (see
+            // Application_Dialogs.cpp + Application_Viewport.cpp).
+            if (!m_inSketchMode || !m_activeSketch || !m_sketchTool) break;
+            if (!m_sketchTool->beginMirror())
+                std::fprintf(stdout, "Mirror: nothing to mirror\n");
+            break;
+        }
+        case ToolAction::SketchCopy: {
             if (!m_inSketchMode || !m_activeSketch || !m_sketchTool) break;
 
             // Operate on the current sketch-element selection, or — if nothing
@@ -1854,34 +1862,20 @@ void Application::handleToolAction(int action) {
                 for (const auto& l : m_activeSketch->getLines())  selLines.insert(l.id);
             }
             if (involved.empty()) break;
-            // Centroid of the involved points — used as the mirror/rotate pivot
-            // so the transform happens "in place" near the selection rather than
-            // about the sketch origin.
-            glm::vec2 c{0.0f};
-            int n = 0;
-            for (int id : involved) {
-                if (auto* p = m_activeSketch->getPoint(id)) { c += p->pos; ++n; }
-            }
-            if (n > 0) c /= static_cast<float>(n);
 
-            // Copy / Mirror: create new points (transformed copies) and new
-            // lines connecting them, then SELECT the new ones and switch to
-            // Select mode so the user can immediately drag them to position.
+            // Copy: duplicate the points + lines, OFFSET by a couple grid steps
+            // so the copy is visibly distinct from the original (landing them
+            // exactly on top read as "nothing happened"), then SELECT the copies
+            // and switch to Select mode so the move gizmo arms over them.
+            float gstep = m_sketchTool->getGridStep();
+            float off = (gstep > 0.0f) ? gstep * 2.0f : 5.0f;
+            glm::vec2 copyOffset(off, off);
             auto before = std::make_shared<Sketch>(*m_activeSketch);
             std::unordered_map<int, int> remap;
             for (int oldId : involved) {
                 auto* p = m_activeSketch->getPoint(oldId);
                 if (!p) continue;
-                glm::vec2 np = p->pos;
-                if (a == ToolAction::SketchCopy) {
-                    // Land the duplicate exactly on the original; the user can
-                    // immediately drag the now-selected copy to place it.
-                    np = p->pos;
-                } else { // Mirror across vertical line through centroid (flips X).
-                    np = glm::vec2(2.0f * c.x - p->pos.x, p->pos.y);
-                }
-                int newId = m_activeSketch->addPoint(np);
-                remap[oldId] = newId;
+                remap[oldId] = m_activeSketch->addPoint(p->pos + copyOffset);
             }
             std::set<int> newLineIds;
             for (int lid : selLines) {
@@ -1896,11 +1890,14 @@ void Application::handleToolAction(int action) {
                     break;
                 }
             }
-            // Record + select the duplicates.
+            // Record + select the duplicates. setMode FIRST, then select, so the
+            // mode switch can't clear the selection — that leaves the copies
+            // selected in Select mode, which auto-shows the move gizmo over them
+            // so the user can drag them straight off the originals.
             std::set<int> newPointIds;
             for (auto& kv : remap) newPointIds.insert(kv.second);
-            m_sketchTool->setSelection(newPointIds, newLineIds);
             m_sketchTool->setMode(SketchToolMode::Select);
+            m_sketchTool->setSelection(newPointIds, newLineIds);
 
             auto after = std::make_shared<Sketch>(*m_activeSketch);
             if (before->getPoints().size() != after->getPoints().size() ||
@@ -5201,6 +5198,7 @@ void Application::run() {
             renderSectionPanel();
             renderTextToolPanel();
             renderSvgToolPanel();
+            renderMirrorToolPanel();
             renderLoftPanel();
             renderConstructionPlanePanel();
             renderConstructionAxisPanel();

@@ -2948,6 +2948,70 @@ void Application::renderSvgToolPanel() {
     if (!open) m_sketchTool->setMode(SketchToolMode::Select);
 }
 
+void Application::renderMirrorToolPanel() {
+    if (!m_inSketchMode || !m_sketchTool ||
+        m_sketchTool->getMode() != SketchToolMode::Mirror ||
+        !m_sketchTool->isMirrorActive())
+        return;
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(
+        ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 60.0f),
+        ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    bool open = true;
+    if (ImGui::Begin("Mirror", &open,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextDisabled(materializr::touchMode()
+            ? "Drag the line to move it; drag the end dot to rotate."
+            : "Drag the line to move it; drag the end dot to rotate.");
+
+        // Quick orientation presets — snap the line vertical / horizontal.
+        if (ImGui::Button("Vertical"))
+            m_sketchTool->setMirrorAngle(static_cast<float>(M_PI) * 0.5f);
+        ImGui::SameLine();
+        if (ImGui::Button("Horizontal"))
+            m_sketchTool->setMirrorAngle(0.0f);
+        ImGui::SameLine();
+        float degs = m_sketchTool->getMirrorAngle() * 180.0f / static_cast<float>(M_PI);
+        // Normalise to [0,180) — a line's direction and its reverse are the same.
+        while (degs < 0.0f)    degs += 180.0f;
+        while (degs >= 180.0f) degs -= 180.0f;
+        ImGui::TextDisabled("%.0f deg", degs);
+
+        // ±45° nudges for when the on-canvas handle is fiddly.
+        if (ImGui::Button("Rotate -45"))
+            m_sketchTool->setMirrorAngle(m_sketchTool->getMirrorAngle() -
+                                         static_cast<float>(M_PI) * 0.25f);
+        ImGui::SameLine();
+        if (ImGui::Button("Rotate +45"))
+            m_sketchTool->setMirrorAngle(m_sketchTool->getMirrorAngle() +
+                                         static_cast<float>(M_PI) * 0.25f);
+
+        ImGui::Separator();
+        if (ImGui::Button("Mirror")) {
+            std::set<int> newPts, newLines;
+            recordSketchMutation([&]{ m_sketchTool->commitMirror(newPts, newLines); });
+            m_sketchTool->cancelMirror();
+            m_sketchTool->setMode(SketchToolMode::Select);
+            m_sketchTool->setSelection(newPts, newLines);
+            markDirty();
+            m_meshesDirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            m_sketchTool->cancelMirror();
+            m_sketchTool->setMode(SketchToolMode::Select);
+        }
+    }
+    ImGui::End();
+    if (!open) {
+        m_sketchTool->cancelMirror();
+        m_sketchTool->setMode(SketchToolMode::Select);
+    }
+}
+
 // ─── Primitive popup ─────────────────────────────────────────────────────────
 void Application::renderPrimitivePopup() {
     if (!m_primitivePopupActive) return;

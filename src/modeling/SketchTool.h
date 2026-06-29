@@ -10,7 +10,7 @@
 
 namespace materializr {
 
-enum class SketchToolMode { None, Select, Line, Circle, Rectangle, Arc, Spline, Polygon, Trim, Text, Svg };
+enum class SketchToolMode { None, Select, Line, Circle, Rectangle, Arc, Spline, Polygon, Trim, Text, Svg, Mirror };
 
 // One drawing-time alignment hint. Inferences are transient — they describe
 // what the cursor IS aligned to right now, get drawn as coloured ghost lines /
@@ -58,15 +58,24 @@ public:
     const std::set<int>& getSelectedLines()   const { return m_selectedLines; }
     const std::set<int>& getSelectedCircles() const { return m_selectedCircles; }
     const std::set<int>& getSelectedArcs()    const { return m_selectedArcs; }
+    const std::set<int>& getSelectedSplines() const { return m_selectedSplines; }
     void clearElementSelection() {
         m_selectedPoints.clear();
         m_selectedLines.clear();
         m_selectedCircles.clear();
         m_selectedArcs.clear();
+        m_selectedSplines.clear();
     }
     bool hasElementSelection() const {
         return !m_selectedPoints.empty() || !m_selectedLines.empty() ||
-               !m_selectedCircles.empty() || !m_selectedArcs.empty();
+               !m_selectedCircles.empty() || !m_selectedArcs.empty() ||
+               !m_selectedSplines.empty();
+    }
+    // Public wrapper over the snap-tolerance coincident-point lookup, so
+    // generated geometry (e.g. Mirror) can weld a new vertex onto an existing
+    // one instead of leaving a duplicate. Returns the point id, or -1.
+    int coincidentPoint(glm::vec2 pos, int excludeId = -1) const {
+        return findCoincidentPoint(pos, excludeId);
     }
     // Select every element in the active sketch (used by Ctrl+A / double-click).
     void selectAll();
@@ -76,6 +85,18 @@ public:
         m_selectedLines = lineIds;
         m_selectedCircles.clear();
         m_selectedArcs.clear();
+        m_selectedSplines.clear();
+    }
+    // Full replace, including curve types — used by box-select so a drag can
+    // catch circles / arcs / splines, not just points + lines.
+    void setSelectionFull(const std::set<int>& pointIds, const std::set<int>& lineIds,
+                          const std::set<int>& circleIds, const std::set<int>& arcIds,
+                          const std::set<int>& splineIds) {
+        m_selectedPoints  = pointIds;
+        m_selectedLines   = lineIds;
+        m_selectedCircles = circleIds;
+        m_selectedArcs    = arcIds;
+        m_selectedSplines = splineIds;
     }
     void onConfirm(); // Enter/double-click to finish
     void onCancel();  // Escape to cancel
@@ -138,6 +159,31 @@ public:
     void undoLastStamp();
     // Commit a Text/SVG stamp at the current anchor (touch "Place" button).
     void commitStamp();
+
+    // --- Interactive Mirror ------------------------------------------------
+    // Mirror reflects the current element selection (or the whole sketch when
+    // nothing is selected) across a user-placed line. The line is an on-canvas
+    // widget: a move handle at the anchor and a rotate handle along it. The
+    // reflected geometry previews live; "Mirror" commits, "Cancel" aborts.
+    bool isMirrorActive() const { return m_mirrorActive; }
+    glm::vec2 getMirrorAnchor() const { return m_mirrorAnchor; }
+    void setMirrorAnchor(glm::vec2 p) { m_mirrorAnchor = p; }
+    float getMirrorAngle() const { return m_mirrorAngleRad; } // line dir, radians
+    void setMirrorAngle(float r) { m_mirrorAngleRad = r; }
+    // Capture the source elements + seed the line at the selection centroid
+    // (vertical). Switches the tool to Mirror mode. No-op if there's nothing
+    // to mirror.
+    bool beginMirror();
+    void cancelMirror();
+    // Reflect a sketch-space point across the current mirror line.
+    glm::vec2 mirrorReflect(glm::vec2 p) const;
+    // Reflected ghost geometry for the live preview: closed/open polylines plus
+    // standalone points (lone vertices). Already in sketch-space.
+    void getMirrorPreview(std::vector<std::vector<glm::vec2>>& polylines,
+                          std::vector<glm::vec2>& points) const;
+    // Create the reflected elements; returns the new point + line ids so the
+    // host can select them. Coincident vertices weld onto existing geometry.
+    void commitMirror(std::set<int>& outPoints, std::set<int>& outLines);
     // Rectangle's typed-value placement is two-stage: first Enter sets the
     // horizontal side, second Enter the vertical (and commits). Stage 0 =
     // expecting H, 1 = expecting V. Read by the UI to swap the popup label.
@@ -329,6 +375,7 @@ private:
     std::set<int> m_selectedLines;
     std::set<int> m_selectedCircles;
     std::set<int> m_selectedArcs;
+    std::set<int> m_selectedSplines;
 
     std::vector<int> m_splinePoints; // temp storage during spline creation
 
@@ -367,6 +414,14 @@ private:
     // Cleared on setMode so each tool session starts fresh.
     std::vector<std::vector<int>> m_stampStack;
     void recordStamp(size_t pointsBefore, size_t linesBefore);
+
+    // --- Interactive Mirror state ---
+    bool m_mirrorActive = false;
+    glm::vec2 m_mirrorAnchor{0.0f};        // a point the mirror line passes through
+    float m_mirrorAngleRad = 1.5707963268f; // line direction; default vertical
+    // Captured source element ids (resolved at beginMirror).
+    std::set<int> m_mirrorPoints, m_mirrorLines, m_mirrorCircles,
+                  m_mirrorArcs, m_mirrorSplines;
 
     // Rectangle's typed-value placement is two-stage: first Enter sets the
     // horizontal side, second Enter sets the vertical side and commits.

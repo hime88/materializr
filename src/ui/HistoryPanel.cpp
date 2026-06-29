@@ -142,8 +142,16 @@ bool HistoryPanel::render() {
                       isFrozen ? " (frozen)" : "");
         bool selected = (i == m_editingStep) || isHighlighted;
         if (ImGui::Selectable(label, selected)) {
-            m_editingStep = i;
-            m_showProperties = true;
+            // Re-clicking the active step toggles it off, clearing the orange
+            // viewport highlight (which tracks the editing step) — otherwise
+            // there's no way to dismiss it.
+            if (i == m_editingStep) {
+                m_editingStep = -1;
+                m_showProperties = false;
+            } else {
+                m_editingStep = i;
+                m_showProperties = true;
+            }
             m_deleteConflict = false;
         }
         if (pushedText) {

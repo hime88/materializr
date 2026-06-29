@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <unordered_map>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -48,6 +49,7 @@ void SketchTool::setMode(SketchToolMode mode) {
     m_activeInferences.clear();
     m_rectDimStage = 0;
     m_rectDimH = 0.0f;
+    m_mirrorActive = false; // switching tools aborts any in-progress mirror
 }
 
 SketchToolMode SketchTool::getMode() const {
@@ -2647,6 +2649,188 @@ void SketchTool::commitStamp() {
     // button; desktop stamps directly on click via onMouseDown.
     if (m_mode == SketchToolMode::Text)     handleTextTool(m_currentPos);
     else if (m_mode == SketchToolMode::Svg) handleSvgTool(m_currentPos);
+}
+
+// --- Interactive Mirror ----------------------------------------------------
+
+bool SketchTool::beginMirror() {
+    if (!m_sketch) return false;
+    m_mirrorPoints.clear();  m_mirrorLines.clear(); m_mirrorCircles.clear();
+    m_mirrorArcs.clear();    m_mirrorSplines.clear();
+
+    if (hasElementSelection()) {
+        m_mirrorPoints  = m_selectedPoints;
+        m_mirrorLines   = m_selectedLines;
+        m_mirrorCircles = m_selectedCircles;
+        m_mirrorArcs    = m_selectedArcs;
+        m_mirrorSplines = m_selectedSplines;
+    } else {
+        for (const auto& p : m_sketch->getPoints())  m_mirrorPoints.insert(p.id);
+        for (const auto& l : m_sketch->getLines())   m_mirrorLines.insert(l.id);
+        for (const auto& c : m_sketch->getCircles()) m_mirrorCircles.insert(c.id);
+        for (const auto& a : m_sketch->getArcs())    m_mirrorArcs.insert(a.id);
+        for (const auto& s : m_sketch->getSplines()) m_mirrorSplines.insert(s.id);
+    }
+    if (m_mirrorPoints.empty() && m_mirrorLines.empty() && m_mirrorCircles.empty() &&
+        m_mirrorArcs.empty() && m_mirrorSplines.empty())
+        return false;
+
+    // Seed the line at the centroid of every involved vertex.
+    glm::vec2 c{0.0f}; int n = 0;
+    auto addPt = [&](int id) { if (auto* p = m_sketch->getPoint(id)) { c += p->pos; ++n; } };
+    for (int id : m_mirrorPoints) addPt(id);
+    for (int id : m_mirrorLines)
+        for (const auto& l : m_sketch->getLines()) if (l.id == id) { addPt(l.startPointId); addPt(l.endPointId); break; }
+    for (int id : m_mirrorCircles)
+        for (const auto& cc : m_sketch->getCircles()) if (cc.id == id) { addPt(cc.centerPointId); break; }
+    for (int id : m_mirrorArcs)
+        for (const auto& aa : m_sketch->getArcs()) if (aa.id == id) { addPt(aa.startPointId); addPt(aa.endPointId); break; }
+    for (int id : m_mirrorSplines)
+        for (const auto& sp : m_sketch->getSplines()) if (sp.id == id) { for (int cp : sp.controlPointIds) addPt(cp); break; }
+    glm::vec2 anchor = (n > 0) ? c / static_cast<float>(n) : glm::vec2(0.0f);
+
+    setMode(SketchToolMode::Mirror); // clears the live selection; sources captured above
+    m_mirrorAnchor = anchor;
+    m_mirrorAngleRad = static_cast<float>(M_PI) * 0.5f; // vertical line
+    m_mirrorActive = true;
+    return true;
+}
+
+void SketchTool::cancelMirror() {
+    m_mirrorActive = false;
+    m_mirrorPoints.clear(); m_mirrorLines.clear(); m_mirrorCircles.clear();
+    m_mirrorArcs.clear();   m_mirrorSplines.clear();
+}
+
+glm::vec2 SketchTool::mirrorReflect(glm::vec2 p) const {
+    glm::vec2 d(std::cos(m_mirrorAngleRad), std::sin(m_mirrorAngleRad)); // line dir
+    glm::vec2 nrm(-d.y, d.x);                                            // line normal
+    glm::vec2 to = p - m_mirrorAnchor;
+    return m_mirrorAnchor + d * glm::dot(to, d) - nrm * glm::dot(to, nrm);
+}
+
+void SketchTool::getMirrorPreview(std::vector<std::vector<glm::vec2>>& polylines,
+                                  std::vector<glm::vec2>& points) const {
+    polylines.clear();
+    points.clear();
+    if (!m_sketch || !m_mirrorActive) return;
+    auto R = [&](glm::vec2 p) { return mirrorReflect(p); };
+
+    // Track which vertices are consumed by a curve so lone points stay sparse.
+    std::set<int> referenced;
+    for (int id : m_mirrorLines)
+        for (const auto& l : m_sketch->getLines()) if (l.id == id) {
+            const SketchPoint* a = m_sketch->getPoint(l.startPointId);
+            const SketchPoint* b = m_sketch->getPoint(l.endPointId);
+            if (a && b) polylines.push_back({R(a->pos), R(b->pos)});
+            referenced.insert(l.startPointId); referenced.insert(l.endPointId);
+            break;
+        }
+    for (int id : m_mirrorCircles)
+        for (const auto& c : m_sketch->getCircles()) if (c.id == id) {
+            const SketchPoint* ctr = m_sketch->getPoint(c.centerPointId);
+            if (ctr) {
+                std::vector<glm::vec2> loop;
+                const int N = 48;
+                for (int i = 0; i <= N; ++i) {
+                    float t = 2.0f * static_cast<float>(M_PI) * i / N;
+                    loop.push_back(R(ctr->pos + glm::vec2(std::cos(t), std::sin(t)) *
+                                              static_cast<float>(c.radius)));
+                }
+                polylines.push_back(std::move(loop));
+            }
+            referenced.insert(c.centerPointId);
+            break;
+        }
+    for (int id : m_mirrorArcs)
+        for (const auto& a : m_sketch->getArcs()) if (a.id == id) {
+            const SketchPoint* ctr = m_sketch->getPoint(a.centerPointId);
+            const SketchPoint* sp  = m_sketch->getPoint(a.startPointId);
+            const SketchPoint* ep  = m_sketch->getPoint(a.endPointId);
+            if (ctr && sp && ep) {
+                float a0 = std::atan2(sp->pos.y - ctr->pos.y, sp->pos.x - ctr->pos.x);
+                float a1 = std::atan2(ep->pos.y - ctr->pos.y, ep->pos.x - ctr->pos.x);
+                // Sweep CCW from a0 to a1 (the minor arc convention addArc uses).
+                while (a1 < a0) a1 += 2.0f * static_cast<float>(M_PI);
+                std::vector<glm::vec2> poly;
+                const int N = 32;
+                for (int i = 0; i <= N; ++i) {
+                    float t = a0 + (a1 - a0) * i / N;
+                    poly.push_back(R(ctr->pos + glm::vec2(std::cos(t), std::sin(t)) *
+                                             static_cast<float>(a.radius)));
+                }
+                polylines.push_back(std::move(poly));
+            }
+            referenced.insert(a.startPointId); referenced.insert(a.endPointId);
+            referenced.insert(a.centerPointId);
+            break;
+        }
+    for (int id : m_mirrorSplines)
+        for (const auto& sp : m_sketch->getSplines()) if (sp.id == id) {
+            std::vector<glm::vec2> poly;
+            for (glm::vec2 q : m_sketch->sampleSpline2D(sp, 16)) poly.push_back(R(q));
+            if (poly.size() >= 2) polylines.push_back(std::move(poly));
+            for (int cp : sp.controlPointIds) referenced.insert(cp);
+            break;
+        }
+    // Lone vertices (not part of any mirrored curve).
+    for (int id : m_mirrorPoints)
+        if (!referenced.count(id))
+            if (const SketchPoint* p = m_sketch->getPoint(id)) points.push_back(R(p->pos));
+}
+
+void SketchTool::commitMirror(std::set<int>& outPoints, std::set<int>& outLines) {
+    if (!m_sketch || !m_mirrorActive) return;
+    std::unordered_map<int, int> remap;
+    auto remapPt = [&](int oldId) -> int {
+        auto it = remap.find(oldId);
+        if (it != remap.end()) return it->second;
+        const SketchPoint* p = m_sketch->getPoint(oldId);
+        if (!p) return -1;
+        glm::vec2 np = mirrorReflect(p->pos);
+        // Weld a reflected vertex onto an existing coincident one (a point on
+        // the mirror line maps to itself) — same as the one-shot mirror did.
+        int existing = findCoincidentPoint(np, -1);
+        int nid = (existing >= 0) ? existing : m_sketch->addPoint(np);
+        remap[oldId] = nid;
+        return nid;
+    };
+    for (int id : m_mirrorPoints) { int nid = remapPt(id); if (nid >= 0) outPoints.insert(nid); }
+    for (int lid : m_mirrorLines)
+        for (const auto& l : m_sketch->getLines()) if (l.id == lid) {
+            int s = remapPt(l.startPointId), e = remapPt(l.endPointId);
+            if (s >= 0 && e >= 0 && s != e) {
+                int nl = m_sketch->addLine(s, e);
+                outLines.insert(nl); outPoints.insert(s); outPoints.insert(e);
+            }
+            break;
+        }
+    for (int cid : m_mirrorCircles)
+        for (const auto& c : m_sketch->getCircles()) if (c.id == cid) {
+            int ctr = remapPt(c.centerPointId);
+            if (ctr >= 0) { m_sketch->addCircle(ctr, c.radius); outPoints.insert(ctr); }
+            break;
+        }
+    for (int aid : m_mirrorArcs)
+        for (const auto& a : m_sketch->getArcs()) if (a.id == aid) {
+            int ctr = remapPt(a.centerPointId);
+            int s = remapPt(a.startPointId), e = remapPt(a.endPointId);
+            // Reflection reverses winding — swap start/end so the rebuilt arc
+            // keeps the same swept (minor) span on the mirrored side.
+            if (ctr >= 0 && s >= 0 && e >= 0) {
+                m_sketch->addArc(ctr, e, s, a.radius);
+                outPoints.insert(s); outPoints.insert(e); outPoints.insert(ctr);
+            }
+            break;
+        }
+    for (int sid : m_mirrorSplines)
+        for (const auto& sp : m_sketch->getSplines()) if (sp.id == sid) {
+            std::vector<int> cps;
+            for (int cp : sp.controlPointIds) { int n2 = remapPt(cp); if (n2 >= 0) cps.push_back(n2); }
+            if (cps.size() >= 2) m_sketch->addSpline(cps);
+            for (int n2 : cps) outPoints.insert(n2);
+            break;
+        }
 }
 
 void SketchTool::undoLastStamp() {

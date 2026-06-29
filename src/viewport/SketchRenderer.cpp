@@ -213,6 +213,22 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
             if (!av.empty())
                 uploadAndDraw(av, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
         }
+        const auto& selSplines = tool->getSelectedSplines();
+        if (!selSplines.empty()) {
+            std::vector<float> sv;
+            for (const auto& sp : sketch->getSplines()) {
+                if (!selSplines.count(sp.id)) continue;
+                std::vector<glm::vec2> pts = sketch->sampleSpline2D(sp, 12);
+                for (size_t i = 0; i + 1 < pts.size(); ++i) {
+                    glm::vec3 w1 = toWorld(sketch, pts[i]);
+                    glm::vec3 w2 = toWorld(sketch, pts[i + 1]);
+                    sv.push_back(w1.x); sv.push_back(w1.y); sv.push_back(w1.z);
+                    sv.push_back(w2.x); sv.push_back(w2.y); sv.push_back(w2.z);
+                }
+            }
+            if (!sv.empty())
+                uploadAndDraw(sv, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
+        }
         if (!selPoints.empty()) {
             std::vector<float> pv;
             for (const auto& p : sketch->getPoints()) {
@@ -346,7 +362,7 @@ void SketchRenderer::drawSplines(const Sketch* sketch, const glm::mat4& vp) {
         }
     }
 
-    glm::vec3 color = glm::vec3(0.2f, 0.85f, 0.3f); // green to distinguish from regular lines
+    glm::vec3 color = glm::vec3(0.10f, 0.35f, 0.95f); // deep cobalt — match all sketch geometry
     uploadAndDraw(verts, GL_LINES, color, vp, m_lineWidth);
 }
 

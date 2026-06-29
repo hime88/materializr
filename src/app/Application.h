@@ -98,6 +98,7 @@ private:
     std::string m_toastText;
     double m_toastExpiry = 0.0;
     void renderSvgToolPanel();  // SVG placement settings (floating)
+    void renderMirrorToolPanel(); // interactive mirror line controls (floating)
     // Camera-upright default rotation for Text/SVG placement.
     void seedUprightPlacementAngle();
     void initRenderers();
@@ -611,6 +612,16 @@ private:
     // press so the whole shape is one press-drag-release gesture; this flags that
     // the release must complete the shape (and only if the finger actually moved).
     bool m_sketchDragCenterPlaced = false;
+    // History step count captured at the start of a drawing-tool press, so that
+    // if a two-finger pan/zoom takes the press over we can tell whether the
+    // press already pushed a step (e.g. Line's start vertex) and roll it back.
+    int m_sketchPressStepBefore = 0;
+    // Interactive mirror line manipulated by a sketch-style move/rotate gizmo.
+    // Reuses the SketchGizmoHandle vocabulary (MoveX/MoveY/MoveFree/Rotate).
+    SketchGizmoHandle m_mirrorGizmoHandle = SketchGizmoHandle::None;
+    glm::vec2 m_mirrorGizmoStartAnchor{0.0f}; // mirror anchor at drag start
+    glm::vec2 m_mirrorGizmoGrab{0.0f};        // sketch-space cursor at drag start
+    float m_mirrorGizmoStartAngle = 0.0f;     // mirror angle at drag start
     float m_sketchDownX = 0.0f, m_sketchDownY = 0.0f; // press pos (px) for drag slop
     // ImGui drops IsItemHovered() mid-drag once the window-move grab takes the
     // ActiveId, which freezes the live sketch preview. Latch the viewport input

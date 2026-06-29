@@ -3,6 +3,45 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [1.3.0-beta.5] — 2026-06-29 (pre-release)
+
+### Added
+
+- **Interactive Mirror.** The sketch Mirror tool now places a movable, rotatable
+  mirror line (with a live ghost preview) instead of mirroring instantly across a
+  fixed vertical axis. The line carries the same move/rotate gizmo as sketch
+  elements — drag the arrows/centre to position it, the ring to rotate (snaps to
+  5° increments) — plus Vertical/Horizontal presets and ±45° nudges in its panel.
+  It now mirrors points, lines, circles, arcs and splines (was points + lines),
+  welding coincident vertices. The line snaps to half the grid step, so the
+  reflected geometry lands on whole grid increments.
+
+### Changed
+
+- **Copy lands offset and selected.** A sketch Copy now drops the duplicate two
+  grid steps away (not exactly on the original) with the move gizmo already over
+  it, so you can immediately drag it into place instead of fishing two stacked
+  copies apart.
+- **Box-select catches curves.** Click-and-drag selection now includes circles,
+  arcs and splines, not just points and lines — and selected splines are
+  highlighted like everything else.
+- **Splines render in the standard cobalt** instead of green, matching every
+  other sketch element.
+- **Bigger move/rotate gizmo on touch.** The sketch gizmo's handles and catch
+  radius scale up in touch mode so they're comfortably finger-sized.
+
+### Fixed
+
+- **ViewCube frames the in-progress sketch.** Clicking the ViewCube during the
+  very first sketch (no committed bodies yet) snapped to a tiny default cube;
+  it now encompasses the sketch you've drawn so far.
+- **Two-finger pan/zoom mid-sketch leaves no debris.** Starting a two-finger
+  gesture while a drawing tool is active no longer drops a stray start vertex or
+  half-placed shape from the first finger — the placement is rolled back so
+  navigation is clean without the Move button.
+- **History item highlight is dismissable.** Clicking a sketch history step
+  highlights its element; clicking the same step again now clears it.
+
 ## [1.3.0-beta.4] — 2026-06-28 (pre-release)
 
 ### Changed

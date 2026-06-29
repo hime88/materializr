@@ -1707,6 +1707,157 @@ void Application::renderViewport() {
                     }
                 }
 
+                // Interactive Mirror: the dashed mirror line + a live ghost of the
+                // reflected geometry. The move/rotate GIZMO itself is drawn in the
+                // input-handling scope (so its hit-test and visual stay in sync).
+                if (m_sketchTool->getMode() == SketchToolMode::Mirror &&
+                    m_sketchTool->isMirrorActive()) {
+                    const glm::vec2 anchor = m_sketchTool->getMirrorAnchor();
+                    const float ang = m_sketchTool->getMirrorAngle();
+                    const glm::vec2 dir(std::cos(ang), std::sin(ang));
+                    ImVec2 aS, dProbe;
+                    if (toImg(sk2w(anchor), aS) &&
+                        toImg(sk2w(anchor + dir * 0.01f), dProbe)) {
+                        ImVec2 dS(dProbe.x - aS.x, dProbe.y - aS.y);
+                        float dl2 = std::sqrt(dS.x * dS.x + dS.y * dS.y);
+                        if (dl2 > 1e-4f) { dS.x /= dl2; dS.y /= dl2; }
+                        else { dS = ImVec2(0.0f, 1.0f); }
+                        const ImU32 lineCol = IM_COL32(120, 200, 255, 220);
+                        // Long dashed line through the anchor.
+                        const float L = 4000.0f;
+                        ImVec2 p0(aS.x - dS.x * L, aS.y - dS.y * L);
+                        ImVec2 p1(aS.x + dS.x * L, aS.y + dS.y * L);
+                        {
+                            ImVec2 d(p1.x - p0.x, p1.y - p0.y);
+                            float len = std::sqrt(d.x * d.x + d.y * d.y);
+                            if (len > 1.0f) {
+                                d.x /= len; d.y /= len;
+                                const float on = 10.0f, off = 8.0f;
+                                for (float t = 0.0f; t < len; t += on + off) {
+                                    float t1 = std::min(t + on, len);
+                                    dl->AddLine(ImVec2(p0.x + d.x * t, p0.y + d.y * t),
+                                                ImVec2(p0.x + d.x * t1, p0.y + d.y * t1),
+                                                lineCol, 1.6f);
+                                }
+                            }
+                        }
+                        // Live ghost of the reflected geometry.
+                        std::vector<std::vector<glm::vec2>> polys;
+                        std::vector<glm::vec2> pts;
+                        m_sketchTool->getMirrorPreview(polys, pts);
+                        const ImU32 ghost = IM_COL32(255, 170, 60, 230);
+                        for (const auto& poly : polys)
+                            for (size_t i = 0; i + 1 < poly.size(); ++i) {
+                                ImVec2 a, b;
+                                if (toImg(sk2w(poly[i]), a) && toImg(sk2w(poly[i + 1]), b))
+                                    dl->AddLine(a, b, ghost, 1.8f);
+                            }
+                        for (const auto& q : pts) {
+                            ImVec2 s;
+                            if (toImg(sk2w(q), s)) dl->AddCircleFilled(s, 3.0f, ghost);
+                        }
+
+                        // Move/rotate gizmo on the anchor (drawn here, in the
+                        // always-run pass, so it's visible WITHOUT a canvas tap;
+                        // hit-test + drag live in the input scope). Geometry/
+                        // constants mirror that block so the drawn handles line up
+                        // with their hit zones.
+                        ImVec2 gsx, gsy;
+                        if (toImg(sk2w(anchor + glm::vec2(1.0f, 0.0f)), gsx) &&
+                            toImg(sk2w(anchor + glm::vec2(0.0f, 1.0f)), gsy)) {
+                            glm::vec2 gvx(gsx.x - aS.x, gsx.y - aS.y);
+                            glm::vec2 gvy(gsy.x - aS.x, gsy.y - aS.y);
+                            if (glm::length(gvx) > 1e-3f && glm::length(gvy) > 1e-3f) {
+                                gvx = glm::normalize(gvx); gvy = glm::normalize(gvy);
+                                const bool gt = materializr::touchMode();
+                                const float gArm = gt ? 90.0f : 70.0f;
+                                const float gRing = gt ? 130.0f : 100.0f;
+                                const float gCtr = gt ? 11.0f : 6.5f;
+                                ImVec2 gex(aS.x + gvx.x * gArm, aS.y + gvx.y * gArm);
+                                ImVec2 gey(aS.x + gvy.x * gArm, aS.y + gvy.y * gArm);
+                                auto gcol = [&](ImU32 base, SketchGizmoHandle h) {
+                                    return (m_mirrorGizmoHandle == h)
+                                               ? IM_COL32(255, 240, 80, 255) : base;
+                                };
+                                dl->AddCircle(aS, gRing, gcol(IM_COL32(220, 180, 60, 220),
+                                              SketchGizmoHandle::Rotate), 64, 2.5f);
+                                dl->AddLine(aS, gex, gcol(IM_COL32(230, 70, 70, 230),
+                                            SketchGizmoHandle::MoveX), 3.0f);
+                                dl->AddLine(aS, gey, gcol(IM_COL32(90, 200, 90, 230),
+                                            SketchGizmoHandle::MoveY), 3.0f);
+                                auto ghead = [&](ImVec2 tip, glm::vec2 d, ImU32 cc) {
+                                    glm::vec2 pp(-d.y, d.x);
+                                    dl->AddTriangleFilled(tip,
+                                        ImVec2(tip.x - d.x * 14.0f + pp.x * 6.0f, tip.y - d.y * 14.0f + pp.y * 6.0f),
+                                        ImVec2(tip.x - d.x * 14.0f - pp.x * 6.0f, tip.y - d.y * 14.0f - pp.y * 6.0f),
+                                        cc);
+                                };
+                                ghead(gex, gvx, gcol(IM_COL32(230, 70, 70, 230), SketchGizmoHandle::MoveX));
+                                ghead(gey, gvy, gcol(IM_COL32(90, 200, 90, 230), SketchGizmoHandle::MoveY));
+                                dl->AddCircleFilled(aS, gCtr, gcol(IM_COL32(240, 240, 230, 230),
+                                                    SketchGizmoHandle::MoveFree));
+                                dl->AddCircle(aS, gCtr, IM_COL32(30, 30, 40, 230), 0, 1.2f);
+                            }
+                        }
+                    }
+                }
+
+                // Element move gizmo, drawn here in the always-run pass so a
+                // selection armed by a toolbar action (Copy) shows the gizmo
+                // without a canvas tap. Hit-test + drag stay in the input scope.
+                // Skipped while a gizmo drag is in flight (the input scope then
+                // owns the visual, anchored at the drag-start centroid).
+                if (m_sketchTool->getMode() == SketchToolMode::Select &&
+                    m_sketchTool->hasElementSelection() &&
+                    m_sketchGizmoHandle == SketchGizmoHandle::None) {
+                    std::set<int> inv(m_sketchTool->getSelectedPoints().begin(),
+                                      m_sketchTool->getSelectedPoints().end());
+                    for (int lid : m_sketchTool->getSelectedLines())
+                        for (const auto& l : m_activeSketch->getLines())
+                            if (l.id == lid) { inv.insert(l.startPointId); inv.insert(l.endPointId); break; }
+                    for (int cid : m_sketchTool->getSelectedCircles())
+                        for (const auto& cc : m_activeSketch->getCircles())
+                            if (cc.id == cid) { inv.insert(cc.centerPointId); break; }
+                    for (int aid : m_sketchTool->getSelectedArcs())
+                        for (const auto& aa : m_activeSketch->getArcs())
+                            if (aa.id == aid) { inv.insert(aa.centerPointId); inv.insert(aa.startPointId); inv.insert(aa.endPointId); break; }
+                    for (int sid : m_sketchTool->getSelectedSplines())
+                        for (const auto& sp : m_activeSketch->getSplines())
+                            if (sp.id == sid) { for (int cp : sp.controlPointIds) inv.insert(cp); break; }
+                    glm::vec2 gc{0.0f}; int gn = 0;
+                    for (int id : inv) if (auto* p = m_activeSketch->getPoint(id)) { gc += p->pos; ++gn; }
+                    ImVec2 ec, egx, egy;
+                    if (gn > 0 &&
+                        toImg(sk2w(gc / static_cast<float>(gn)), ec) &&
+                        toImg(sk2w(gc / static_cast<float>(gn) + glm::vec2(1.0f, 0.0f)), egx) &&
+                        toImg(sk2w(gc / static_cast<float>(gn) + glm::vec2(0.0f, 1.0f)), egy)) {
+                        glm::vec2 evx(egx.x - ec.x, egx.y - ec.y);
+                        glm::vec2 evy(egy.x - ec.x, egy.y - ec.y);
+                        if (glm::length(evx) > 1e-3f && glm::length(evy) > 1e-3f) {
+                            evx = glm::normalize(evx); evy = glm::normalize(evy);
+                            const bool et = materializr::touchMode();
+                            const float eArm = et ? 90.0f : 70.0f;
+                            const float eRing = et ? 130.0f : 100.0f;
+                            const float eCtr = et ? 11.0f : 6.5f;
+                            ImVec2 eex(ec.x + evx.x * eArm, ec.y + evx.y * eArm);
+                            ImVec2 eey(ec.x + evy.x * eArm, ec.y + evy.y * eArm);
+                            dl->AddCircle(ec, eRing, IM_COL32(220, 180, 60, 220), 64, 2.5f);
+                            dl->AddLine(ec, eex, IM_COL32(230, 70, 70, 230), 3.0f);
+                            dl->AddLine(ec, eey, IM_COL32(90, 200, 90, 230), 3.0f);
+                            auto ehead = [&](ImVec2 tip, glm::vec2 d, ImU32 cc) {
+                                glm::vec2 pp(-d.y, d.x);
+                                dl->AddTriangleFilled(tip,
+                                    ImVec2(tip.x - d.x * 14.0f + pp.x * 6.0f, tip.y - d.y * 14.0f + pp.y * 6.0f),
+                                    ImVec2(tip.x - d.x * 14.0f - pp.x * 6.0f, tip.y - d.y * 14.0f - pp.y * 6.0f), cc);
+                            };
+                            ehead(eex, evx, IM_COL32(230, 70, 70, 230));
+                            ehead(eey, evy, IM_COL32(90, 200, 90, 230));
+                            dl->AddCircleFilled(ec, eCtr, IM_COL32(240, 240, 230, 230));
+                            dl->AddCircle(ec, eCtr, IM_COL32(30, 30, 40, 230), 0, 1.2f);
+                        }
+                    }
+                }
+
                 // Inference label near the cursor — names which snap(s) are
                 // active so the user understands WHY the cursor jumped. The
                 // killer SketchUp feature ("Endpoint" / "On midpoint" /
@@ -4373,7 +4524,115 @@ void Application::renderViewport() {
                     }
                 }
 
-                if (!patternPickingNow) {
+                // Interactive mirror: the mirror line is driven by the SAME
+                // move/rotate gizmo style as sketch elements (axis arrows +
+                // free-move centre + rotate ring), so it's uniform and rotate is
+                // built in. Handled here so it pre-empts the drawing/select
+                // routing below. Move handles slide the anchor; the ring spins
+                // the mirror angle.
+                bool mirrorActiveNow = m_sketchTool->getMode() == SketchToolMode::Mirror &&
+                                       m_sketchTool->isMirrorActive();
+                if (mirrorActiveNow) {
+                    ImDrawList* mgl = ImGui::GetWindowDrawList();
+                    const gp_Ax3& ax = m_activeSketch->getPlane().Position();
+                    glm::vec3 O(ax.Location().X(), ax.Location().Y(), ax.Location().Z());
+                    glm::vec3 Xw(ax.XDirection().X(), ax.XDirection().Y(), ax.XDirection().Z());
+                    glm::vec3 Yw(ax.YDirection().X(), ax.YDirection().Y(), ax.YDirection().Z());
+                    auto sk2w = [&](glm::vec2 p) { return O + p.x * Xw + p.y * Yw; };
+                    glm::mat4 mvp = proj * view;
+                    auto mToImg = [&](glm::vec3 w, ImVec2& out) -> bool {
+                        glm::vec4 c = mvp * glm::vec4(w, 1.0f);
+                        if (c.w <= 1e-5f) return false;
+                        out = ImVec2(winPos.x + (c.x / c.w * 0.5f + 0.5f) * contentSize.x,
+                                     winPos.y + (1.0f - (c.y / c.w * 0.5f + 0.5f)) * contentSize.y);
+                        return true;
+                    };
+                    glm::vec2 anchor = m_sketchTool->getMirrorAnchor();
+                    ImVec2 sc, sx, sy;
+                    bool projOk = mToImg(sk2w(anchor), sc) &&
+                                  mToImg(sk2w(anchor + glm::vec2(1.0f, 0.0f)), sx) &&
+                                  mToImg(sk2w(anchor + glm::vec2(0.0f, 1.0f)), sy);
+                    glm::vec2 vx(sx.x - sc.x, sx.y - sc.y);
+                    glm::vec2 vy(sy.x - sc.x, sy.y - sc.y);
+                    if (projOk && glm::length(vx) > 1e-3f && glm::length(vy) > 1e-3f) {
+                        vx = glm::normalize(vx); vy = glm::normalize(vy);
+                        const bool touch = materializr::touchMode();
+                        const float armLen  = touch ? 90.0f : 70.0f;
+                        const float ringR   = touch ? 130.0f : 100.0f;
+                        const float centerR = touch ? 11.0f : 6.5f;
+                        const float pickPx  = touch ? 22.0f : 8.0f;
+                        ImVec2 ex(sc.x + vx.x * armLen, sc.y + vx.y * armLen);
+                        ImVec2 ey(sc.x + vy.x * armLen, sc.y + vy.y * armLen);
+
+                        auto distSegSq = [](glm::vec2 q, glm::vec2 a, glm::vec2 b) {
+                            glm::vec2 ab = b - a;
+                            float len2 = glm::dot(ab, ab);
+                            if (len2 < 1e-6f) return glm::dot(q - a, q - a);
+                            float t = glm::clamp(glm::dot(q - a, ab) / len2, 0.0f, 1.0f);
+                            glm::vec2 pr = a + t * ab;
+                            return glm::dot(q - pr, q - pr);
+                        };
+                        glm::vec2 mv(mousePos.x, mousePos.y);
+                        glm::vec2 scV(sc.x, sc.y), exV(ex.x, ex.y), eyV(ey.x, ey.y);
+                        float distC = glm::length(mv - scV);
+                        float dxSq = distSegSq(mv, scV, exV), dySq = distSegSq(mv, scV, eyV);
+                        float distRing = std::abs(distC - ringR);
+                        float pickSq = pickPx * pickPx;
+                        SketchGizmoHandle hover = SketchGizmoHandle::None;
+                        if      (distC < centerR + pickPx * 0.6f)                 hover = SketchGizmoHandle::MoveFree;
+                        else if (dxSq < pickSq && distC < armLen + 14.0f)         hover = SketchGizmoHandle::MoveX;
+                        else if (dySq < pickSq && distC < armLen + 14.0f)         hover = SketchGizmoHandle::MoveY;
+                        else if (distRing < pickPx)                              hover = SketchGizmoHandle::Rotate;
+                        (void)mgl; // gizmo is DRAWN in the always-run render pass
+                                   // (so it's visible without a canvas tap); this
+                                   // block only hit-tests + drags.
+
+                        // Arm a handle on press.
+                        if (m_mirrorGizmoHandle == SketchGizmoHandle::None &&
+                            hover != SketchGizmoHandle::None && !io.KeyCtrl &&
+                            ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                            m_mirrorGizmoHandle = hover;
+                            m_mirrorGizmoStartAnchor = anchor;
+                            m_mirrorGizmoGrab = sketchCoord;
+                            m_mirrorGizmoStartAngle = m_sketchTool->getMirrorAngle();
+                        }
+                    }
+                    // Apply the drag.
+                    if (m_mirrorGizmoHandle != SketchGizmoHandle::None &&
+                        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        if (m_mirrorGizmoHandle == SketchGizmoHandle::Rotate) {
+                            glm::vec2 v0 = m_mirrorGizmoGrab        - m_mirrorGizmoStartAnchor;
+                            glm::vec2 v1 = sketchCoord              - m_mirrorGizmoStartAnchor;
+                            if (glm::length(v0) > 1e-4f && glm::length(v1) > 1e-4f) {
+                                float dRad = std::atan2(v1.y, v1.x) - std::atan2(v0.y, v0.x);
+                                float deg = (m_mirrorGizmoStartAngle + dRad) * 180.0f / static_cast<float>(M_PI);
+                                deg = std::round(deg / 5.0f) * 5.0f; // snap to 5° increments
+                                m_sketchTool->setMirrorAngle(deg * static_cast<float>(M_PI) / 180.0f);
+                            }
+                        } else {
+                            glm::vec2 delta = sketchCoord - m_mirrorGizmoGrab;
+                            if (m_mirrorGizmoHandle == SketchGizmoHandle::MoveX) delta.y = 0.0f;
+                            else if (m_mirrorGizmoHandle == SketchGizmoHandle::MoveY) delta.x = 0.0f;
+                            glm::vec2 na = m_mirrorGizmoStartAnchor + delta;
+                            // Snap to HALF the grid step: reflection doubles the
+                            // line's travel, so a half-step line move lands the
+                            // mirrored elements on whole grid increments (e.g. a
+                            // 0.5 mm line nudge → 1 mm mirror shift on a 1 mm grid).
+                            float step = m_sketchTool->getGridStep() * 0.5f;
+                            if (step > 0.0f) {
+                                if (m_mirrorGizmoHandle != SketchGizmoHandle::MoveY)
+                                    na.x = std::round(na.x / step) * step;
+                                if (m_mirrorGizmoHandle != SketchGizmoHandle::MoveX)
+                                    na.y = std::round(na.y / step) * step;
+                            }
+                            m_sketchTool->setMirrorAnchor(na);
+                        }
+                    }
+                    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+                        m_mirrorGizmoHandle = SketchGizmoHandle::None;
+                }
+
+                if (!patternPickingNow && !mirrorActiveNow) {
                 // === Sketch Move/Rotate gizmo ====================================
                 // Drawn on the selection centroid in Select mode. Axis arrows for
                 // constrained X/Y move, centre dot for free move, ring for rotate.
@@ -4422,6 +4681,14 @@ void Application::renderViewport() {
                                 break;
                             }
                     }
+                    // Splines move rigidly by dragging all their control points.
+                    for (int sid : m_sketchTool->getSelectedSplines()) {
+                        for (const auto& sp : m_activeSketch->getSplines())
+                            if (sp.id == sid) {
+                                for (int cp : sp.controlPointIds) involved.insert(cp);
+                                break;
+                            }
+                    }
                     glm::vec2 c{0.0f};
                     int nInv = 0;
                     for (int id : involved)
@@ -4447,9 +4714,10 @@ void Application::renderViewport() {
                         if (projOk && glm::length(vx) > 1e-3f && glm::length(vy) > 1e-3f) {
                             vx = glm::normalize(vx);
                             vy = glm::normalize(vy);
-                            const float armLen  = 70.0f;
-                            const float ringR   = 100.0f;
-                            const float centerR = 6.5f;
+                            const bool  gzTouch = materializr::touchMode();
+                            const float armLen  = gzTouch ? 90.0f : 70.0f;
+                            const float ringR   = gzTouch ? 130.0f : 100.0f;
+                            const float centerR = gzTouch ? 11.0f : 6.5f;
                             ImVec2 ex(sc.x + vx.x * armLen, sc.y + vx.y * armLen);
                             ImVec2 ey(sc.x + vy.x * armLen, sc.y + vy.y * armLen);
 
@@ -4469,7 +4737,7 @@ void Application::renderViewport() {
                             float dySq     = distSegSq(mv, scV, eyV);
                             float distRing = std::abs(distC - ringR);
 
-                            const float pickPx = 8.0f;
+                            const float pickPx = gzTouch ? 22.0f : 8.0f;
                             const float pickPxSq = pickPx * pickPx;
                             SketchGizmoHandle hover = SketchGizmoHandle::None;
                             if      (distC < centerR + 4.0f)                            hover = SketchGizmoHandle::MoveFree;
@@ -4894,6 +5162,11 @@ void Application::renderViewport() {
                         m_sketchDownX = io.MousePos.x;
                         m_sketchDownY = io.MousePos.y;
                         m_sketchDragCenterPlaced = false;
+                        // Remember the undo depth before any pre-place below, so a
+                        // two-finger gesture taking this press over can roll back
+                        // exactly what it added (see the release handler).
+                        m_sketchPressStepBefore =
+                            m_history ? m_history->stepCount() : 0;
                         // The drag tools (circle/rectangle) are a single
                         // click-drag-release gesture: drop the centre / first
                         // corner now, on press, so the drag sizes the shape and
@@ -4984,7 +5257,54 @@ void Application::renderViewport() {
                                     selLns.insert(l.id);
                                 }
                             }
-                            m_sketchTool->setSelection(selPts, selLns);
+                            // Curves were previously skipped — box-select only
+                            // caught points + lines. Test each curve's projected
+                            // sample points against the rect so a drag grabs
+                            // circles, arcs and splines too.
+                            std::set<int> selCircs = io.KeyCtrl ? m_sketchTool->getSelectedCircles() : std::set<int>{};
+                            std::set<int> selArcs  = io.KeyCtrl ? m_sketchTool->getSelectedArcs()    : std::set<int>{};
+                            std::set<int> selSpls  = io.KeyCtrl ? m_sketchTool->getSelectedSplines() : std::set<int>{};
+                            auto anySampleInRect = [&](const std::vector<glm::vec2>& s2d) {
+                                for (glm::vec2 q : s2d) {
+                                    glm::vec2 sp;
+                                    if (projectPt(q, sp) &&
+                                        sp.x >= mn.x && sp.x <= mx.x &&
+                                        sp.y >= mn.y && sp.y <= mx.y)
+                                        return true;
+                                }
+                                return false;
+                            };
+                            for (const auto& c : m_activeSketch->getCircles()) {
+                                const SketchPoint* ctr = m_activeSketch->getPoint(c.centerPointId);
+                                if (!ctr) continue;
+                                std::vector<glm::vec2> ring;
+                                for (int i = 0; i < 16; ++i) {
+                                    float t = 2.0f * 3.14159265f * i / 16;
+                                    ring.push_back(ctr->pos + glm::vec2(std::cos(t), std::sin(t)) *
+                                                            static_cast<float>(c.radius));
+                                }
+                                if (anySampleInRect(ring)) selCircs.insert(c.id);
+                            }
+                            for (const auto& a : m_activeSketch->getArcs()) {
+                                const SketchPoint* ctr = m_activeSketch->getPoint(a.centerPointId);
+                                const SketchPoint* sp0 = m_activeSketch->getPoint(a.startPointId);
+                                const SketchPoint* ep0 = m_activeSketch->getPoint(a.endPointId);
+                                if (!ctr || !sp0 || !ep0) continue;
+                                float a0 = std::atan2(sp0->pos.y - ctr->pos.y, sp0->pos.x - ctr->pos.x);
+                                float a1 = std::atan2(ep0->pos.y - ctr->pos.y, ep0->pos.x - ctr->pos.x);
+                                while (a1 < a0) a1 += 2.0f * 3.14159265f;
+                                std::vector<glm::vec2> samp;
+                                for (int i = 0; i <= 16; ++i) {
+                                    float t = a0 + (a1 - a0) * i / 16;
+                                    samp.push_back(ctr->pos + glm::vec2(std::cos(t), std::sin(t)) *
+                                                            static_cast<float>(a.radius));
+                                }
+                                if (anySampleInRect(samp)) selArcs.insert(a.id);
+                            }
+                            for (const auto& sp : m_activeSketch->getSplines())
+                                if (anySampleInRect(m_activeSketch->sampleSpline2D(sp, 12)))
+                                    selSpls.insert(sp.id);
+                            m_sketchTool->setSelectionFull(selPts, selLns, selCircs, selArcs, selSpls);
                         }
                     }
                 }
@@ -5018,6 +5338,33 @@ void Application::renderViewport() {
                             // a drag tool's second tap: place the point at release.
                             recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
                         }
+                    } else if (m_sketchPressActive &&
+                               m_sketchTool->getMode() != SketchToolMode::Select &&
+                               !m_moveModeToggle &&
+                               m_window && m_window->lastLeftReleaseWasGesture() &&
+                               m_sketchTool->isPlacing()) {
+                        // A two-finger pan/zoom began right after this finger's
+                        // press started a drawing placement. Roll that placement
+                        // back so two-finger navigation needs no Move button and
+                        // leaves nothing behind — no stray start vertex, and no
+                        // half-placed state to corrupt the next tap. Undo the step
+                        // the press pushed (Line drops its fresh start vertex here;
+                        // circle/rect/arc push nothing, so the guard skips), then
+                        // clear the tool's in-progress placement.
+                        if (m_history &&
+                            m_history->stepCount() > m_sketchPressStepBefore &&
+                            m_history->canUndo() &&
+                            (!m_inSketchMode ||
+                             m_history->currentStep() > m_sketchEntryHistoryStep)) {
+                            m_history->undo(*m_document);
+                        }
+                        m_sketchTool->onCancel();
+                        if (m_activeSketch) {
+                            m_activeSketch->pruneOrphanPoints();
+                            if (m_activeSketchId >= 0)
+                                cascadeFromSketchEdit(m_activeSketchId);
+                        }
+                        m_meshesDirty = true;
                     }
                     m_sketchPressActive = false;
                     m_sketchDragCenterPlaced = false;
