@@ -3461,20 +3461,14 @@ PdfTiling computePdfTiling(const materializr::FlatPattern& fp, bool a4) {
     return t;
 }
 
-// A labelled alignment cross at a position (in drawing-mm) that falls inside a
-// tile overlap — so it prints on both adjacent sheets and you match by label.
-struct RegMark { double x, y; std::string label; };
-std::string regColLabel(int i) {           // 0→A, 25→Z, 26→AA, …
-    std::string s;
-    if (i >= 26) s += char('A' + i / 26 - 1);
-    s += char('A' + i % 26);
-    return s;
-}
+// An alignment cross at a position (in drawing-mm) that falls inside a tile
+// overlap — so it prints on both adjacent sheets at the same spot.
+struct RegMark { double x, y; };
 // Build the registration lattice for a tiling: crosses along every column- and
 // row-overlap centreline (where adjacent sheets share content), with `spacingMm`
-// filler marks between the seams so you can pick the density. Each mark gets a
-// stable grid label (column letter + row number) that's identical on every sheet
-// it appears on. spacingMm ≤ 0 (or a single page) yields no marks.
+// filler marks between the seams so you can pick the density. The same drawing-mm
+// point prints on every sheet it lands on, so the crosses line up directly.
+// spacingMm ≤ 0 (or a single page) yields no marks.
 std::vector<RegMark> computeRegMarks(const PdfTiling& T, double spacingMm) {
     std::vector<RegMark> out;
     if (spacingMm <= 0.0 || (T.nCols <= 1 && T.nRows <= 1)) return out;
@@ -3503,7 +3497,7 @@ std::vector<RegMark> computeRegMarks(const PdfTiling& T, double spacingMm) {
     for (size_t i = 0; i < X.size(); ++i)
         for (size_t j = 0; j < Y.size(); ++j) {
             if (!X[i].seam && !Y[j].seam) continue;   // not in any overlap → useless
-            out.push_back({X[i].pos, Y[j].pos, regColLabel(int(i)) + std::to_string(int(j) + 1)});
+            out.push_back({X[i].pos, Y[j].pos});
         }
     return out;
 }
@@ -3579,34 +3573,20 @@ bool writeFlatPatternPdf(const std::string& path, const materializr::FlatPattern
             }
             strokeSegs(segs);
         }
-        // Labelled registration crosses in the tile OVERLAPS: the same drawing-mm
-        // point (and label) prints on both adjacent sheets (the clip keeps each
-        // page's share), so you match "A1 to A1" and slide until the crosses
-        // coincide for precise fitment. Crosses are clipped to content; the labels
-        // are drawn UNclipped below so an edge cross keeps its full label.
-        const double regArm = 4.0;                       // mm half-length of each arm
-        auto inTile = [&](const RegMark& m) {
-            return !(m.x < ox - 1 || m.x > ox + cwMM + 1 || m.y < oy - 1 || m.y > oy + chMM + 1);
-        };
+        // Registration crosses in the tile OVERLAPS: the same drawing-mm point
+        // prints on both adjacent sheets (the clip keeps each page's share), so
+        // overlaying the sheets until the crosses coincide gives precise fitment.
         if (!regMarks.empty()) {
             pdff(s, "1 0 1 RG 0.4 w\n");                  // magenta stroke
+            const double regArm = 4.0;                    // mm half-length of each arm
             for (const RegMark& m : regMarks) {
-                if (!inTile(m)) continue;
+                if (m.x < ox - 1 || m.x > ox + cwMM + 1 || m.y < oy - 1 || m.y > oy + chMM + 1) continue;
                 const double px = PX(m.x), py = PY(m.y);
                 pdff(s, "%.2f %.2f m %.2f %.2f l S\n", px - regArm * K, py, px + regArm * K, py);
                 pdff(s, "%.2f %.2f m %.2f %.2f l S\n", px, py - regArm * K, px, py + regArm * K);
             }
         }
         pdff(s, "Q\n");   // end clip
-        if (!regMarks.empty()) {
-            pdff(s, "1 0 1 rg\n");                        // magenta fill for labels
-            for (const RegMark& m : regMarks) {
-                if (!inTile(m)) continue;
-                pdff(s, "BT /F1 6 Tf %.2f %.2f Td (%s) Tj ET\n",
-                     PX(m.x) + regArm * K + 1.5, PY(m.y) + 1.5, m.label.c_str());
-            }
-            pdff(s, "0 0 0 rg\n");                        // reset so later text stays black
-        }
 
         // Crop marks just outside the content rectangle's four corners.
         pdff(s, "0 0 0 RG 0.3 w\n");
@@ -4012,7 +3992,6 @@ void Application::renderUnfoldDialog() {
                 const ImVec2 cc = S({m.x + tiling.minx - tiling.pad, m.y + tiling.miny - tiling.pad});
                 dl->AddLine(ImVec2(cc.x - 4, cc.y), ImVec2(cc.x + 4, cc.y), regCol, 1.0f);
                 dl->AddLine(ImVec2(cc.x, cc.y - 4), ImVec2(cc.x, cc.y + 4), regCol, 1.0f);
-                dl->AddText(ImVec2(cc.x + 5, cc.y - 13), regCol, m.label.c_str());
             }
         }
     }
@@ -4039,8 +4018,7 @@ void Application::renderUnfoldDialog() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(110);
         ImGui::Combo("Marks", &m_unfoldRegDensity, "None\0Sparse\0Normal\0Dense\0");
-        ImGui::SetItemTooltip("Labelled alignment crosses (A1, B2…) in the page overlaps for "
-                              "precise assembly.");
+        ImGui::SetItemTooltip("Alignment crosses in the page overlaps for precise assembly.");
     }
     if (ImGui::Button("Export…", ImVec2(110, 0))) {
         const double th = m_unfoldThicknessMm;
