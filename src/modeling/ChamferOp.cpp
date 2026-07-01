@@ -1,5 +1,6 @@
 #include "ChamferOp.h"
 #include "SubShapeIndex.h"
+#include "EdgeAnchor.h"
 #include <cstdio>
 #include <cstdlib>
 #include <BRepFilletAPI_MakeChamfer.hxx>
@@ -72,6 +73,25 @@ TopoDS_Face ChamferOp::sharedReferenceFace(const TopoDS_Shape& body,
     return TopoDS::Face(cands.front());
 }
 
+void ChamferOp::computeAnchors(Document& doc) {
+    m_edgeAnchors.clear();
+    if (m_sourceSketchId < 0) return;
+    auto sk = doc.getSketch(m_sourceSketchId);
+    if (!sk) return;
+    m_edgeAnchors = EdgeAnchor::compute(m_edges, *sk);
+}
+
+bool ChamferOp::resolveAnchors(Document& doc, const TopoDS_Shape& base) {
+    if (m_sourceSketchId < 0 || m_edgeAnchors.size() != m_edges.size())
+        return false;
+    auto sk = doc.getSketch(m_sourceSketchId);
+    if (!sk) return false;
+    std::vector<TopoDS_Edge> resolved;
+    if (!EdgeAnchor::resolve(m_edgeAnchors, *sk, base, resolved)) return false;
+    m_edges = std::move(resolved);
+    return true;
+}
+
 bool ChamferOp::execute(Document& doc) {
     if (m_bodyId < 0 || m_edges.empty() || m_distance <= 0.0) {
         return false;
@@ -86,8 +106,11 @@ bool ChamferOp::execute(Document& doc) {
         // upstream fillet's radius left every chamfer edge stale: the
         // edge-face map silently skipped them all and the chamfer vanished.
         if (!SubShapeIndex::rebindEdges(m_previousShape, m_edges)) {
-            return false;
+            // Ordinal/carrier match failed (a sketch dimension edit moved the
+            // edges) — re-find them by their sketch feature. See EdgeAnchor.
+            if (!resolveAnchors(doc, m_previousShape)) return false;
         }
+        if (m_edgeAnchors.empty()) computeAnchors(doc);
 
         // Build an edge-face map so we can find a face adjacent to each edge
         TopTools_IndexedDataMapOfShapeListOfShape edgeFaceMap;
@@ -266,6 +289,8 @@ std::string ChamferOp::serializeParams() const {
                                                    TopAbs_FACE);
         if (!idx.empty()) blob += ";gen=" + idx;
     }
+    std::string anc = EdgeAnchor::serialize(m_sourceSketchId, m_edgeAnchors);
+    if (!anc.empty()) blob += ";anchor=" + anc;
     return blob;
 }
 
@@ -284,6 +309,7 @@ bool ChamferOp::deserializeParams(const std::string& blob) {
         else if (key == "body")     { m_bodyId = std::atoi(val.c_str()); any = true; }
         else if (key == "edges")    { m_edgeIndices = SubShapeIndex::parse(val); any = true; }
         else if (key == "gen")      { m_genFaceIndices = SubShapeIndex::parse(val); any = true; }
+        else if (key == "anchor")   { EdgeAnchor::parse(val, m_sourceSketchId, m_edgeAnchors); any = true; }
         pos = end + 1;
     }
     return any;

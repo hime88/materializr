@@ -486,6 +486,8 @@ void Application::commitInteractiveEdgeOp() {
         op->setEdges(typedEdges);
         op->setDistance(static_cast<double>(m_edgeOpValue));
         if (m_edgeOpTwoDist) op->setDistance2(static_cast<double>(m_edgeOpValue2));
+        for (const auto& [sid, bodies] : sketchBodyLinks())
+            if (bodies.count(m_edgeOpBodyId)) { op->setSourceSketch(sid); break; }
         committed = m_history->pushOperation(std::move(op), *m_document);
     }
 

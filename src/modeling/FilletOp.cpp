@@ -1,11 +1,10 @@
 #include "FilletOp.h"
 #include "SubShapeIndex.h"
-#include "Sketch.h"
+#include "EdgeAnchor.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <BRepFilletAPI_MakeFillet.hxx>
-#include <BRepAdaptor_Curve.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -51,81 +50,33 @@ double faceBlendRadius(const TopoDS_Face& face) {
         }
     } catch (...) { return -1.0; }
 }
-
-// A "corner" edge of a sketch-extrude is a straight edge parallel to the
-// extrude axis (the sketch-plane normal). If `e` is one, return true and set
-// (u,v) to its midpoint projected into the plane's 2D frame — the sketch-plane
-// coordinates it sits over. Those coordinates equal a sketch VERTEX's position.
-bool cornerEdgeUV(const TopoDS_Edge& e, const gp_Pnt& origin, const gp_Dir& axis,
-                  const gp_Dir& xd, const gp_Dir& yd, double& u, double& v) {
-    try {
-        BRepAdaptor_Curve c(e);
-        if (c.GetType() != GeomAbs_Line) return false;
-        if (std::abs(c.Line().Direction().Dot(axis)) < 0.999) return false;
-        gp_Pnt mid = c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
-        gp_Vec vv(origin, mid);
-        u = vv.Dot(gp_Vec(xd));
-        v = vv.Dot(gp_Vec(yd));
-        return true;
-    } catch (...) { return false; }
-}
 } // namespace
 
 void FilletOp::computeAnchors(Document& doc) {
-    m_edgeAnchorPts.assign(m_edges.size(), -1);
-    if (m_sourceSketchId < 0) return;
+    m_edgeAnchors.clear();
+    if (m_sourceSketchId < 0) {
+        std::fprintf(stderr, "[Fillet] no source sketch — anchors disabled\n");
+        return;
+    }
     auto sk = doc.getSketch(m_sourceSketchId);
     if (!sk) return;
-    const gp_Pln& pln = sk->getPlane();
-    const gp_Pnt origin = pln.Location();
-    const gp_Dir axis = pln.Axis().Direction();
-    const gp_Dir xd = pln.XAxis().Direction();
-    const gp_Dir yd = pln.YAxis().Direction();
-    for (size_t i = 0; i < m_edges.size(); ++i) {
-        double u, v;
-        if (!cornerEdgeUV(m_edges[i], origin, axis, xd, yd, u, v)) continue;
-        int best = -1; double bestD = 1e-3; // 1 micron tol in sketch units
-        for (const auto& p : sk->getPoints()) {
-            double d = std::hypot(p.pos.x - u, p.pos.y - v);
-            if (d < bestD) { bestD = d; best = p.id; }
-        }
-        m_edgeAnchorPts[i] = best;
-    }
+    m_edgeAnchors = EdgeAnchor::compute(m_edges, *sk);
+    int corners = 0, rims = 0, none = 0;
+    for (const auto& a : m_edgeAnchors)
+        (a.kind == EdgeAnchor::Anchor::Corner ? corners :
+         a.kind == EdgeAnchor::Anchor::Rim    ? rims : none)++;
+    std::fprintf(stderr,
+        "[Fillet] anchored %zu edges vs sketch %d: %d corner, %d rim, %d none\n",
+        m_edges.size(), m_sourceSketchId, corners, rims, none);
 }
 
 bool FilletOp::resolveAnchors(Document& doc, const TopoDS_Shape& base) {
-    if (m_sourceSketchId < 0 || m_edgeAnchorPts.empty() ||
-        m_edgeAnchorPts.size() != m_edges.size())
+    if (m_sourceSketchId < 0 || m_edgeAnchors.size() != m_edges.size())
         return false;
     auto sk = doc.getSketch(m_sourceSketchId);
     if (!sk) return false;
-    const gp_Pln& pln = sk->getPlane();
-    const gp_Pnt origin = pln.Location();
-    const gp_Dir axis = pln.Axis().Direction();
-    const gp_Dir xd = pln.XAxis().Direction();
-    const gp_Dir yd = pln.YAxis().Direction();
-
     std::vector<TopoDS_Edge> resolved;
-    resolved.reserve(m_edgeAnchorPts.size());
-    for (int pid : m_edgeAnchorPts) {
-        if (pid < 0) return false;                 // Phase 1: corners only
-        const materializr::SketchPoint* p = sk->getPoint(pid);
-        if (!p) return false;
-        // Find the base edge that is a corner sitting over the point's CURRENT
-        // sketch-plane position.
-        TopoDS_Edge found;
-        for (TopExp_Explorer ex(base, TopAbs_EDGE); ex.More(); ex.Next()) {
-            double u, v;
-            if (!cornerEdgeUV(TopoDS::Edge(ex.Current()), origin, axis, xd, yd, u, v))
-                continue;
-            if (std::hypot(u - p->pos.x, v - p->pos.y) < 1e-3) {
-                found = TopoDS::Edge(ex.Current());
-                break;
-            }
-        }
-        if (found.IsNull()) return false;
-        resolved.push_back(found);
-    }
+    if (!EdgeAnchor::resolve(m_edgeAnchors, *sk, base, resolved)) return false;
     m_edges = std::move(resolved);
     std::fprintf(stderr, "[Fillet] resolved %zu edge(s) via generative anchors\n",
                  m_edges.size());
@@ -174,8 +125,8 @@ bool FilletOp::execute(Document& doc) {
         }
 
         // Capture generative anchors from the (now-valid) edges the first time
-        // we run — so a later dimension edit can re-find them by sketch vertex.
-        if (m_edgeAnchorPts.empty()) computeAnchors(doc);
+        // we run — so a later dimension edit can re-find them by sketch feature.
+        if (m_edgeAnchors.empty()) computeAnchors(doc);
 
         // Create fillet on the body shape
         BRepFilletAPI_MakeFillet fillet(m_previousShape);
@@ -352,13 +303,9 @@ std::string FilletOp::serializeParams() const {
                                                    TopAbs_FACE);
         if (!idx.empty()) blob += ";gen=" + idx;
     }
-    // Generative anchors (additive; old readers ignore it). Format:
-    // "anchor=<sketchId>,<pid0>,<pid1>,..." — one point id per edge, -1 = none.
-    if (m_sourceSketchId >= 0 && !m_edgeAnchorPts.empty()) {
-        std::string a = std::to_string(m_sourceSketchId);
-        for (int pid : m_edgeAnchorPts) a += "," + std::to_string(pid);
-        blob += ";anchor=" + a;
-    }
+    // Generative anchors (additive; old readers ignore the key). See EdgeAnchor.
+    std::string anc = EdgeAnchor::serialize(m_sourceSketchId, m_edgeAnchors);
+    if (!anc.empty()) blob += ";anchor=" + anc;
     return blob;
 }
 
@@ -379,18 +326,7 @@ bool FilletOp::deserializeParams(const std::string& blob) {
         else if (key == "edges")  { m_edgeIndices = SubShapeIndex::parse(val); any = true; }
         else if (key == "gen")    { m_genFaceIndices = SubShapeIndex::parse(val); any = true; }
         else if (key == "anchor") {
-            // "<sketchId>,<pid0>,<pid1>,..." — parse by hand (values may be -1,
-            // which SubShapeIndex::parse would drop).
-            m_edgeAnchorPts.clear();
-            size_t p = 0; bool first = true;
-            while (p < val.size()) {
-                size_t c = val.find(',', p);
-                if (c == std::string::npos) c = val.size();
-                int n = std::atoi(val.substr(p, c - p).c_str());
-                if (first) { m_sourceSketchId = n; first = false; }
-                else m_edgeAnchorPts.push_back(n);
-                p = c + 1;
-            }
+            EdgeAnchor::parse(val, m_sourceSketchId, m_edgeAnchors);
             any = true;
         }
         pos = end + 1;

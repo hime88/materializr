@@ -37,6 +37,7 @@ add_library(materializr_core STATIC
     ${CMAKE_SOURCE_DIR}/src/modeling/MoveHoleOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/SketchSolver.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/SubShapeIndex.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/EdgeAnchor.cpp
     ${CMAKE_SOURCE_DIR}/src/io/ProjectIO.cpp
     ${CMAKE_SOURCE_DIR}/src/io/StlIO.cpp
     ${CMAKE_SOURCE_DIR}/src/io/MeshDecimate.cpp

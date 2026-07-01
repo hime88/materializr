@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Operation.h"
 #include "../core/Document.h"
+#include "EdgeAnchor.h"
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Edge.hxx>
 #include <vector>
@@ -68,17 +69,14 @@ private:
     std::vector<int> m_edgeIndices;
     std::vector<int> m_genFaceIndices;
 
-    // Generative anchors: for each entry of m_edges, the sketch POINT id the
-    // (vertical/corner) edge sits over, or -1 if the edge isn't a corner of
-    // m_sourceSketchId (then it falls back to ordinal/carrier matching).
+    // Generative anchors: one per m_edges entry, tagging the sketch feature
+    // (corner vertex / rim line) each edge came from (see EdgeAnchor.h).
     int m_sourceSketchId = -1;
-    std::vector<int> m_edgeAnchorPts;
+    std::vector<EdgeAnchor::Anchor> m_edgeAnchors;
 
-    // Fill m_edgeAnchorPts from the current m_edges + source sketch (called
-    // once, on the first successful execute).
+    // Capture anchors from the current m_edges + source sketch (first execute).
     void computeAnchors(Document& doc);
-    // Replace m_edges by re-finding each anchor's corner edge at the sketch
-    // vertex's CURRENT position in `base`. Returns false unless EVERY edge is
-    // an anchored corner that resolves (Phase 1 scope).
+    // Replace m_edges by re-finding each anchor at the sketch feature's CURRENT
+    // position in `base`. Returns false unless EVERY edge resolves.
     bool resolveAnchors(Document& doc, const TopoDS_Shape& base);
 };
