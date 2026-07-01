@@ -3104,6 +3104,29 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist,
     // face positions the user actually sees and can click.
     refreshAllEdgeOpFaces();
 
+    // Retrofit generative anchors onto fillets/chamfers loaded from a project
+    // that predates the feature (their saved params carry no anchor= key). Do
+    // it now, while their edges are still valid against the loaded body — the
+    // user's next sketch edit would otherwise break the rebind before anchors
+    // could ever be captured. Source sketch is derived from the body links.
+    if (m_history) {
+        auto links = sketchBodyLinks();
+        for (int i = 0; i < m_history->stepCount(); ++i) {
+            Operation* op = const_cast<Operation*>(m_history->getStep(i));
+            if (auto* f = dynamic_cast<FilletOp*>(op)) {
+                if (f->getSourceSketch() < 0)
+                    for (const auto& [sid, bodies] : links)
+                        if (bodies.count(f->getBodyId())) { f->setSourceSketch(sid); break; }
+                f->ensureAnchors(*m_document);
+            } else if (auto* c = dynamic_cast<ChamferOp*>(op)) {
+                if (c->getSourceSketch() < 0)
+                    for (const auto& [sid, bodies] : links)
+                        if (bodies.count(c->getBodyId())) { c->setSourceSketch(sid); break; }
+                c->ensureAnchors(*m_document);
+            }
+        }
+    }
+
     // Health report. Two sources of non-editable geometry:
     //  • baked body-affecting STEPS (an op that didn't round-trip), and
     //  • base bodies in the INITIAL STATE that are not touched by any history

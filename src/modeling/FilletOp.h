@@ -74,6 +74,16 @@ private:
     int m_sourceSketchId = -1;
     std::vector<EdgeAnchor::Anchor> m_edgeAnchors;
 
+public:
+    // Capture anchors NOW if they're missing and a source sketch is set — used
+    // to retrofit fillets loaded from a project made before anchoring existed,
+    // while their edges are still valid (before any edit breaks the rebind).
+    void ensureAnchors(Document& doc) {
+        if (m_sourceSketchId >= 0 && m_edgeAnchors.empty() && !m_edges.empty())
+            computeAnchors(doc);
+    }
+
+private:
     // Capture anchors from the current m_edges + source sketch (first execute).
     void computeAnchors(Document& doc);
     // Replace m_edges by re-finding each anchor at the sketch feature's CURRENT

@@ -82,4 +82,11 @@ private:
     std::vector<EdgeAnchor::Anchor> m_edgeAnchors;
     void computeAnchors(Document& doc);
     bool resolveAnchors(Document& doc, const TopoDS_Shape& base);
+
+public:
+    // Retrofit anchors for a chamfer loaded from a pre-anchoring project.
+    void ensureAnchors(Document& doc) {
+        if (m_sourceSketchId >= 0 && m_edgeAnchors.empty() && !m_edges.empty())
+            computeAnchors(doc);
+    }
 };
