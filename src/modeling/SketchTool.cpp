@@ -658,8 +658,12 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
 
     // Inference-level gates (sketch toolbar Full/Reduced/Off):
     //   Reduced == the classic inference set (everything below). Full adds the
-    //   hover-charged references on top. Off keeps only endpoint + grid.
-    //   allowSnaps       — midpoint / on-line snaps.
+    //   hover-charged references on top. Off keeps ONLY grid snap — every point
+    //   snap (endpoints, incl. loop closure onto the chain start, plus face-
+    //   reference vertices) is now gated too, so "inferences off" means the
+    //   cursor never jumps to geometry (Steve: closing a triangle still snapped
+    //   the last vertex to the start with inferences off — that IS an inference).
+    //   allowSnaps       — endpoint / midpoint / on-line / face-ref snaps.
     //   allowDirectional — perp/parallel-to-prev, angle, on-line-extension,
     //                      tangent, axis-from-point. ON for both Full & Reduced.
     //   allowCharge      — hover-to-charge references (Full only).
@@ -711,8 +715,13 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     // Points are unambiguous: there's a specific target to land on, nothing
     // to combine with. Endpoint → circle/arc perimeter → midpoint → face
     // centroid, in priority order.
+    // Point snaps (endpoints) are an INFERENCE: gated OFF entirely when the
+    // inference level is Off, so nothing captures the cursor — including loop
+    // closure onto the chain start (Steve: closing a triangle still snapped
+    // the last vertex to the start with inferences off). Grid snap at the end
+    // of this function is independent and still applies when enabled.
     const auto& points = m_sketch->getPoints();
-    for (const auto& pt : points) {
+    if (allowSnaps) for (const auto& pt : points) {
         // During a drag, skip the points being moved — they'd snap to
         // their own starting position and lock the drag in place.
         if (m_snapExcludePoints.count(pt.id)) continue;
@@ -736,8 +745,9 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     }
     // Face-reference points (vertices and curve samples from the host face).
     // Same endpoint inference, just sourced from the 3D geometry the sketch
-    // was started on. refId of -1 since these aren't sketch points.
-    for (const auto& fp : m_sketch->getFaceReferences().points) {
+    // was started on. refId of -1 since these aren't sketch points. Gated with
+    // the sketch-point snaps above (inferences Off → no capture).
+    if (allowSnaps) for (const auto& fp : m_sketch->getFaceReferences().points) {
         if (glm::length(pos - fp) < pointSnapThreshold) {
             m_activeInferences.push_back({InferenceGuide::Endpoint, fp, fp, -1});
             return fp;
