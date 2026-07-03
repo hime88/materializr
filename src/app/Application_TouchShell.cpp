@@ -27,6 +27,7 @@
 #include "touch_mode.h"
 #include "ui_scale.h"
 
+#include <cfloat> // FLT_MAX (lite tool bar height constraint)
 #include <imgui.h>
 #include <string>
 
@@ -401,36 +402,36 @@ void Application::renderTouchShellLite() {
     }
     ImGui::End();
 
-    // ── Contextual tool bar (bottom-center) — the same catalogue the full
-    //    shell's rail uses, horizontal. Sketch mode appends Finish/Discard. ──
-    ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x * 0.5f, wp.y + ws.y - m),
-                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    // ── Contextual tool bar — the same catalogue the full shell's rail uses,
+    //    floating on the LEFT edge, vertically centered. Sketch mode appends
+    //    Finish/Exit pills below the tools. Tall catalogues (sketch mode on a
+    //    landscape tablet) can exceed the work rect, so cap the height and
+    //    let the bar scroll rather than run off-screen.
+    ImGui::SetNextWindowPos(ImVec2(wp.x + m, wp.y + ws.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.0f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
+                                        ImVec2(FLT_MAX, ws.y - 2.0f * m));
     ImGui::SetNextWindowBgAlpha(0.92f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, touchui::panelBg());
-    if (ImGui::Begin("##LiteToolBar", nullptr, kFloat)) {
+    if (ImGui::Begin("##LiteToolBar", nullptr,
+                     kFloat & ~ImGuiWindowFlags_NoScrollbar)) {
         if (m_toolbar) {
-            bool first = true;
             for (const auto& tool : m_toolbar->railTools()) {
-                if (!first) ImGui::SameLine(0.0f, 4.0f * s);
-                first = false;
                 if (touchui::railButton(tool.label, tool.icon, tool.label,
                                         tool.active, 64.0f * s))
                     handleToolAction(static_cast<int>(tool.action));
             }
             if (m_inSketchMode) {
-                const float pillY = ImGui::GetCursorPosY() - 62.0f * s +
-                                    (62.0f - 44.0f) * 0.5f * s;
                 const bool toolRunning = m_sketchTool && m_sketchTool->isPlacing();
-                ImGui::SameLine(0.0f, 12.0f * s);
-                ImGui::SetCursorPosY(pillY);
+                ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
                 if (touchui::pillButton("finish", MZ_ICON_FINISH, "Finish", true)) {
                     if (toolRunning)
                         recordSketchMutation([&]{ m_sketchTool->onConfirm(); });
                     else
                         handleToolAction(static_cast<int>(ToolAction::FinishSketch));
                 }
-                ImGui::SameLine(0.0f, 8.0f * s);
-                ImGui::SetCursorPosY(pillY);
                 if (touchui::pillButton("exit", MZ_ICON_DISCARD, "Exit")) {
                     if (toolRunning)
                         m_sketchTool->onCancel();
