@@ -653,7 +653,17 @@ void Application::renderTouchShellLite() {
     m_touchVpW = ws.x;
     m_touchVpH = ws.y;
 
-    const ImGuiWindowFlags kFloat = kShellWin | ImGuiWindowFlags_AlwaysAutoResize;
+    // These overlays float ON TOP of the full-screen viewport window, which is
+    // NoBringToFrontOnFocus (pinned to the back). They must NOT share that flag:
+    // if they do, z-order falls to ImGui's persistent creation order — which is
+    // fine when the app LAUNCHES straight into lite (overlays created early), but
+    // when the user TOGGLES to lite at runtime the viewport was created first and
+    // stays in front, burying every overlay (the "invisible lite shell" bug).
+    // Dropping the flag makes them ordinary foreground windows that come to front
+    // on appearance, so they render above the back-pinned viewport every time.
+    const ImGuiWindowFlags kFloat =
+        (kShellWin & ~ImGuiWindowFlags_NoBringToFrontOnFocus) |
+        ImGuiWindowFlags_AlwaysAutoResize;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * s);
 
     // ── Project / selection chip (top-left) ─────────────────────────────────
