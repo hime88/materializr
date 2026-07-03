@@ -5742,7 +5742,15 @@ void Application::renderViewport() {
         bool selectionContext = !m_inSketchMode ||
             (m_sketchTool && m_sketchTool->getMode() == SketchToolMode::Select);
         bool placing = m_inSketchMode && m_sketchTool && m_sketchTool->isPlacing();
-        if (selectionContext || placing) {
+        // In the im-touch shell the Multi-Select toggle is hosted in the top app
+        // bar instead (down here it overlapped the FULL pill). Keep the rest of
+        // this bar — Delete, and the chain-tool Finish/Back — which the shell
+        // doesn't replicate.
+        const bool multiInLegacy = !m_imTouchUi;
+        const bool deleteHere = m_inSketchMode && m_sketchTool &&
+                                m_sketchTool->hasElementSelection();
+        if ((selectionContext && (multiInLegacy || deleteHere)) ||
+            (placing && !m_imTouchUi)) {
             ImGui::SetNextWindowPos(ImVec2(vpMin.x + 6.0f, vpMin.y + vpSize.y - 6.0f),
                                     ImGuiCond_Always, ImVec2(0.0f, 1.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
@@ -5750,25 +5758,26 @@ void Application::renderViewport() {
             ImGui::Begin("##ViewportBarLeft", nullptr, overlayFlags);
 
             if (selectionContext) {
-                int pops = 0;
-                if (m_multiSelectToggle) {
-                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.48f, 0.85f, 0.95f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.58f, 0.95f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.40f, 0.75f, 1.0f));
-                    pops = 3;
+                if (multiInLegacy) {
+                    int pops = 0;
+                    if (m_multiSelectToggle) {
+                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.48f, 0.85f, 0.95f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.58f, 0.95f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.40f, 0.75f, 1.0f));
+                        pops = 3;
+                    }
+                    if (wideButton(m_multiSelectToggle ? "Multi-Select: On" : "Multi-Select: Off"))
+                        m_multiSelectToggle = !m_multiSelectToggle;
+                    bool hov = ImGui::IsItemHovered();
+                    if (pops) ImGui::PopStyleColor(pops);
+                    if (hov) ImGui::SetTooltip("Add taps to the current selection\n(the touch equivalent of holding Ctrl)");
                 }
-                if (wideButton(m_multiSelectToggle ? "Multi-Select: On" : "Multi-Select: Off"))
-                    m_multiSelectToggle = !m_multiSelectToggle;
-                bool hov = ImGui::IsItemHovered();
-                if (pops) ImGui::PopStyleColor(pops);
-                if (hov) ImGui::SetTooltip("Add taps to the current selection\n(the touch equivalent of holding Ctrl)");
 
                 // Delete the selected sketch elements — the touch twin of the
                 // Delete key (which a bare tablet doesn't have). Only shown in
                 // sketch Select mode with elements actually selected.
-                if (m_inSketchMode && m_sketchTool &&
-                    m_sketchTool->hasElementSelection()) {
-                    ImGui::SameLine();
+                if (deleteHere) {
+                    if (multiInLegacy) ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.68f, 0.24f, 0.24f, 0.97f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.82f, 0.34f, 0.34f, 1.0f));
                     bool del = wideButton("Delete");
@@ -5778,7 +5787,7 @@ void Application::renderViewport() {
                     if (dhov) ImGui::SetTooltip("Delete the selected sketch elements (undoable)");
                 }
             }
-            if (placing) {
+            if (placing && !m_imTouchUi) {
                 SketchToolMode mode = m_sketchTool->getMode();
                 // Circle/Rectangle are a single press-drag-release gesture now,
                 // so their only "placing" window is mid-drag with the finger

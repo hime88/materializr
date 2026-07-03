@@ -138,8 +138,17 @@ private:
     void renderViewport();
     void renderMenuBar();
     // Menu bodies shared by the desktop menu bar and the im-touch overflow.
-    void renderFileMenuItems();
+    // withSettings=false drops the nested "Settings..." item — the touch
+    // overflow exposes Settings at the top level, so it shouldn't also nest it
+    // under File. The desktop menu bar keeps it (default true).
+    void renderFileMenuItems(bool withSettings = true);
     void renderEditMenuItems();
+    // The overflow's Tools submenu (touch shell): the create/start tools that
+    // otherwise live only on the selection rail, with construction + sketch-on
+    // options nested. Selection-aware (mirrors the rail's context).
+    void renderToolsMenuItems();
+    // Derived construction Plane/Axis items (nested under Tools ▸ Construction).
+    void renderConstructionMenuItems();
     void renderViewMenuItems();
     void renderHelpMenuItems();
     // "im-touch" tablet shell (Application_TouchShell.cpp): top app bar + tool
@@ -153,6 +162,14 @@ private:
     // own copy in handleShortcuts pending a merge).
     void undoWithCascade();
     void redoWithCascade();
+    // Sketch-aware undo for the touch shell's top-bar Undo button: in sketch
+    // mode it mirrors the Ctrl+Z sketch behaviour (cancel an in-progress shape
+    // first, then undo committed sketch edits but NEVER past the sketch's own
+    // entry into history — rolling the host body back while the sketch renders
+    // against it crashes). Outside sketch mode it's plain undoWithCascade().
+    // touchCanUndo() is the matching enabled-state for the button.
+    void touchUndo();
+    bool touchCanUndo() const;
     void renderInteractionsPanel();
     void renderSettings();
     void loadAppSettings();   // restore persisted preferences at startup

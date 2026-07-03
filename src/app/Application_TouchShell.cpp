@@ -16,6 +16,7 @@
 #include "app/Window.h"
 #include "core/History.h"
 #include "core/SelectionManager.h"
+#include "modeling/SketchTool.h"   // SketchToolMode for the select-mode gate
 #include "plugin/PluginContext.h"
 #include "ui/HistoryPanel.h"
 #include "ui/ItemsPanel.h"
@@ -48,11 +49,15 @@ namespace materializr {
 void Application::renderTouchOverflowPopup() {
     if (!ImGui::BeginPopup("##TouchOverflow")) return;
     if (ImGui::BeginMenu(MZ_ICON_OPEN "  File")) {
-        renderFileMenuItems();
+        renderFileMenuItems(false);   // Settings is exposed at the bottom instead
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(MZ_ICON_UNDO "  Edit")) {
         renderEditMenuItems();
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(MZ_ICON_EXTRUDE "  Tools")) {
+        renderToolsMenuItems();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(MZ_ICON_FOCUS "  View")) {
@@ -97,16 +102,24 @@ void Application::renderTouchShell() {
         const float bh  = 44.0f * s;
         const float cy  = (topH - bh) * 0.5f; // vertical center for controls
 
-        // Logo chip + name + / project (basename, "New project" unsaved).
+        // ⋯ menu (top-left, nav-drawer style), then logo chip + name + /project.
         {
+            const float bh0 = 44.0f * s;
+            const float menuW = bh0 + 12.0f * s;    // ⋯ button + gap
+            ImGui::SetCursorPos(ImVec2(pad, (topH - bh0) * 0.5f));
+            if (touchui::iconButton("overflow", MZ_ICON_MORE, bh0))
+                ImGui::OpenPopup("##TouchOverflow");
+            renderTouchOverflowPopup();
+
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec2 win = ImGui::GetWindowPos();
             const float chip = 30.0f * s;
-            const ImVec2 c0(win.x + pad, win.y + (topH - chip) * 0.5f);
+            const float lx = pad + menuW;
+            const ImVec2 c0(win.x + lx, win.y + (topH - chip) * 0.5f);
             dl->AddRectFilled(c0, ImVec2(c0.x + chip, c0.y + chip),
                               ImGui::GetColorU32(touchui::accentFill()),
                               9.0f * s);
-            ImGui::SetCursorPos(ImVec2(pad + chip + 10.0f * s,
+            ImGui::SetCursorPos(ImVec2(lx + chip + 10.0f * s,
                                        (topH - ImGui::GetTextLineHeight()) * 0.5f));
             ImGui::TextColored(touchui::textPrimary(), "Materializr");
             std::string pn = "New project";
@@ -124,31 +137,60 @@ void Application::renderTouchShell() {
         // that must never be hunted for.
         const float sp = 8.0f * s;
         const bool showKb = materializr::touchMode();
-        const int nSquare = showKb ? 4 : 3;
+        // Square icon buttons in the right cluster: undo, redo, [keyboard].
+        // (The ⋯ overflow moved to the top-left.)
+        const int nSquare = showKb ? 3 : 2;
         auto pillW = [&](const char* label) {
             return bh + ImGui::CalcTextSize(label).x + 27.0f * s;
         };
+        // Multi-Select toggle (the touch Ctrl stand-in): shown for 3D selection
+        // and in sketch Select/move mode, hidden in the sketch draw tools where
+        // adding to a selection is meaningless. Its old home was the bottom-left
+        // viewport bar, where it overlapped the FULL pill.
+        const bool showMulti = !m_inSketchMode ||
+            (m_sketchTool && m_sketchTool->getMode() == SketchToolMode::Select);
         const float focusW = pillW("Focus");
         float total = bh * nSquare + focusW + sp * nSquare;
         if (m_inSketchMode)
-            total += pillW("Finish") + pillW("Discard") + sp * 2;
+            total += pillW("Finish") + pillW("Exit") + sp * 2;
+        if (showMulti)
+            total += pillW("Multi") + sp;
         float x = ws.x - pad - total;
         ImGui::SetCursorPos(ImVec2(x, cy));
 
-        if (m_inSketchMode) {
-            if (touchui::pillButton("finish", MZ_ICON_FINISH, "Finish", true))
-                handleToolAction(static_cast<int>(ToolAction::FinishSketch));
+        if (showMulti) {
+            if (touchui::pillButton("multi", MZ_ICON_SELECT, "Multi",
+                                    m_multiSelectToggle))
+                m_multiSelectToggle = !m_multiSelectToggle;
             ImGui::SameLine(0.0f, sp);
             ImGui::SetCursorPosY(cy);
-            if (touchui::pillButton("discard", MZ_ICON_DISCARD, "Discard"))
-                handleToolAction(static_cast<int>(ToolAction::ExitSketchDiscard));
+        }
+
+        if (m_inSketchMode) {
+            // Context-smart: a running draw tool finishes / cancels its own
+            // shape; with no tool mid-placement, Finish/Exit act on the sketch.
+            const bool toolRunning = m_sketchTool && m_sketchTool->isPlacing();
+            if (touchui::pillButton("finish", MZ_ICON_FINISH, "Finish", true)) {
+                if (toolRunning)
+                    recordSketchMutation([&]{ m_sketchTool->onConfirm(); });
+                else
+                    handleToolAction(static_cast<int>(ToolAction::FinishSketch));
+            }
+            ImGui::SameLine(0.0f, sp);
+            ImGui::SetCursorPosY(cy);
+            if (touchui::pillButton("exit", MZ_ICON_DISCARD, "Exit")) {
+                if (toolRunning)
+                    m_sketchTool->onCancel();       // discard the in-progress shape
+                else
+                    handleToolAction(static_cast<int>(ToolAction::ExitSketchDiscard));
+            }
             ImGui::SameLine(0.0f, sp);
             ImGui::SetCursorPosY(cy);
         }
 
         const bool histLocked = anyInteractivePreviewActive();
-        ImGui::BeginDisabled(histLocked || !m_history->canUndo());
-        if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) undoWithCascade();
+        ImGui::BeginDisabled(histLocked || !touchCanUndo());
+        if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) touchUndo();
         ImGui::EndDisabled();
         ImGui::SameLine(0.0f, sp);
         ImGui::SetCursorPosY(cy);
@@ -173,14 +215,7 @@ void Application::renderTouchShell() {
             m_rightPanelHidden = !m_rightPanelHidden;
             saveAppSettings();
         }
-
-        // ⋯ overflow: the desktop menus' essentials until Phase 2 flattens
-        // them fully (shared item lists).
-        ImGui::SameLine(0.0f, sp);
-        ImGui::SetCursorPosY(cy);
-        if (touchui::iconButton("overflow", MZ_ICON_MORE, bh))
-            ImGui::OpenPopup("##TouchOverflow");
-        renderTouchOverflowPopup();
+        // (The ⋯ overflow menu now lives at the top-left of this bar.)
     }
     ImGui::End();
 
@@ -293,6 +328,11 @@ void Application::renderTouchShellLite() {
     ImGui::SetNextWindowPos(ImVec2(wp.x + m, wp.y + m));
     ImGui::SetNextWindowBgAlpha(0.55f);
     if (ImGui::Begin("##LiteChip", nullptr, kFloat)) {
+        // ⋯ menu at the far left (moved off the top-right cluster).
+        if (touchui::iconButton("menu", MZ_ICON_MENU_BARS, 30.0f * s))
+            ImGui::OpenPopup("##TouchOverflow");
+        renderTouchOverflowPopup();
+        ImGui::SameLine(0.0f, 8.0f * s);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float chip = 18.0f * s;
         const ImVec2 c0 = ImGui::GetCursorScreenPos();
@@ -338,19 +378,26 @@ void Application::renderTouchShellLite() {
     ImGui::SetNextWindowBgAlpha(0.0f);
     if (ImGui::Begin("##LiteTopRight", nullptr, kFloat)) {
         const float bh = 44.0f * s;
+        // Multi-Select (moved off the bottom-left viewport bar): 3D selection and
+        // sketch Select/move mode only.
+        const bool showMulti = !m_inSketchMode ||
+            (m_sketchTool && m_sketchTool->getMode() == SketchToolMode::Select);
+        if (showMulti) {
+            if (touchui::pillButton("multi", MZ_ICON_SELECT, "Multi",
+                                    m_multiSelectToggle))
+                m_multiSelectToggle = !m_multiSelectToggle;
+            ImGui::SameLine(0.0f, 8.0f * s);
+        }
         const bool histLocked = anyInteractivePreviewActive();
-        ImGui::BeginDisabled(histLocked || !m_history->canUndo());
-        if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) undoWithCascade();
+        ImGui::BeginDisabled(histLocked || !touchCanUndo());
+        if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) touchUndo();
         ImGui::EndDisabled();
         if (materializr::touchMode()) {
             ImGui::SameLine(0.0f, 8.0f * s);
             if (touchui::iconButton("kb", MZ_ICON_KEYBOARD, bh))
                 m_softKeyboardForced = !m_softKeyboardForced;
         }
-        ImGui::SameLine(0.0f, 8.0f * s);
-        if (touchui::iconButton("menu", MZ_ICON_MENU_BARS, bh))
-            ImGui::OpenPopup("##TouchOverflow");
-        renderTouchOverflowPopup();
+        // (The ⋯ menu moved to the top-left chip.)
     }
     ImGui::End();
 
@@ -373,14 +420,23 @@ void Application::renderTouchShellLite() {
             if (m_inSketchMode) {
                 const float pillY = ImGui::GetCursorPosY() - 62.0f * s +
                                     (62.0f - 44.0f) * 0.5f * s;
+                const bool toolRunning = m_sketchTool && m_sketchTool->isPlacing();
                 ImGui::SameLine(0.0f, 12.0f * s);
                 ImGui::SetCursorPosY(pillY);
-                if (touchui::pillButton("finish", MZ_ICON_FINISH, "Finish", true))
-                    handleToolAction(static_cast<int>(ToolAction::FinishSketch));
+                if (touchui::pillButton("finish", MZ_ICON_FINISH, "Finish", true)) {
+                    if (toolRunning)
+                        recordSketchMutation([&]{ m_sketchTool->onConfirm(); });
+                    else
+                        handleToolAction(static_cast<int>(ToolAction::FinishSketch));
+                }
                 ImGui::SameLine(0.0f, 8.0f * s);
                 ImGui::SetCursorPosY(pillY);
-                if (touchui::pillButton("discard", MZ_ICON_DISCARD, "Discard"))
-                    handleToolAction(static_cast<int>(ToolAction::ExitSketchDiscard));
+                if (touchui::pillButton("exit", MZ_ICON_DISCARD, "Exit")) {
+                    if (toolRunning)
+                        m_sketchTool->onCancel();
+                    else
+                        handleToolAction(static_cast<int>(ToolAction::ExitSketchDiscard));
+                }
             }
         }
     }
