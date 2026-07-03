@@ -111,7 +111,7 @@ bool SelectionHighlight::initialize() {
     // geometry shaders, so on Android m_lineProgram stays 0 and drawThickLines()
     // becomes a no-op — selected faces still highlight; thick edge outlines are
     // skipped (TODO: emulate with an instanced-quad expansion in the touch pass).
-#if !defined(__ANDROID__)
+#if !defined(MZ_GLES)
     unsigned int lvert = 0, lgeom = 0, lfrag = 0;
     if (!compileShader(lvert, GL_VERTEX_SHADER, s_vertSrc)) return false;
     if (!compileShader(lgeom, GL_GEOMETRY_SHADER, s_lineGeomSrc)) {
@@ -381,7 +381,7 @@ void SelectionHighlight::drawThickLines(unsigned int vao, int count, const glm::
 
     glBindVertexArray(vao); // buffer already resident (uploaded on cache build)
 
-#if defined(__ANDROID__)
+#if defined(MZ_GLES)
     // GL ES 3.0 has no geometry shader, so there's no screen-space line widening
     // (m_lineProgram is 0). Fall back to plain GL_LINES with the basic program —
     // the selection outline renders, just at hardware line width rather than the

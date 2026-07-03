@@ -3,12 +3,12 @@
 #include <imgui.h>
 #include <memory>
 #include <filesystem>
-#if defined(__ANDROID__)
-// Android has no native file-picker helper (zenity/kdialog/WinAPI), so pfd is
-// excluded; openFile/saveFile drive the system Storage Access Framework picker
-// (via android_files.h), and export adds a Share / Save-to-device sheet.
-#include <SDL.h>   // SDL_AndroidGetExternalStoragePath
-#include "../android_files.h"
+#if defined(MZ_MOBILE)
+// Mobile (Android + iOS) has no zenity/kdialog/WinAPI helper, so pfd is
+// excluded; openFile/saveFile drive the system document picker
+// (via mobile_files.h), and export adds a Share / Save-to-device sheet.
+#include <SDL.h>   // SDL_AndroidGetExternalStoragePath (Android browser root)
+#include "../mobile_files.h"
 #include <sys/stat.h>
 #include <cstdlib>
 #else
@@ -42,6 +42,7 @@ static bool dlgIsDir(const std::string& p) {
 #endif
 }
 
+#if defined(MZ_MOBILE)
 #if defined(__ANDROID__)
 // True if the directory can actually be listed (read permission), not just that
 // it exists — distinguishes "All-files access granted" from "not yet".
@@ -51,11 +52,12 @@ static bool dlgCanList(const char* p) {
     closedir(d);
     return true;
 }
+#endif
 
 // --- Storage Access Framework + export-share plumbing --------------------------
 // A cache temp path under $HOME (app-private internal storage). OCCT writes here,
 // then we hand the file to the SAF "save" destination or the share sheet.
-static std::string androidTmpPath(const std::string& name) {
+static std::string mobileTmpPath(const std::string& name) {
     const char* home = std::getenv("HOME");
     std::string dir = std::string(home ? home : ".") + "/.mz_tmp";
     ::mkdir(dir.c_str(), 0700);
@@ -228,7 +230,7 @@ namespace {
 // portable-file-dialogs takes filter strings in the form
 //   { "label", "pattern1 pattern2 ...", "label2", "pattern3 ...", ... }
 // flattened into a single vector. Translate FileFilter into that shape.
-#if !defined(__ANDROID__)
+#if !defined(MZ_MOBILE)
 std::vector<std::string> pfdFilters(const std::vector<FileFilter>& filters) {
     std::vector<std::string> v;
     v.reserve(filters.size() * 2);
@@ -246,7 +248,7 @@ std::vector<std::string> pfdFilters(const std::vector<FileFilter>& filters) {
 // our window. Polling keeps the frame loop running so the OS keeps
 // seeing input / draw activity. (Steve: "while the file explorer is
 // open I get a 'materializr is not responding' popup".)
-#if !defined(__ANDROID__)
+#if !defined(MZ_MOBILE)
 struct AsyncDlgState {
     std::unique_ptr<pfd::open_file> openH;
     std::unique_ptr<pfd::save_file> saveH;
@@ -272,7 +274,7 @@ void FileDialogs::setUnavailableNotifier(std::function<void()> cb) {
 }
 
 bool FileDialogs::dialogsAvailable() {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     return true;           // SAF picker is always present
 #elif defined(_WIN32)
     return true;           // native comdlg
@@ -304,7 +306,7 @@ bool FileDialogs::dialogsAvailable() {
 void FileDialogs::setLastDir(const std::string& dir) { s_lastDir = dir; }
 const std::string& FileDialogs::getLastDir() { return s_lastDir; }
 
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
 // Open the in-app ImGui browser (s_state). No native picker on Android, so this
 // is the file UI. Rooted at the last-used dir, falling back to the app's
 // writable external-storage path (/sdcard/Android/data/<pkg>/files).
@@ -314,6 +316,7 @@ static void launchInAppBrowser(const std::string& title, bool isSave,
                                std::function<void(const std::string&)> cb) {
     std::string start = s_lastDir;
     if (start.empty() || !dlgIsDir(start)) {
+#if defined(__ANDROID__)
         // Prefer the user-visible storage root (needs All-files access); fall
         // back to the app's own external dir, which is always readable.
         if (dlgCanList("/storage/emulated/0")) {
@@ -322,6 +325,13 @@ static void launchInAppBrowser(const std::string& title, bool isSave,
             const char* ext = SDL_AndroidGetExternalStoragePath();
             start = (ext && dlgIsDir(ext)) ? ext : "/";
         }
+#else
+        // iOS: the sandboxed Documents directory — user-visible in the Files
+        // app via UIFileSharingEnabled, and always readable.
+        const char* home = std::getenv("HOME");
+        std::string docs = std::string(home ? home : ".") + "/Documents";
+        start = dlgIsDir(docs) ? docs : (home ? home : "/");
+#endif
     }
     s_state.open = true;
     s_state.isSave = isSave;
@@ -342,14 +352,14 @@ static void launchInAppBrowser(const std::string& title, bool isSave,
 void FileDialogs::openFile(const std::string& title,
                             const std::vector<FileFilter>& filters,
                             std::function<void(const std::string&)> callback) {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     (void)title;
     if (s_saf.active) return; // one picker at a time
     s_saf.active = true;
     s_saf.isSave = false;
     s_saf.callback = std::move(callback);
     // "*/*" — don't hide files behind non-standard CAD MIME types; the user picks.
-    materializr::androidStartOpenDocument("*/*");
+    materializr::mobileStartOpenDocument("*/*");
 #else
     if (s_async.active()) return; // one picker at a time
     if (!dialogsAvailable()) { if (s_unavailableNotifier) s_unavailableNotifier(); return; }
@@ -377,14 +387,14 @@ void FileDialogs::saveFile(const std::string& title,
                             const std::string& defaultName,
                             const std::vector<FileFilter>& filters,
                             std::function<void(const std::string&)> callback) {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     (void)title; (void)filters;
     if (s_saf.active) return;
     s_saf.active = true;
     s_saf.isSave = true;
-    s_saf.savePath = androidTmpPath(defaultName.empty() ? "untitled" : defaultName);
+    s_saf.savePath = mobileTmpPath(defaultName.empty() ? "untitled" : defaultName);
     s_saf.callback = std::move(callback);
-    materializr::androidStartCreateDocument(
+    materializr::mobileStartCreateDocument(
         defaultName.empty() ? "untitled" : defaultName, "application/octet-stream");
 #else
     if (s_async.active()) return;
@@ -407,7 +417,7 @@ void FileDialogs::saveFile(const std::string& title,
 }
 
 bool FileDialogs::isOpen() {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     return s_saf.active || s_export.show;
 #else
     return s_async.active() || s_state.open;
@@ -421,9 +431,9 @@ void FileDialogs::exportFile(const std::string& title,
                              const std::string& mime,
                              const std::vector<FileFilter>& filters,
                              std::function<bool(const std::string&)> writeFn) {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     (void)title; (void)filters;
-    androidExportShareOrSave(defaultName, mime, std::move(writeFn));
+    mobileExportShareOrSave(defaultName, mime, std::move(writeFn));
 #else
     (void)mime;
     // Desktop: a Save dialog whose callback writes the chosen path. Empty path
@@ -436,8 +446,8 @@ void FileDialogs::exportFile(const std::string& title,
 #endif
 }
 
-#if defined(__ANDROID__)
-void FileDialogs::androidExportShareOrSave(const std::string& suggestedName,
+#if defined(MZ_MOBILE)
+void FileDialogs::mobileExportShareOrSave(const std::string& suggestedName,
                                            const std::string& mime,
                                            std::function<bool(const std::string&)> writeFn) {
     if (s_export.show || s_saf.active) return;
@@ -450,7 +460,7 @@ void FileDialogs::androidExportShareOrSave(const std::string& suggestedName,
 #endif
 
 void FileDialogs::render() {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     // ---- Export Share / Save-to-device chooser (small modal) ----
     if (s_export.show) {
         if (!s_export.opened) { ImGui::OpenPopup("Export"); s_export.opened = true; }
@@ -460,9 +470,9 @@ void FileDialogs::render() {
             ImGui::Text("Export %s", s_export.name.c_str());
             ImGui::Spacing();
             if (ImGui::Button("Share\xE2\x80\xA6", uiSz(170, 0))) {
-                std::string tmp = androidTmpPath(s_export.name);
+                std::string tmp = mobileTmpPath(s_export.name);
                 if (s_export.writeFn && s_export.writeFn(tmp))
-                    materializr::androidShareFile(tmp, s_export.mime);
+                    materializr::mobileShareFile(tmp, s_export.mime);
                 s_export.reset();
                 ImGui::CloseCurrentPopup();
             }
@@ -473,9 +483,9 @@ void FileDialogs::render() {
                 s_export.reset();
                 if (!s_saf.active) {
                     s_saf.active = true; s_saf.isSave = true;
-                    s_saf.savePath = androidTmpPath(name);
+                    s_saf.savePath = mobileTmpPath(name);
                     s_saf.callback = [wf](const std::string& p){ if (!p.empty() && wf) wf(p); };
-                    materializr::androidStartCreateDocument(name, mime);
+                    materializr::mobileStartCreateDocument(name, mime);
                 }
                 ImGui::CloseCurrentPopup();
             }
@@ -487,7 +497,7 @@ void FileDialogs::render() {
     // ---- SAF picker result (open or save), polled each frame ----
     if (s_saf.active) {
         std::string val;
-        if (materializr::androidPollFileResult(val)) {
+        if (materializr::mobilePollFileResult(val)) {
             auto cb = std::move(s_saf.callback);
             bool isSave = s_saf.isSave;
             std::string savePath = s_saf.savePath;
@@ -498,13 +508,13 @@ void FileDialogs::render() {
                 if (cb) cb(val);                           // open: cache temp path to read
             } else {
                 if (cb) cb(savePath);                      // save: writer fills the temp...
-                materializr::androidCommitSave(savePath);  // ...then copy temp -> chosen URI
+                materializr::mobileCommitSave(savePath);  // ...then copy temp -> chosen URI
             }
         }
     }
     return; // Android never falls through to the pfd / in-app-browser paths below
 #endif
-#if !defined(__ANDROID__)
+#if !defined(MZ_MOBILE)
     // Native (pfd) path: poll the spawned helper subprocess each frame.
     // ready(0) is a non-blocking check; when it returns true we fetch the
     // path and fire the callback exactly once, then clear the state.
@@ -540,7 +550,7 @@ void FileDialogs::render() {
         }
         return; // legacy in-app dialog stays dormant while pfd owns the picker
     }
-#endif // !__ANDROID__
+#endif // !MZ_MOBILE
 
     // In-app ImGui dialog. On desktop this is the legacy fall-back; on Android
     // (no native picker) it is the file UI, driven by openFile/saveFile above.

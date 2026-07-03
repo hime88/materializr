@@ -98,6 +98,9 @@ private:
     bool m_shouldClose = false;
     int m_width;
     int m_height;
+    // iOS only: SDL's color renderbuffer for the window — swapBuffers()
+    // re-binds it before presenting (see Window.cpp). Stays 0 elsewhere.
+    unsigned int m_windowRenderbuffer = 0;
 
     // Active touch points and the running two-finger gesture state.
     struct Finger { std::int64_t id; float x, y; };

@@ -1,4 +1,4 @@
-#include "android_files.h"
+#include "mobile_files.h"
 
 #if defined(__ANDROID__)
 
@@ -106,21 +106,21 @@ void callStaticVoidNoArg(const char* method) {
 
 } // namespace
 
-bool androidStartOpenDocument(const std::string& mimeCsv) {
+bool mobileStartOpenDocument(const std::string& mimeCsv) {
     callStaticVoidString("nativeOpenDocument", mimeCsv);
     return true;
 }
 
-bool androidStartCreateDocument(const std::string& suggestedName, const std::string& mime) {
+bool mobileStartCreateDocument(const std::string& suggestedName, const std::string& mime) {
     callStaticVoidStringString("nativeCreateDocument", suggestedName, mime);
     return true;
 }
 
-void androidShareFile(const std::string& path, const std::string& mime) {
+void mobileShareFile(const std::string& path, const std::string& mime) {
     callStaticVoidStringString("nativeShareFile", path, mime);
 }
 
-bool androidPollFileResult(std::string& outValue) {
+bool mobilePollFileResult(std::string& outValue) {
     JNIEnv* env; jobject act; jclass cls;
     if (!jniActivity(env, act, cls)) return false;
     bool ready = false;
@@ -141,7 +141,7 @@ bool androidPollFileResult(std::string& outValue) {
     return ready;
 }
 
-bool androidCommitSave(const std::string& tempPath) {
+bool mobileCommitSave(const std::string& tempPath) {
     JNIEnv* env; jobject act; jclass cls;
     if (!jniActivity(env, act, cls)) return false;
     jboolean ok = JNI_FALSE;
@@ -157,14 +157,14 @@ bool androidCommitSave(const std::string& tempPath) {
     return ok == JNI_TRUE;
 }
 
-std::string androidLastDocUri()  { return callStaticStringNoArg("nativeLastDocUri"); }
-std::string androidLastDocName() { return callStaticStringNoArg("nativeLastDocName"); }
-std::string androidOpenUri(const std::string& uri) {
+std::string mobileLastDocUri()  { return callStaticStringNoArg("nativeLastDocUri"); }
+std::string mobileLastDocName() { return callStaticStringNoArg("nativeLastDocName"); }
+std::string mobileOpenUri(const std::string& uri) {
     return callStaticStringArg("nativeOpenUri", uri);
 }
 
-void androidShowTextInput() { callStaticVoidNoArg("nativeShowKeyboard"); }
-void androidHideTextInput() { callStaticVoidNoArg("nativeHideKeyboard"); }
+void mobileShowTextInput() { callStaticVoidNoArg("nativeShowKeyboard"); }
+void mobileHideTextInput() { callStaticVoidNoArg("nativeHideKeyboard"); }
 
 } // namespace materializr
 

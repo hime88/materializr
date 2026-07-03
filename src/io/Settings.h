@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform_defs.h"
 #include <string>
 #include <vector>
 
@@ -12,12 +13,12 @@ struct AppSettings {
     // Touch mode: large UI + touch-gesture interaction. Defaults on for Android,
     // off elsewhere; a saved setting so a tablet with a mouse/keyboard can run
     // the desktop model. Drives materializr::setTouchMode() at startup.
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     bool touchMode          = true;
 #else
     bool touchMode          = false;
 #endif
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     // Touch-first default: trackpad mode (one-finger drag = orbit, two-finger
     // pan/zoom). Just the first-run default — the Settings dialog can rebind to
     // Middle/Right for an attached mouse or trackpad, and the choice persists.

@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform_defs.h"
 
 #include <memory>
 #include <future>
@@ -626,7 +627,7 @@ private:
 
     // Configurable camera mouse bindings (ImGuiMouseButton values: 0=Left,1=Right,
     // 2=Middle). Zoom is always the scroll wheel. Edited in File > Settings.
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     int m_orbitButton = 0; // Left (trackpad default; rebindable in Settings)
     int m_panButton = 0;   // Left
 #else
@@ -675,7 +676,7 @@ private:
     // dialog. The live state lives in the materializr::touchMode() global; this
     // mirrors the saved setting and is written back on save. Default tracks the
     // platform (see AppSettings::touchMode); applyAppSettings keeps it in sync.
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     bool m_touchMode = true;
 #else
     bool m_touchMode = false;

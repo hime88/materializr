@@ -2,7 +2,7 @@
 // On desktop this file compiles to nothing.
 #include "gl_common.h"
 
-#if defined(__ANDROID__)
+#if defined(MZ_GLES)
 
 // gl_common.h #defined glShaderSource to our adapter; undo that here so the
 // adapter can call the genuine GLES entry point.
@@ -83,4 +83,4 @@ void glShaderSourceAdapt(GLuint shader, GLsizei count,
 
 } // namespace materializr
 
-#endif // __ANDROID__
+#endif // MZ_GLES

@@ -1,4 +1,5 @@
 #pragma once
+#include "platform_defs.h"
 
 // Runtime "touch mode" flag. When ON, the UI scales up for fingers and input is
 // interpreted as touch gestures (long-press context menus, press-drag-release
@@ -20,7 +21,7 @@ namespace materializr {
 
 inline bool& touchModeRef() {
     static bool t =
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
         true;
 #else
         false;

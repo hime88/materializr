@@ -153,7 +153,7 @@ void SketchRenderer::drawBuffer(const PassBuf& p, const glm::mat4& vp) {
     glLineWidth(p.width);
     if (m_locPointSize >= 0)
         glUniform1f(m_locPointSize, p.mode == GL_POINTS ? p.width : 1.0f);
-#if !defined(__ANDROID__)
+#if !defined(MZ_GLES)
     if (p.mode == GL_POINTS) glPointSize(p.width);
 #endif
     glDrawArrays(p.mode, 0, p.count);
@@ -278,7 +278,7 @@ void SketchRenderer::uploadAndDraw(const std::vector<float>& verts, GLenum mode,
     // GL ES has no glPointSize, so the vertex shader sets gl_PointSize from this
     // uniform; desktop honours glPointSize directly.
     if (m_locPointSize >= 0) glUniform1f(m_locPointSize, mode == GL_POINTS ? lineWidth : 1.0f);
-#if !defined(__ANDROID__)
+#if !defined(MZ_GLES)
     if (mode == GL_POINTS) glPointSize(lineWidth);
 #endif
 

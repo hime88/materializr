@@ -103,7 +103,7 @@ ImageExportResult ImageExport::exportPNG(const std::string& filePath,
 
     // Read pixels from the texture
     std::vector<uint8_t> pixels(fboWidth * fboHeight * 4);
-#if defined(__ANDROID__)
+#if defined(MZ_GLES)
     // GL ES has no glGetTexImage. Attach the texture to a temporary read
     // framebuffer and pull the pixels back with glReadPixels instead.
     GLint prevFbo = 0;
