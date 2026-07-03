@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,9 @@ private:
     std::function<void(int)> m_rotatePlane;
     int m_renamingId = -1;
     char m_renameBuffer[128] = {};
+    // Selected body ids, rebuilt once at the top of render() — renderBodyRow
+    // reads it per row instead of rescanning the whole selection.
+    std::set<int> m_selectedBodyIdsFrame;
     bool m_showBodies = true;
     bool m_showSketches = true;
     bool m_showPlanes = true;

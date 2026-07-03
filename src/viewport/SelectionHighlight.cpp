@@ -81,10 +81,9 @@ void SelectionHighlight::setLineWidth(float w) {
 }
 
 SelectionHighlight::~SelectionHighlight() {
+    clearCaches(); // frees each entry's persistent VAO/VBO
     if (m_program) glDeleteProgram(m_program);
     if (m_lineProgram) glDeleteProgram(m_lineProgram);
-    if (m_vao) glDeleteVertexArrays(1, &m_vao);
-    if (m_vbo) glDeleteBuffers(1, &m_vbo);
 }
 
 bool SelectionHighlight::initialize() {
@@ -112,7 +111,7 @@ bool SelectionHighlight::initialize() {
     // geometry shaders, so on Android m_lineProgram stays 0 and drawThickLines()
     // becomes a no-op — selected faces still highlight; thick edge outlines are
     // skipped (TODO: emulate with an instanced-quad expansion in the touch pass).
-#if !defined(__ANDROID__)
+#if !defined(MZ_GLES)
     unsigned int lvert = 0, lgeom = 0, lfrag = 0;
     if (!compileShader(lvert, GL_VERTEX_SHADER, s_vertSrc)) return false;
     if (!compileShader(lgeom, GL_GEOMETRY_SHADER, s_lineGeomSrc)) {
@@ -142,14 +141,8 @@ bool SelectionHighlight::initialize() {
     m_locHalfWidth = glGetUniformLocation(m_lineProgram, "u_halfWidth");
 #endif
 
-    glGenVertexArrays(1, &m_vao);
-    glGenBuffers(1, &m_vbo);
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-
+    // No shared scratch VAO/VBO any more — each cache entry owns its own
+    // persistent buffer (see CacheEntry), uploaded once on build.
     return true;
 }
 
@@ -193,21 +186,58 @@ void SelectionHighlight::render(const SelectionManager& sel, const Document& doc
     }
 }
 
+// Free an entry's persistent GPU buffers (rebuild or eviction).
+void SelectionHighlight::freeEntryGL(CacheEntry& e) {
+    if (e.vao) glDeleteVertexArrays(1, &e.vao);
+    if (e.vbo) glDeleteBuffers(1, &e.vbo);
+    e.vao = 0; e.vbo = 0; e.count = 0;
+}
+
+// Delete every entry's GPU buffers, then drop the map. std::map::clear() alone
+// would leak the VAOs/VBOs (it only runs the trivial CacheEntry destructor).
+void SelectionHighlight::freeCacheGL(std::map<const void*, CacheEntry>& m) {
+    for (auto& [key, e] : m) freeEntryGL(e);
+    m.clear();
+}
+
+// Upload a freshly-built vertex stream into the entry's own persistent buffer
+// (GL_STATIC_DRAW; drawn many frames, uploaded once). Empty stream → count 0,
+// no GL objects, so the entry is cached as "nothing to draw" and not rebuilt
+// every frame.
+void SelectionHighlight::uploadEntry(CacheEntry& e,
+                                     const std::vector<float>& verts) {
+    freeEntryGL(e);
+    if (verts.empty()) return;
+    e.count = static_cast<int>(verts.size() / 3);
+    glGenVertexArrays(1, &e.vao);
+    glGenBuffers(1, &e.vbo);
+    glBindVertexArray(e.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, e.vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(verts.size() * sizeof(float)),
+                 verts.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+}
+
+void SelectionHighlight::clearCaches() {
+    freeCacheGL(m_bodyCache);
+    freeCacheGL(m_faceCache);
+    freeCacheGL(m_edgeCache);
+}
+
 void SelectionHighlight::renderFace(const TopoDS_Shape& faceShape, const glm::mat4& vp,
                                      const glm::vec3& color) {
     // Just a blue tint over the face — no outline, no solid
     TopoDS_Face face = TopoDS::Face(faceShape);
 
-    // Cache the triangulated vertex buffer per face. Without this we walk
-    // every triangle and build the float vector on every frame the face is
-    // selected — 5-50ms per frame on a big NURBS face. Key on the face's
-    // TShape pointer, which is invalidated when the parent body's topology
-    // is rebuilt (any modeling op that changes faces), so the cache stays
-    // valid through translates and rotates (location-only changes) but
-    // refreshes the moment the surface itself changes.
+    // Cache the triangulated vertex buffer per face — walking every triangle
+    // per frame was 5-50ms on a big NURBS face. See the CacheEntry comment in
+    // the header for the key/ownership/revalidation/cap scheme.
     const void* key = faceShape.TShape().get();
     auto it = m_faceCache.find(key);
-    if (it == m_faceCache.end()) {
+    if (it == m_faceCache.end() || !(it->second.loc == faceShape.Location())) {
         TopLoc_Location location;
         Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, location);
         if (tri.IsNull()) {
@@ -220,7 +250,12 @@ void SelectionHighlight::renderFace(const TopoDS_Shape& faceShape, const glm::ma
         const gp_Trsf& trsf = location.Transformation();
         bool hasXform = !location.IsIdentity();
 
-        std::vector<float>& verts = m_faceCache[key];
+        if (it == m_faceCache.end() && m_faceCache.size() >= kCacheCap)
+            freeCacheGL(m_faceCache); // flush orphans; live entries rebuild next frame
+        CacheEntry& entry = m_faceCache[key];
+        entry.shape = faceShape;
+        entry.loc = faceShape.Location();
+        std::vector<float> verts;
         verts.reserve(tri->NbTriangles() * 9);
         for (int i = 1; i <= tri->NbTriangles(); i++) {
             int n1, n2, n3;
@@ -231,19 +266,16 @@ void SelectionHighlight::renderFace(const TopoDS_Shape& faceShape, const glm::ma
             verts.insert(verts.end(), {(float)p2.X(),(float)p2.Y(),(float)p2.Z()});
             verts.insert(verts.end(), {(float)p3.X(),(float)p3.Y(),(float)p3.Z()});
         }
+        uploadEntry(entry, verts); // persistent GPU buffer; CPU copy dropped here
         it = m_faceCache.find(key);
     }
-    if (it == m_faceCache.end()) return;
-    const std::vector<float>& verts = it->second;
-    if (verts.empty()) return;
+    if (it == m_faceCache.end() || it->second.count == 0) return;
 
     glUseProgram(m_program);
     glUniformMatrix4fv(m_locMVP, 1, GL_FALSE, glm::value_ptr(vp));
     glUniform4f(m_locColor, color.r, color.g, color.b, 0.35f);
 
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+    glBindVertexArray(it->second.vao);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -251,7 +283,7 @@ void SelectionHighlight::renderFace(const TopoDS_Shape& faceShape, const glm::ma
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(-1.0f, -1.0f);
 
-    glDrawArrays(GL_TRIANGLES, 0, static_cast<int>(verts.size() / 3));
+    glDrawArrays(GL_TRIANGLES, 0, it->second.count);
 
     glDisable(GL_POLYGON_OFFSET_FILL);
     glDepthMask(GL_TRUE);
@@ -265,18 +297,23 @@ void SelectionHighlight::renderEdge(const TopoDS_Shape& edgeShape, const glm::ma
                                      const glm::vec3& color) {
     try {
         // Same caching scheme as renderBody/renderFace: the GCPnts curve
-        // discretization is the per-frame cost we want to skip, so cache
-        // the resulting line-segment vertex buffer by edge TShape pointer.
+        // discretization is the per-frame cost we want to skip. See the
+        // CacheEntry comment in the header for the key/ownership/cap scheme.
         const void* key = edgeShape.TShape().get();
         auto it = m_edgeCache.find(key);
-        if (it == m_edgeCache.end()) {
+        if (it == m_edgeCache.end() || !(it->second.loc == edgeShape.Location())) {
             TopoDS_Edge edge = TopoDS::Edge(edgeShape);
             BRepAdaptor_Curve curve(edge);
             GCPnts_TangentialDeflection discretizer(curve, 0.05, 0.05);
             int nPts = discretizer.NbPoints();
             if (nPts < 2) return;
 
-            std::vector<float>& verts = m_edgeCache[key];
+            if (it == m_edgeCache.end() && m_edgeCache.size() >= kCacheCap)
+                freeCacheGL(m_edgeCache);
+            CacheEntry& entry = m_edgeCache[key];
+            entry.shape = edgeShape;
+            entry.loc = edgeShape.Location();
+            std::vector<float> verts;
             verts.reserve((nPts - 1) * 6);
             for (int i = 1; i < nPts; i++) {
                 gp_Pnt p1 = discretizer.Value(i);
@@ -284,26 +321,32 @@ void SelectionHighlight::renderEdge(const TopoDS_Shape& edgeShape, const glm::ma
                 verts.insert(verts.end(), {(float)p1.X(),(float)p1.Y(),(float)p1.Z()});
                 verts.insert(verts.end(), {(float)p2.X(),(float)p2.Y(),(float)p2.Z()});
             }
+            uploadEntry(entry, verts);
             it = m_edgeCache.find(key);
         }
-        if (it == m_edgeCache.end() || it->second.empty()) return;
+        if (it == m_edgeCache.end() || it->second.count == 0) return;
 
-        drawThickLines(it->second, vp, color, m_edgeLineWidth * 0.5f);
+        drawThickLines(it->second.vao, it->second.count, vp, color,
+                       m_edgeLineWidth * 0.5f);
     } catch (...) {}
 }
 
 void SelectionHighlight::renderBody(const TopoDS_Shape& bodyShape, const glm::mat4& vp,
                                      const glm::vec3& color) {
-    // Cache key = the body's TShape pointer. Stable across location-only
-    // transforms (the kind gizmo drags use) but invalidated whenever the
-    // underlying topology is rebuilt (push/pull, fillet, transform-rotate
-    // since it uses copy=true, etc.) — which is exactly when we want a
-    // fresh tessellation. Stored per-body so multiple selected bodies
-    // each keep their own cached verts without clobbering each other.
+    // Cache key = the body's TShape pointer, revalidated on the shape's
+    // location (the verts are world coords; a multi-body gizmo move commit
+    // keeps the TShape but moves the body). See the CacheEntry comment in
+    // the header for the full ownership/cap scheme. Stored per-body so
+    // multiple selected bodies each keep their own cached verts.
     const void* key = bodyShape.TShape().get();
     auto it = m_bodyCache.find(key);
-    if (it == m_bodyCache.end()) {
-        std::vector<float>& verts = m_bodyCache[key];
+    if (it == m_bodyCache.end() || !(it->second.loc == bodyShape.Location())) {
+        if (it == m_bodyCache.end() && m_bodyCache.size() >= kCacheCap)
+            freeCacheGL(m_bodyCache);
+        CacheEntry& entry = m_bodyCache[key];
+        entry.shape = bodyShape;
+        entry.loc = bodyShape.Location();
+        std::vector<float> verts;
         for (TopExp_Explorer exp(bodyShape, TopAbs_EDGE); exp.More(); exp.Next()) {
             try {
                 TopoDS_Edge edge = TopoDS::Edge(exp.Current());
@@ -320,25 +363,25 @@ void SelectionHighlight::renderBody(const TopoDS_Shape& bodyShape, const glm::ma
                 }
             } catch (...) { continue; }
         }
+        uploadEntry(entry, verts);
         it = m_bodyCache.find(key);
     }
-    if (it == m_bodyCache.end() || it->second.empty()) return;
+    if (it == m_bodyCache.end() || it->second.count == 0) return;
 
     // Body outlines track the configured edge width but stay a touch thinner
     // (the original 2.5:3.0 ratio) so a whole body reads differently from a
     // single picked edge.
-    drawThickLines(it->second, vp, color, m_edgeLineWidth * 0.5f * (2.5f / 3.0f));
+    drawThickLines(it->second.vao, it->second.count, vp, color,
+                   m_edgeLineWidth * 0.5f * (2.5f / 3.0f));
 }
 
-void SelectionHighlight::drawThickLines(const std::vector<float>& verts, const glm::mat4& vp,
+void SelectionHighlight::drawThickLines(unsigned int vao, int count, const glm::mat4& vp,
                                         const glm::vec3& color, float halfWidthPx) {
-    if (verts.empty()) return;
+    if (!vao || count <= 0) return;
 
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+    glBindVertexArray(vao); // buffer already resident (uploaded on cache build)
 
-#if defined(__ANDROID__)
+#if defined(MZ_GLES)
     // GL ES 3.0 has no geometry shader, so there's no screen-space line widening
     // (m_lineProgram is 0). Fall back to plain GL_LINES with the basic program —
     // the selection outline renders, just at hardware line width rather than the
@@ -349,7 +392,7 @@ void SelectionHighlight::drawThickLines(const std::vector<float>& verts, const g
     glUniform4f(m_locColor, color.r, color.g, color.b, 1.0f);
     glDisable(GL_DEPTH_TEST);
     glLineWidth(2.0f);
-    glDrawArrays(GL_LINES, 0, static_cast<int>(verts.size() / 3));
+    glDrawArrays(GL_LINES, 0, count);
     glEnable(GL_DEPTH_TEST);
 #else
     if (!m_lineProgram) { glBindVertexArray(0); return; }
@@ -365,7 +408,7 @@ void SelectionHighlight::drawThickLines(const std::vector<float>& verts, const g
     glUniform1f(m_locHalfWidth, std::max(0.5f, halfWidthPx));
 
     glDisable(GL_DEPTH_TEST);
-    glDrawArrays(GL_LINES, 0, static_cast<int>(verts.size() / 3));
+    glDrawArrays(GL_LINES, 0, count);
     glEnable(GL_DEPTH_TEST);
 #endif
 

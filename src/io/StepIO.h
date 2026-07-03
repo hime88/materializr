@@ -11,6 +11,11 @@ struct ImportResult {
     bool success = false;
     std::string errorMessage;
     int bodiesImported = 0;
+    // STL only: triangle counts before/after decimation and final B-rep face
+    // count (0 when not applicable). Used for the import-result toast.
+    int trianglesBefore = 0;
+    int trianglesAfter = 0;
+    int faceCount = 0;
 };
 
 struct ExportResult {

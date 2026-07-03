@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform_defs.h"
 #include <string>
 #include <vector>
 #include <functional>
@@ -39,11 +40,11 @@ public:
                            const std::vector<FileFilter>& filters,
                            std::function<bool(const std::string&)> writeFn);
 
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     // Android export: pop a Share / Save-to-device sheet. writeFn(path) writes
     // the file to a temp path (returns success); Share hands it to the system
     // share sheet, Save copies it to a SAF destination. Desktop keeps saveFile.
-    static void androidExportShareOrSave(const std::string& suggestedName,
+    static void mobileExportShareOrSave(const std::string& suggestedName,
                                          const std::string& mime,
                                          std::function<bool(const std::string&)> writeFn);
 #endif

@@ -46,6 +46,14 @@ bool ItemsPanel::render() {
 
     bool colorChanged = false; // a body colour edit also needs a mesh rebuild
 
+    // Selected-body ids collected ONCE per frame — renderBodyRow used to
+    // rescan the whole selection per row (O(bodies × selection) per frame).
+    m_selectedBodyIdsFrame.clear();
+    if (m_selection)
+        for (const auto& e : m_selection->getSelection())
+            if (e.type == SelectionType::Body && e.bodyId >= 0)
+                m_selectedBodyIdsFrame.insert(e.bodyId);
+
     // Filter toggles at top
     ImGui::TextColored(materializr::accentText(), "Filter");
     ImGui::Separator();
@@ -242,7 +250,11 @@ bool ItemsPanel::render() {
             bool visible = m_document->isSketchVisible(id);
             if (ImGui::Checkbox("##svis", &visible)) {
                 m_document->setSketchVisible(id, visible);
-                colorChanged = true;
+                // NOT colorChanged: sketch visibility is read live by the
+                // viewport's sketch loop every frame — setting the flag here
+                // forced a FULL re-tessellation of every visible body (a
+                // multi-second stall on a heavy project) for a toggle that
+                // doesn't touch body meshes at all.
             }
             ImGui::SameLine();
 
@@ -566,14 +578,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
     }
     ImGui::SameLine();
 
-    bool isSelected = false;
-    if (m_selection) {
-        for (const auto& e : m_selection->getSelection()) {
-            if (e.type == SelectionType::Body && e.bodyId == id) {
-                isSelected = true; break;
-            }
-        }
-    }
+    const bool isSelected = m_selectedBodyIdsFrame.count(id) > 0;
 
     if (m_renamingId == id) {
         ImGui::SetKeyboardFocusHere();
@@ -685,9 +690,11 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
             }
             colorChanged = true;
         }
-        if (!deleted && ImGui::MenuItem("Hide Others")) {
+        // The way back from Isolate in one click (mirrors the viewport
+        // context menu) — beats re-ticking every checkbox above.
+        if (!deleted && ImGui::MenuItem("Show All Bodies")) {
             for (int otherId : m_document->getAllBodyIds()) {
-                if (otherId != id) m_document->setBodyVisible(otherId, false);
+                m_document->setBodyVisible(otherId, true);
             }
             colorChanged = true;
         }

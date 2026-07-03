@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <map>
 #include <sstream>
 #include <vector>
 
@@ -301,6 +303,25 @@ std::string SketchEditOp::serializeWithDocument(const Document& doc) const {
     return os.str();
 }
 
+void SketchEditOp::getEditedElements(std::set<int>& lines, std::set<int>& circles,
+                                     std::set<int>& arcs) const {
+    lines.clear(); circles.clear(); arcs.clear();
+    if (!m_after) return;
+    auto wasPresent = [](const auto& vec, int id) {
+        for (const auto& e : vec) if (e.id == id) return true;
+        return false;
+    };
+    // No before-snapshot (e.g. a reloaded op) — highlight everything in after,
+    // so the user still sees which sketch the step touches.
+    const bool haveBefore = static_cast<bool>(m_before);
+    for (const auto& l : m_after->getLines())
+        if (!haveBefore || !wasPresent(m_before->getLines(), l.id)) lines.insert(l.id);
+    for (const auto& c : m_after->getCircles())
+        if (!haveBefore || !wasPresent(m_before->getCircles(), c.id)) circles.insert(c.id);
+    for (const auto& a : m_after->getArcs())
+        if (!haveBefore || !wasPresent(m_before->getArcs(), a.id)) arcs.insert(a.id);
+}
+
 void SketchEditOp::applyCircleRadiusToSnapshots(int circleId, double radius) {
     auto setIn = [&](const std::shared_ptr<Sketch>& s) {
         if (!s) return;
@@ -411,9 +432,17 @@ void SketchEditOp::renderProperties() {
         }
     }
 
+    // NOTE: line / rectangle / arc *size* edits are intentionally NOT offered
+    // here. They're edited live in the sketch's Properties panel (select the
+    // element while in the sketch) — editing them through a history step meant
+    // replaying full per-step snapshots, which clobbered edits to anything but
+    // the latest step. The Properties-panel path mutates the live sketch
+    // directly and is undoable, so that's the single home for resizing.
+
     if (!anyDim) {
-        ImGui::TextWrapped("Nothing editable in this step (only non-dimensional "
-                           "constraints or geometry without an editable size).");
+        ImGui::TextWrapped("Nothing editable in this step. Resize lines, "
+                           "rectangles and arcs from the Properties panel while "
+                           "editing the sketch.");
     } else {
         ImGui::TextDisabled("Press Enter to commit a value, then Apply Changes.");
     }

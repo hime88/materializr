@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform_defs.h"
 
 #include <memory>
 #include <future>
@@ -22,6 +23,8 @@
 #include <array>
 #include "modeling/ExtrudeOp.h" // for ExtrudeMode
 #include "modeling/SketchConstraints.h" // for ConstraintType (applySketchConstraint)
+#include "modeling/Unfold.h" // for FlatPattern (m_unfoldPattern)
+#include "core/SheetSpec.h" // for SheetMaterial (m_unfoldMaterial)
 #include "io/Settings.h" // for AppSettings::RecentProject (m_recentProjects)
 
 // Global (non-namespaced) op, forward-declared for configureFaceOp's signature.
@@ -98,6 +101,7 @@ private:
     std::string m_toastText;
     double m_toastExpiry = 0.0;
     void renderSvgToolPanel();  // SVG placement settings (floating)
+    void renderMirrorToolPanel(); // interactive mirror line controls (floating)
     // Camera-upright default rotation for Text/SVG placement.
     void seedUprightPlacementAngle();
     void initRenderers();
@@ -199,7 +203,13 @@ private:
     void doCloseProject();      // the actual clear; called from closeProject + save prompt
     // Snapshot the operation history (parameters + per-step body diffs) for the
     // project file, and rebuild a replayable history from a loaded project.
-    ProjectHistory captureProjectHistory();
+    // Cancels live interactive previews first by default: the snapshot seeds
+    // from the CURRENT doc body, so an uncommitted preview (e.g. a shell being
+    // dragged) would otherwise bake into the previous step's snapshot with no
+    // op behind it — a hollow body that reloads un-editable and can't be
+    // re-shelled. The background recovery autosave passes false so it doesn't
+    // yank an active preview out from under the user mid-drag.
+    ProjectHistory captureProjectHistory(bool cancelPreviews = true);
     void rebuildHistoryFromProject(const ProjectHistory& hist,
                                    const std::string& savedByVersion = "");
 
@@ -266,10 +276,15 @@ private:
     // Called when entering sketch mode / editing an existing sketch.
     void alignCameraToActiveSketch();
 
-    // Sketch region hover/pick + Push/Pull
+    // Sketch region hover/pick + Push/Pull. buildIfCold=false makes the pick
+    // SKIP sketches whose region cache would need the heavy OCCT fuse —
+    // required on the per-frame hover path (a cold complex sketch would
+    // freeze the app on the first mouse move after being unhidden); click
+    // frames pass true and build as before.
     struct SketchRegionHit { int sketchId = -1; int regionIndex = -1; glm::vec3 worldPoint{0.0f}; };
     SketchRegionHit pickSketchRegion(float screenX, float screenY,
-                                     float vpW, float vpH) const;
+                                     float vpW, float vpH,
+                                     bool buildIfCold = true) const;
     void beginPushPull();
     void updatePushPull();
     void commitPushPull();
@@ -331,6 +346,15 @@ private:
     bool m_moveFaceRotHasAccum = false;
     float m_moveFaceHalfExtent = 1.0f; // face size, maps drag distance → angle/scale
     bool  m_moveFaceRotSnap = true;    // snap tilt to whole degrees (default on)
+    // TWIST = the THIRD rotation ring, about the face NORMAL (lies in the face
+    // plane). Lives under FaceXform::Rotate: grabbing this ring (grab 2) spins
+    // the face relative to its base and commits a MoveFaceOp::Kind::Twist —
+    // distinct from the two tilt rings. Mutually exclusive with a tilt within a
+    // session (m_moveFaceIsTwist picks which op the gesture builds).
+    float m_moveFaceTwist = 0.0f;      // accumulated twist (radians) about the normal
+    float m_moveFaceTwistBase = 0.0f;  // twist banked before the current drag
+    float m_moveFaceTwistStart = 0.0f; // cursor angle in the face plane at drag start
+    bool  m_moveFaceIsTwist = false;   // this Rotate gesture is a twist, not a tilt
     // DEFERRED REBUILD: the body rebuild is deferred to mouse-release, so the
     // drag only moves ghost SILHOUETTES of the face's loops. Loop 0 = outer
     // outline, 1..N = hole loops (same order as the op enumerates them). Each is
@@ -365,7 +389,11 @@ private:
     // Map each sketch id to the body ids it drives (created/modified through a
     // sketch-sourced extrude / push-pull). Used by the gizmo commit to tell a
     // unison move (body + its driving sketch) from a lone move that de-links.
-    std::map<int, std::set<int>> sketchBodyLinks() const;
+    // MEMOIZED on History::revision(): the Properties panel asks for the link
+    // hint every frame while a body/sketch is selected (the normal working
+    // state), and rebuilding this walks the whole history + captureDiff per
+    // op — hundreds of map/set node allocations per frame on a long history.
+    const std::map<int, std::set<int>>& sketchBodyLinks() const;
     // Human-readable parametric-link summary for the Properties panel: for a body
     // (isBody=true) which sketch drives it, for a sketch which body it drives, plus
     // whether the link is live or was broken by an independent 3D move. "" = none.
@@ -376,6 +404,9 @@ private:
     // can't re-bind after the geometry moves, so those bodies must move rigidly
     // (and de-link) instead of re-deriving.
     bool bodySafelyRederivable(int bodyId, int viaSketchId) const;
+    // sketchBodyLinks() memo — see its declaration. ~0u forces the first build.
+    mutable std::map<int, std::set<int>> m_linkMapCache;
+    mutable unsigned m_linkMapRevision = ~0u;
     // Re-establish the parametric link of a detached sketch (Properties-panel
     // "Re-link"): clears the detached flag so editing the sketch drives its body
     // again. isBody=true re-links every detached sketch driving that body.
@@ -431,6 +462,12 @@ private:
 private:
     // Sketch
     std::shared_ptr<Sketch> m_activeSketch;
+    // Deferred "before" snapshot from a line-chain anchor click (first click,
+    // only the start point placed). Held so the first segment's undo step
+    // absorbs the anchor into ONE step; see recordSketchMutation.
+    std::shared_ptr<Sketch> m_deferredSketchBefore;
+    size_t m_deferredSketchBeforeSig = 0;
+    Sketch* m_deferredSketchOwner = nullptr;
     // Snapshot taken at left-mouse-down in Select mode so a point/line drag
     // (which only moves positions, no structural change) can be committed to
     // history on mouse-up.
@@ -590,7 +627,7 @@ private:
 
     // Configurable camera mouse bindings (ImGuiMouseButton values: 0=Left,1=Right,
     // 2=Middle). Zoom is always the scroll wheel. Edited in File > Settings.
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     int m_orbitButton = 0; // Left (trackpad default; rebindable in Settings)
     int m_panButton = 0;   // Left
 #else
@@ -611,6 +648,16 @@ private:
     // press so the whole shape is one press-drag-release gesture; this flags that
     // the release must complete the shape (and only if the finger actually moved).
     bool m_sketchDragCenterPlaced = false;
+    // History step count captured at the start of a drawing-tool press, so that
+    // if a two-finger pan/zoom takes the press over we can tell whether the
+    // press already pushed a step (e.g. Line's start vertex) and roll it back.
+    int m_sketchPressStepBefore = 0;
+    // Interactive mirror line manipulated by a sketch-style move/rotate gizmo.
+    // Reuses the SketchGizmoHandle vocabulary (MoveX/MoveY/MoveFree/Rotate).
+    SketchGizmoHandle m_mirrorGizmoHandle = SketchGizmoHandle::None;
+    glm::vec2 m_mirrorGizmoStartAnchor{0.0f}; // mirror anchor at drag start
+    glm::vec2 m_mirrorGizmoGrab{0.0f};        // sketch-space cursor at drag start
+    float m_mirrorGizmoStartAngle = 0.0f;     // mirror angle at drag start
     float m_sketchDownX = 0.0f, m_sketchDownY = 0.0f; // press pos (px) for drag slop
     // ImGui drops IsItemHovered() mid-drag once the window-move grab takes the
     // ActiveId, which freezes the live sketch preview. Latch the viewport input
@@ -629,7 +676,7 @@ private:
     // dialog. The live state lives in the materializr::touchMode() global; this
     // mirrors the saved setting and is written back on save. Default tracks the
     // platform (see AppSettings::touchMode); applyAppSettings keeps it in sync.
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     bool m_touchMode = true;
 #else
     bool m_touchMode = false;
@@ -693,6 +740,11 @@ private:
     // button. Off hides the button so users who set the level once in
     // Settings can declutter the sketch toolbar.
     bool  m_showInferenceToolbarToggle = true;
+    // STL import (persisted). m_stlImportAccuracy pre-fills the import dialog's
+    // fidelity slider; m_meshShowWireframe gates the facet wireframe of imported
+    // mesh bodies (live — toggling it re-runs the mesh-body edge rebuild).
+    float m_stlImportAccuracy = 0.5f;
+    bool  m_meshShowWireframe = true;
     // Apply m_light*/m_msaaSamples/m_selectionLineWidth to the renderer + viewport.
     void applyRenderingSettings();
     // Map m_meshQuality to OCCT tessellation parameters.
@@ -736,6 +788,22 @@ private:
     // so a cylinder resting on Z=0 reads `Z 0.00` instead of `Z 10.00`.
     // Sketch-only drags get the pivot's Y here (no bbox → no offset).
     float m_gizmoSharedBottomY{0.0f};
+    // Primary body's bbox captured ONCE at drag start (the originals never
+    // change during a drag). The Scale branch needs its diagonal every
+    // frame; recomputing BRepBndLib::Add per drag frame was 50-150 ms on a
+    // complex body — a large slice of the "moving one part lags" report.
+    glm::vec3 m_gizmoDragBBoxMin{0.0f};
+    glm::vec3 m_gizmoDragBBoxMax{0.0f};
+
+    // GPU-only gizmo drag preview (same pattern as the Revolve live preview):
+    // during the drag the document is NOT touched — the accumulated transform
+    // is pushed as a model matrix onto the dragged bodies' shape+edge mesh
+    // slots, so a drag frame costs two uniform updates instead of a BRep
+    // transform + updateBody + re-tessellation + edge re-discretization of
+    // the dragged body. The real (parametric, undoable) transform is applied
+    // exactly once on release; Esc just resets the matrices.
+    void gizmoPreviewApply(const glm::mat4& m);
+    void gizmoPreviewReset() { gizmoPreviewApply(glm::mat4(1.0f)); }
 
     // Standalone-sketch gizmo drag — set when the gizmo is shown on a Sketch
     // selection (no body in the selection, not in sketch-edit, perspective
@@ -779,10 +847,17 @@ private:
     // (1.5m airplane skeleton: many trimmed B-spline surfaces per body) that
     // bbox walk is 50–150 ms each, dropping the idle frame rate to 6 FPS the
     // moment one or two bodies are selected. Key: the body's TShape pointer
-    // (stable through location-only transforms via gizmo drags, invalidated
-    // automatically when topology rebuilds — push/pull, fillet, transform-
-    // rotate, revolve apply — exactly when we'd want a fresh centroid).
-    std::map<int, std::pair<const void*, glm::vec3>> m_gizmoCenterCache;
+    // PLUS the shape's location — a location-only transform (multi-body move
+    // commit) keeps the TShape while moving the body, and a TShape-only key
+    // left the gizmo sitting at the pre-move centroid. Topology rebuilds
+    // (push/pull, fillet, single-body transform via copy=true) still miss on
+    // the pointer — exactly when we'd want a fresh centroid anyway.
+    struct GizmoCenterCacheEntry {
+        const void* tsh = nullptr;
+        TopLoc_Location loc;
+        glm::vec3 center{0.0f};
+    };
+    std::map<int, GizmoCenterCacheEntry> m_gizmoCenterCache;
 
     // Sketches do NOT show the gizmo automatically on selection — that lets
     // the Tools toolbar surface its Move / Rotate / Loft / Edit options
@@ -1049,6 +1124,20 @@ private:
     glm::vec3 m_zoomFocusPoint{0.0f};
     int m_zoomFocusFrame = -1;
 
+    // Pan depth-anchor gesture tracking (see the anchoredPan lambda in the
+    // camera-drag handler): the anchor is captured once per pan gesture —
+    // desktop gestures live for as long as a camera button stays held,
+    // touch gestures for as long as two-finger pan events keep arriving.
+    bool m_panAnchorHeld = false;   // desktop: a camera button hold owns the anchor
+    int m_lastTouchPanFrame = -1000; // touch: last frame a two-finger pan applied
+    // Orbit re-anchors its pivot onto the geometry at the VIEW CENTRE at the
+    // start of each orbit gesture, so it spins around the object instead of a
+    // point that drifted behind it (cursor-zoom leaves the target off the
+    // surface → orbit swings the model sideways, reading as pan+rotate). Held
+    // for the gesture's lifetime; the centre pick is on the view axis, so
+    // moving the target along it doesn't shift the image — only the pivot.
+    bool m_orbitAnchorHeld = false;
+
     // Click-cycling state: first click at a spot picks the visible FACE,
     // a second click at the same spot cycles to the sketch region covered
     // by / behind that face — resolves the face-vs-region ambiguity when
@@ -1221,6 +1310,40 @@ private:
     void commitPrimitivePopup();
     void cancelPrimitivePopup();
     void renderPrimitivePopup();
+
+    // STL import options dialog. Opened from the Import > STL menu (the plugin
+    // routes through requestInteractiveOp("StlImport")). Collects a file path
+    // (via Browse), a fidelity/accuracy slider, and a wireframe toggle, then
+    // runs StlIO::import on commit. Mirrors the primitive-popup begin/render/
+    // commit/cancel pattern.
+    bool   m_stlDialogActive = false;
+    std::string m_stlDialogPath;
+    float  m_stlDialogAccuracy = 0.5f;
+    bool   m_stlDialogWireframe = true;
+    void beginStlImportDialog();
+    void commitStlImport();
+    void cancelStlImport();
+    void renderStlImportDialog();
+
+    // Unfold / Flatten — "lay it flat" for laser/CNC/templates. beginUnfoldDialog
+    // runs the planar-net unfold on the selected body and opens a 2D Flat-Pattern
+    // dialog (cut + fold lines), with a material dropdown driving fold handling
+    // and SVG export. See modeling/Unfold.h.
+    bool m_unfoldDialogActive = false;
+    int  m_unfoldBodyId = -1;
+    std::unique_ptr<materializr::FlatPattern> m_unfoldPattern;
+    materializr::Rigidity m_unfoldRigidity = materializr::Rigidity::SemiRigid;
+    float m_unfoldThicknessMm = 5.0f;
+    std::vector<TopoDS_Face> m_unfoldSourceFaces; // kept so the bevel slider can re-run
+    float m_unfoldMaxBevelDeg = 10.0f;            // angular tolerance: max bevel per score line
+    bool  m_unfoldConformal = false;              // LSCM unwrap (one stretchy piece) vs developable pieces
+    bool  m_unfoldPageA4 = false;                 // PDF export page size: A4 vs US Letter
+    float m_unfoldRotationDeg = 0.0f;             // viewer/export rotation of the whole flat pattern
+    int   m_unfoldExportFmt = 0;                  // export format: 0 = SVG (no page grid), 1 = PDF (tiled)
+    int   m_unfoldRegDensity = 2;                 // PDF alignment-mark density: 0 None,1 Sparse,2 Normal,3 Dense
+    void beginUnfoldDialog();
+    void recomputeUnfold();
+    void renderUnfoldDialog();
 
     // Revolve popup. Opens when the user clicks Revolve in the body Tools
     // panel; takes a sketch profile + an axis (canonical world axis or a
@@ -1443,6 +1566,8 @@ private:
     // on save/load and cleared on closeProject().
     bool m_autoOpenLastProject = false;
     bool m_checkForUpdatesOnLaunch = true;
+    // Beta channel opt-in: update checks also consider GitHub pre-releases.
+    bool m_includePrereleases = false;
 
     // Set by the --safe-mode CLI flag. When true, loadAppSettings stomps
     // rendering, autosave, and auto-open-last-project back to safe defaults

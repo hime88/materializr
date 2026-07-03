@@ -32,12 +32,18 @@ public:
     void setEditingStep(int step) { m_editingStep = step; m_showProperties = (step >= 0); }
     int getEditingStep() const { return m_editingStep; }
 
+    // Soft-highlight a step (distinct from editing) so the list shows which step
+    // owns the sketch element currently selected in the viewport. -1 = none.
+    void setHighlightStep(int step) { m_highlightStep = step; }
+    int getHighlightStep() const { return m_highlightStep; }
+
 private:
     History* m_history = nullptr;
     bool m_historyLocked = false;
     Document* m_document = nullptr;
     materializr::EventBus* m_eventBus = nullptr;
     int m_editingStep = -1;
+    int m_highlightStep = -1; // step owning the viewport-selected sketch element
     bool m_showProperties = false;
     bool m_deleteConflict = false; // last delete was blocked by a dependent step
     // Steps with same typeId in a row collapse into a single expandable group

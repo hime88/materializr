@@ -1,6 +1,7 @@
 #include "History.h"
 #include "EventBus.h"
 #include "Events.h"
+#include "Verbose.h"
 #include "../modeling/Sketch.h"
 #include "../modeling/SketchEditOp.h"
 #include <cstdio>
@@ -10,6 +11,7 @@
 History::History() = default;
 
 bool History::pushOperation(std::unique_ptr<Operation> op, Document& doc) {
+    ++m_revision;
     if (!op) {
         return false;
     }
@@ -56,6 +58,7 @@ bool History::pushOperation(std::unique_ptr<Operation> op, Document& doc) {
 }
 
 void History::pushExecuted(std::unique_ptr<Operation> op) {
+    ++m_revision;
     if (!op) return;
     op->rememberGoodParams(); // already-applied params are by definition good
     if (m_currentIndex + 1 < static_cast<int>(m_operations.size())) {
@@ -78,6 +81,7 @@ bool History::canRedo() const {
 }
 
 bool History::undo(Document& doc) {
+    ++m_revision;
     if (!canUndo()) {
         std::fprintf(stderr, "[History] undo: nothing to undo (currentIndex=%d)\n",
                      m_currentIndex);
@@ -97,9 +101,11 @@ bool History::undo(Document& doc) {
     }
 
     Operation* op = m_operations[idx].get();
-    std::fprintf(stderr, "[History] undo step %d '%s' (type=%s reloaded=%d enabled=%d)\n",
-                 idx, op->name().c_str(), op->typeId().c_str(),
-                 op->isReloaded() ? 1 : 0, op->isEnabled() ? 1 : 0);
+    // Per-undo trace is --verbose only; the FAILED path below stays loud.
+    if (materializr::isVerbose())
+        std::fprintf(stderr, "[History] undo step %d '%s' (type=%s reloaded=%d enabled=%d)\n",
+                     idx, op->name().c_str(), op->typeId().c_str(),
+                     op->isReloaded() ? 1 : 0, op->isEnabled() ? 1 : 0);
     if (!op->undo(doc)) {
         std::fprintf(stderr, "[History] undo FAILED at step %d '%s' — op->undo() "
                              "returned false; staying at this step\n",
@@ -117,6 +123,7 @@ bool History::undo(Document& doc) {
 }
 
 bool History::redo(Document& doc) {
+    ++m_revision;
     if (!canRedo()) {
         return false;
     }
@@ -165,6 +172,7 @@ const Operation* History::getStep(int index) const {
 }
 
 void History::propagateSketchValueEdits(int editedStep, Document& doc) {
+    ++m_revision;
     if (editedStep < 0 || editedStep >= static_cast<int>(m_operations.size()))
         return;
     auto* edited =
@@ -189,6 +197,7 @@ void History::propagateSketchValueEdits(int editedStep, Document& doc) {
 }
 
 bool History::editStep(int index, Document& doc, bool transactional) {
+    ++m_revision;
     if (index < 0 || index >= static_cast<int>(m_operations.size())) {
         return false;
     }
@@ -359,6 +368,7 @@ bool History::editStep(int index, Document& doc, bool transactional) {
 }
 
 bool History::removeStep(int index, Document& doc) {
+    ++m_revision;
     int count = static_cast<int>(m_operations.size());
     if (index < 0 || index >= count) return false;
 
@@ -415,6 +425,56 @@ bool History::removeStep(int index, Document& doc) {
     return true;
 }
 
+bool History::setStepEnabled(int index, bool enabled, Document& doc) {
+    ++m_revision;
+    int count = static_cast<int>(m_operations.size());
+    if (index < 0 || index >= count) return false;
+    Operation* target = m_operations[index].get();
+    if (target->isEnabled() == enabled) return true; // no change
+
+    // Above the applied tip (redo region / breakpoint-suppressed): the step
+    // isn't in the document right now, so just flip the flag — the next
+    // redo/replay will honor it.
+    if (index > m_currentIndex) {
+        target->setEnabled(enabled);
+        return true;
+    }
+
+    // Roll the document back to just before `index` by undoing the applied ops
+    // in reverse. Uses the CURRENT (pre-toggle) flags: a currently-enabled
+    // target gets undone here; a currently-disabled one (we're enabling it) was
+    // never applied, so it's correctly skipped.
+    for (int i = m_currentIndex; i >= index; --i) {
+        Operation* op = m_operations[i].get();
+        if (op->isEnabled()) op->undo(doc);
+    }
+
+    target->setEnabled(enabled);
+
+    // Re-execute from `index` forward, IN PLACE. No doc.clear(), so base /
+    // imported bodies that aren't operations (the starting box a lone push/pull
+    // edits) survive. Disabled ops are skipped; an op that can no longer rebuild
+    // because the geometry it referenced was suppressed upstream is skipped too
+    // (cascade suppression) and recorded so the UI can flag the partial result.
+    m_failedReplayAt = -1;
+    int firstFail = -1;
+    for (int i = index; i <= m_currentIndex; ++i) {
+        Operation* op = m_operations[i].get();
+        if (op->isEnabled()) {
+            if (!op->execute(doc)) {
+                if (firstFail < 0) firstFail = i;
+                continue;
+            }
+            op->rememberGoodParams();
+        }
+    }
+    if (firstFail >= 0) m_failedReplayAt = firstFail;
+
+    if (m_eventBus)
+        m_eventBus->publish(materializr::HistoryStepEvent{m_currentIndex, true});
+    return firstFail < 0;
+}
+
 void History::setBreakpoint(int index) {
     m_breakpoint = index;
 }
@@ -424,6 +484,7 @@ int History::getBreakpoint() const {
 }
 
 bool History::replayAll(Document& doc) {
+    ++m_revision;
     doc.clear();
 
     int limit = static_cast<int>(m_operations.size()) - 1;
@@ -431,22 +492,39 @@ bool History::replayAll(Document& doc) {
         limit = m_breakpoint;
     }
 
+    // Called only by the history Disable/Enable toggle. Suppressing a feature
+    // strips the geometry downstream ops were built on, so some of them can no
+    // longer recompute. Rather than ABORT the whole replay at the first such
+    // failure — which blanks the viewport and reads as "the model is gone" —
+    // SKIP the failed op and keep going. A dependent op that needs the
+    // suppressed geometry simply fails and is skipped too (cascade suppression),
+    // while geometry that's independent of the disabled step still builds. Re-
+    // enabling the step replays cleanly and brings everything back, so the
+    // operation is always recoverable. The first failure is recorded so the UI
+    // can flag that the rebuild was partial.
+    m_failedReplayAt = -1;
+    int firstFailure = -1;
     for (int i = 0; i <= limit; ++i) {
         Operation* op = m_operations[i].get();
         if (op->isEnabled()) {
             if (!op->execute(doc)) {
-                m_currentIndex = i - 1;
-                return false;
+                if (firstFailure < 0) firstFailure = i;
+                continue; // skip this op, keep replaying the rest
             }
             op->rememberGoodParams();
         }
     }
 
     m_currentIndex = limit;
+    if (firstFailure >= 0) {
+        m_failedReplayAt = firstFailure;
+        return false;
+    }
     return true;
 }
 
 void History::clear() {
+    ++m_revision;
     m_operations.clear();
     m_currentIndex = -1;
     m_breakpoint = -1;
@@ -454,6 +532,7 @@ void History::clear() {
 }
 
 void History::dropRedoTail() {
+    ++m_revision;
     if (m_currentIndex + 1 < static_cast<int>(m_operations.size()))
         m_operations.erase(m_operations.begin() + m_currentIndex + 1,
                            m_operations.end());
@@ -521,6 +600,7 @@ int History::reflowInsertionIndex(const Operation& op) const {
 
 bool History::insertStepAndReplay(int index, std::unique_ptr<Operation> op,
                                   Document& doc) {
+    ++m_revision;
     int limit = m_currentIndex;
     if (m_breakpoint >= 0 && m_breakpoint < limit) limit = m_breakpoint;
     if (index < 0 || index > limit) return false;

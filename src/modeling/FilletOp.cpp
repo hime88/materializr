@@ -1,7 +1,10 @@
 #include "FilletOp.h"
 #include "SubShapeIndex.h"
+#include "EdgeAnchor.h"
+#include "../core/Verbose.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -50,6 +53,61 @@ double faceBlendRadius(const TopoDS_Face& face) {
 }
 } // namespace
 
+// Every sketch in the document, as EdgeAnchor references. Real bodies are
+// carved by several sketches (base extrude + profile cuts), so anchoring
+// consults them all; sketches unrelated to this body simply never match.
+// Prefers the cascade override (the edited sketch's FINAL state) over the
+// live sketch: during a history replay the live sketch is rolled back through
+// its SketchEditOp snapshots, so it holds a stale state exactly when this op
+// re-executes — while the extrude below was rebuilt from the final one.
+// `keep` extends the overrides' lifetime to the caller's scope.
+static std::vector<EdgeAnchor::SketchRef> anchorSketches(
+        Document& doc, std::vector<std::shared_ptr<materializr::Sketch>>& keep) {
+    std::vector<EdgeAnchor::SketchRef> refs;
+    for (int sid : doc.getAllSketchIds()) {
+        if (auto ov = doc.cascadeSketchOverride(sid)) {
+            keep.push_back(ov);
+            refs.push_back({ sid, ov.get() });
+        } else if (auto sk = doc.getSketch(sid)) {
+            keep.push_back(sk);
+            refs.push_back({ sid, sk.get() });
+        }
+    }
+    return refs;
+}
+
+void FilletOp::computeAnchors(Document& doc) {
+    m_edgeAnchors.clear();
+    std::vector<std::shared_ptr<materializr::Sketch>> keep;
+    m_edgeAnchors = EdgeAnchor::compute(m_edges, anchorSketches(doc, keep));
+    // Success trace is --verbose only: execute() (and thus this) runs per
+    // PREVIEW FRAME while a fillet is being dragged — an always-on stderr
+    // flush per frame is real drag cost. Failure paths below stay loud.
+    if (materializr::isVerbose()) {
+        int corners = 0, rims = 0, arcs = 0, none = 0;
+        for (const auto& a : m_edgeAnchors)
+            (a.kind == EdgeAnchor::Anchor::Corner ? corners :
+             a.kind == EdgeAnchor::Anchor::Rim    ? rims :
+             a.kind == EdgeAnchor::Anchor::None   ? none : arcs)++;
+        std::fprintf(stderr,
+            "[Fillet] anchored %zu edges: %d corner, %d rim, %d arc, %d none\n",
+            m_edges.size(), corners, rims, arcs, none);
+    }
+}
+
+bool FilletOp::resolveAnchors(Document& doc, const TopoDS_Shape& base) {
+    if (m_edgeAnchors.size() != m_edges.size()) return false;
+    std::vector<TopoDS_Edge> resolved;
+    std::vector<std::shared_ptr<materializr::Sketch>> keep;
+    if (!EdgeAnchor::resolve(m_edgeAnchors, anchorSketches(doc, keep), base, resolved))
+        return false;
+    m_edges = std::move(resolved);
+    if (materializr::isVerbose())
+        std::fprintf(stderr, "[Fillet] resolved %zu edge(s) via generative anchors\n",
+                     m_edges.size());
+    return true;
+}
+
 FilletOp::FilletOp() = default;
 
 void FilletOp::setBody(int bodyId) {
@@ -79,12 +137,21 @@ bool FilletOp::execute(Document& doc) {
         // kill this op. Fails (loudly, via editStep) only when an edge was
         // genuinely consumed by the upstream change.
         if (!SubShapeIndex::rebindEdges(m_previousShape, m_edges)) {
-            std::fprintf(stderr,
-                "[Fillet] rebindEdges failed (R=%.2f, %zu edges) — "
-                "selected edge isn't in the current body's edge map.\n",
-                m_radius, m_edges.size());
-            return false;
+            // Ordinal/carrier matching failed — the edges moved (e.g. a sketch
+            // DIMENSION edit relocated a filleted corner). Try re-finding them
+            // by the sketch vertex they sit over (generative anchoring).
+            if (!resolveAnchors(doc, m_previousShape)) {
+                std::fprintf(stderr,
+                    "[Fillet] rebindEdges + anchors failed (R=%.2f, %zu edges) — "
+                    "selected edge isn't in the current body's edge map.\n",
+                    m_radius, m_edges.size());
+                return false;
+            }
         }
+
+        // Capture generative anchors from the (now-valid) edges the first time
+        // we run — so a later dimension edit can re-find them by sketch feature.
+        if (m_edgeAnchors.empty()) computeAnchors(doc);
 
         // Create fillet on the body shape
         BRepFilletAPI_MakeFillet fillet(m_previousShape);
@@ -261,6 +328,9 @@ std::string FilletOp::serializeParams() const {
                                                    TopAbs_FACE);
         if (!idx.empty()) blob += ";gen=" + idx;
     }
+    // Generative anchors (additive; old readers ignore the key). See EdgeAnchor.
+    std::string anc = EdgeAnchor::serialize(m_edgeAnchors);
+    if (!anc.empty()) blob += ";anchor=" + anc;
     return blob;
 }
 
@@ -280,6 +350,10 @@ bool FilletOp::deserializeParams(const std::string& blob) {
         else if (key == "body")   { m_bodyId = std::atoi(val.c_str()); any = true; }
         else if (key == "edges")  { m_edgeIndices = SubShapeIndex::parse(val); any = true; }
         else if (key == "gen")    { m_genFaceIndices = SubShapeIndex::parse(val); any = true; }
+        else if (key == "anchor") {
+            EdgeAnchor::parse(val, m_edgeAnchors);
+            any = true;
+        }
         pos = end + 1;
     }
     return any;

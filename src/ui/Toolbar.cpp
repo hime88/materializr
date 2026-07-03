@@ -512,6 +512,19 @@ ToolAction Toolbar::renderBodyTools(bool includePluginButtons) {
         renderPluginButtons(mask);
     }
 
+    // Fabrication: flatten the selected body into a 2D pattern (laser / CNC /
+    // cut-out templates). Shown for a single selected body.
+    if (m_selection && m_selection->selectedBodyCount() == 1) {
+        ImGui::Spacing();
+        ImGui::TextColored(materializr::accentText(), "Fabrication");
+        ImGui::Separator();
+        if (ImGui::Button("Unfold / Flatten", ImVec2(-1, bh(30))))
+            action = ToolAction::Unfold;
+        tip("Lay the body flat into a 2D pattern (cut + fold lines) for a laser "
+            "cutter, CNC, or printed template. Mark it as foam board / sheet "
+            "metal / wood to set how folds are processed.");
+    }
+
     return action;
 }
 
@@ -560,6 +573,12 @@ ToolAction Toolbar::renderFaceTools() {
     tip("Cut a helical screw thread into the picked cylindrical face — "
         "external on a boss, internal in a hole. Pitch / depth / handedness "
         "in the popup.");
+
+    if (ImGui::Button("Unfold Faces", ImVec2(-1, bh(30))))
+        action = ToolAction::Unfold;
+    tip("Flatten the SELECTED faces into a 2D pattern (cut + fold lines) for a "
+        "laser/CNC/printed template. Pick the faces of one panel (e.g. a skin) "
+        "— unfolding a whole closed body rarely makes sense.");
 
     // "Edit Fillet / Chamfer" appears only when the picked face was actually
     // produced by a fillet or chamfer op. We ask each Operation via

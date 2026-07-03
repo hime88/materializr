@@ -19,11 +19,19 @@ public:
 
     // Blocks for the duration of the HTTPS request (typically <1s). Designed
     // to be called in response to a user clicking "Check for Updates".
+    //
+    // includePrereleases == false (default): queries /releases/latest, which
+    // GitHub defines to EXCLUDE pre-releases — the stable channel.
+    // includePrereleases == true: queries /releases (the full list, newest
+    // first) and takes the most recent entry, so beta tags like
+    // "v1.3.0-beta.1" are offered — the beta channel.
     static Result check(const std::string& githubOwner,
-                        const std::string& githubRepo);
+                        const std::string& githubRepo,
+                        bool includePrereleases = false);
 
     // Returns -1 if a < b, 0 if equal, +1 if a > b. Both inputs may carry a
-    // leading "v". Non-numeric components are ignored.
+    // leading "v". Understands semver pre-release suffixes: "1.3.0-beta.1" is
+    // OLDER than "1.3.0", and "1.3.0-beta.1" < "1.3.0-beta.2".
     static int compareVersions(const std::string& a, const std::string& b);
 };
 

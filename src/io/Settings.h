@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform_defs.h"
 #include <string>
 #include <vector>
 
@@ -12,12 +13,12 @@ struct AppSettings {
     // Touch mode: large UI + touch-gesture interaction. Defaults on for Android,
     // off elsewhere; a saved setting so a tablet with a mouse/keyboard can run
     // the desktop model. Drives materializr::setTouchMode() at startup.
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     bool touchMode          = true;
 #else
     bool touchMode          = false;
 #endif
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     // Touch-first default: trackpad mode (one-finger drag = orbit, two-finger
     // pan/zoom). Just the first-run default — the Settings dialog can rebind to
     // Middle/Right for an attached mouse or trackpad, and the choice persists.
@@ -94,6 +95,10 @@ struct AppSettings {
     // available" dialog if the running build is older. Off in --safe-mode
     // (no surprise network calls when the user is recovering from a crash).
     bool  checkForUpdatesOnLaunch = true;
+    // Opt in to the beta channel: the update check also considers GitHub
+    // pre-releases (tags like 1.3.0-beta.1) instead of only final releases.
+    // Off by default so stable users are never offered test builds.
+    bool  includePrereleases      = false;
 
     // --- Snap / grid (persisted) ---
     // Snap-to-grid toggle and step (mm) shared by the sketch grid and the
@@ -116,6 +121,15 @@ struct AppSettings {
     // Line angle-snap increment in degrees (0 = off). The line tool snaps its
     // direction to multiples of this from the segment anchor. Default 15.
     int  angleSnapDeg = 15;
+
+    // --- STL import ---
+    // Default fidelity for STL import, 0..1 (coarse/fast .. faithful/slow). Pre-
+    // fills the import dialog's accuracy slider. See StlIO::import.
+    float stlImportAccuracy = 0.5f;
+    // Whether imported mesh (STL) bodies draw their facet wireframe. Off gives a
+    // clean shaded body to sketch on; the merged flat-region edges are still
+    // useful, so it defaults on and the import dialog/Settings can disable it.
+    bool  meshShowWireframe  = true;
 };
 
 // Reads/writes AppSettings as a simple `key = value` text file. The reader is

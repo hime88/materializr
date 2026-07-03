@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -91,9 +92,12 @@ inline void resetFpuForOcct() {
 #include "io/SketchRecovery.h"
 #include "io/ProjectRecovery.h"
 #include "io/Settings.h"
-#include "android_files.h" // androidLastDocUri/Name + androidOpenUri (Open Recent on SAF)
+#include "mobile_files.h" // mobileLastDocUri/Name + mobileOpenUri (Open Recent via persisted refs)
+#include "ios_platform.h" // iosInBackground (inline false off-iOS)
 #include "core/EventBus.h"
 #include "core/Events.h"
+#include "core/Verbose.h"
+#include "core/NumParse.h"
 #include "plugin/PluginContext.h"
 #include "plugin/PluginRegistry.h"
 
@@ -120,12 +124,20 @@ namespace materializr { namespace force_link { void linkAll(); } }
 #include <cstring>
 #include <gp_Cylinder.hxx>
 #include <gp_Pln.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Poly_Triangle.hxx>
+#include <TopLoc_Location.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopTools_MapOfShape.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <gp_GTrsf.hxx>
@@ -410,6 +422,19 @@ static const char* computeImguiIniPath() {
     std::error_code ec;
     std::filesystem::create_directories(base, ec);
     s_imguiIniPath = base + "\\imgui.ini";
+#elif defined(MZ_IOS)
+    // cwd is the read-only .app bundle (iosInitRuntime chdirs there for the
+    // asset lookups) — a relative path would silently never save the layout.
+    // Anchor next to the settings ($HOME -> <container>/Library, see
+    // ios_platform.mm).
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        std::string base = std::string(home) + "/.config/materializr";
+        std::error_code ec;
+        std::filesystem::create_directories(base, ec);
+        s_imguiIniPath = base + "/imgui.ini";
+    } else {
+        s_imguiIniPath = "imgui.ini";
+    }
 #else
     s_imguiIniPath = "imgui.ini";
 #endif
@@ -536,6 +561,13 @@ void Application::initImGui() {
         // overlapping widgets fight for the touch.)
         style.DockingSeparatorSize = 12.0f;
         style.TouchExtraPadding = ImVec2(8.0f, 8.0f);
+        // By default ImGui lets a window be dragged from any empty spot in its
+        // body, not just the title bar. On a touchscreen that means a natural
+        // drag-to-scroll over a panel's empty space sets g.MovingWindow and the
+        // whole window slides around instead of scrolling (very visible in
+        // Settings). Restrict moves to the title bar so body drags fall through
+        // to the drag-to-scroll latch in Window.cpp.
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
     }
 
     // Swap ImGui's default ProggyClean for JetBrains Mono — slashed zero,
@@ -553,7 +585,7 @@ void Application::initImGui() {
     }
 
     ImGui_ImplSDL2_InitForOpenGL(m_window->handle(), m_window->glContext());
-#if defined(__ANDROID__)
+#if defined(MZ_GLES)
     ImGui_ImplOpenGL3_Init("#version 300 es");
 #else
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -765,6 +797,28 @@ void Application::beginFrame() {
         }
     }
     ImGui::NewFrame();
+#if defined(MZ_IOS)
+    // Shrink the root work rect by the device safe areas (status bar, rounded
+    // corners, home indicator) so the menu bar / dockspace / status bar all
+    // clear the system UI. WorkOffset* are re-derived inside NewFrame every
+    // frame, so this must re-apply here, before any window is positioned.
+    {
+        float t = 0, l = 0, b = 0, r = 0;
+        materializr::iosSafeAreaInsets(t, l, b, r);
+        if (t > 0 || l > 0 || b > 0 || r > 0) {
+            // Claim the safe areas from the BUILD inset accumulator, the same
+            // way BeginViewportSideBar claims the menu bar's strip: the main
+            // menu bar positions itself from GetBuildWorkRect() this frame,
+            // and WorkPos/WorkSize (dockspace, status bar) pick it up next
+            // frame — ImGui's normal one-frame work-rect latency.
+            ImGuiViewportP* vp = static_cast<ImGuiViewportP*>(ImGui::GetMainViewport());
+            vp->BuildWorkInsetMin.x += l;
+            vp->BuildWorkInsetMin.y += t;
+            vp->BuildWorkInsetMax.x += r;  // insets are positive on all four sides
+            vp->BuildWorkInsetMax.y += b;
+        }
+    }
+#endif
 }
 
 void Application::endFrame() {
@@ -1332,9 +1386,9 @@ void Application::loadAppSettings() {
         // Run on a worker thread — the synchronous version blocked startup for
         // up to its 10 s network timeout ("not responding"). The main loop
         // polls m_updateCheckFuture each frame and pops the popup when it's in.
-        m_updateCheckFuture = std::async(std::launch::async, []() {
+        m_updateCheckFuture = std::async(std::launch::async, [pre = m_includePrereleases]() {
             auto t0 = std::chrono::steady_clock::now();
-            auto r = UpdateChecker::check("materializr-cad", "materializr");
+            auto r = UpdateChecker::check("materializr-cad", "materializr", pre);
             auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             std::fprintf(stderr, "[update-check] %lld ms (ok=%d)\n",
@@ -1405,6 +1459,7 @@ AppSettings Application::currentSettings() const {
     s.lastProjectPath = m_currentProjectPath; // empty after closeProject()
     s.lastFileDir = materializr::FileDialogs::getLastDir();
     s.checkForUpdatesOnLaunch = m_checkForUpdatesOnLaunch;
+    s.includePrereleases = m_includePrereleases;
     s.snapToGrid = m_snapToGrid;
     s.sketchGridStep = m_sketchGridStep;
     // Mirror the live sketch-tool inference level back into the saved settings
@@ -1413,6 +1468,8 @@ AppSettings Application::currentSettings() const {
         ? static_cast<int>(m_sketchTool->getInferenceLevel()) : 0;
     s.showInferenceToolbarToggle = m_showInferenceToolbarToggle;
     s.angleSnapDeg = m_sketchTool ? m_sketchTool->getAngleSnapDeg() : 15;
+    s.stlImportAccuracy = m_stlImportAccuracy;
+    s.meshShowWireframe = m_meshShowWireframe;
     return s;
 }
 
@@ -1470,9 +1527,12 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_autoOpenLastProject = s.autoOpenLastProject;
     m_recentProjects = s.recentProjects;
     m_checkForUpdatesOnLaunch = s.checkForUpdatesOnLaunch;
+    m_includePrereleases = s.includePrereleases;
     m_snapToGrid = s.snapToGrid;
     m_sketchGridStep = s.sketchGridStep;
     m_showInferenceToolbarToggle = s.showInferenceToolbarToggle;
+    m_stlImportAccuracy = s.stlImportAccuracy;
+    m_meshShowWireframe = s.meshShowWireframe;
     materializr::FileDialogs::setLastDir(s.lastFileDir);
     if (m_sketchTool) {
         using IL = SketchTool::InferenceLevel;
@@ -1817,8 +1877,16 @@ void Application::handleToolAction(int action) {
         // --- Sketch element transforms (operate on the Select-mode selection) ---
         // Rotate is handled by the sketch gizmo's ring handle (see Application_
         // Viewport.cpp), not as a toolbar action.
-        case ToolAction::SketchCopy:
         case ToolAction::SketchMirror: {
+            // Interactive mirror: arm a draggable/rotatable mirror line with a
+            // live preview; the dialog's "Mirror" button commits (see
+            // Application_Dialogs.cpp + Application_Viewport.cpp).
+            if (!m_inSketchMode || !m_activeSketch || !m_sketchTool) break;
+            if (!m_sketchTool->beginMirror())
+                std::fprintf(stdout, "Mirror: nothing to mirror\n");
+            break;
+        }
+        case ToolAction::SketchCopy: {
             if (!m_inSketchMode || !m_activeSketch || !m_sketchTool) break;
 
             // Operate on the current sketch-element selection, or — if nothing
@@ -1845,34 +1913,20 @@ void Application::handleToolAction(int action) {
                 for (const auto& l : m_activeSketch->getLines())  selLines.insert(l.id);
             }
             if (involved.empty()) break;
-            // Centroid of the involved points — used as the mirror/rotate pivot
-            // so the transform happens "in place" near the selection rather than
-            // about the sketch origin.
-            glm::vec2 c{0.0f};
-            int n = 0;
-            for (int id : involved) {
-                if (auto* p = m_activeSketch->getPoint(id)) { c += p->pos; ++n; }
-            }
-            if (n > 0) c /= static_cast<float>(n);
 
-            // Copy / Mirror: create new points (transformed copies) and new
-            // lines connecting them, then SELECT the new ones and switch to
-            // Select mode so the user can immediately drag them to position.
+            // Copy: duplicate the points + lines, OFFSET by a couple grid steps
+            // so the copy is visibly distinct from the original (landing them
+            // exactly on top read as "nothing happened"), then SELECT the copies
+            // and switch to Select mode so the move gizmo arms over them.
+            float gstep = m_sketchTool->getGridStep();
+            float off = (gstep > 0.0f) ? gstep * 2.0f : 5.0f;
+            glm::vec2 copyOffset(off, off);
             auto before = std::make_shared<Sketch>(*m_activeSketch);
             std::unordered_map<int, int> remap;
             for (int oldId : involved) {
                 auto* p = m_activeSketch->getPoint(oldId);
                 if (!p) continue;
-                glm::vec2 np = p->pos;
-                if (a == ToolAction::SketchCopy) {
-                    // Land the duplicate exactly on the original; the user can
-                    // immediately drag the now-selected copy to place it.
-                    np = p->pos;
-                } else { // Mirror across vertical line through centroid (flips X).
-                    np = glm::vec2(2.0f * c.x - p->pos.x, p->pos.y);
-                }
-                int newId = m_activeSketch->addPoint(np);
-                remap[oldId] = newId;
+                remap[oldId] = m_activeSketch->addPoint(p->pos + copyOffset);
             }
             std::set<int> newLineIds;
             for (int lid : selLines) {
@@ -1887,11 +1941,14 @@ void Application::handleToolAction(int action) {
                     break;
                 }
             }
-            // Record + select the duplicates.
+            // Record + select the duplicates. setMode FIRST, then select, so the
+            // mode switch can't clear the selection — that leaves the copies
+            // selected in Select mode, which auto-shows the move gizmo over them
+            // so the user can drag them straight off the originals.
             std::set<int> newPointIds;
             for (auto& kv : remap) newPointIds.insert(kv.second);
-            m_sketchTool->setSelection(newPointIds, newLineIds);
             m_sketchTool->setMode(SketchToolMode::Select);
+            m_sketchTool->setSelection(newPointIds, newLineIds);
 
             auto after = std::make_shared<Sketch>(*m_activeSketch);
             if (before->getPoints().size() != after->getPoints().size() ||
@@ -2111,6 +2168,11 @@ void Application::handleToolAction(int action) {
 
         case ToolAction::RemoveFace: {
             beginIop(m_defeatureCtl);
+            break;
+        }
+
+        case ToolAction::Unfold: {
+            beginUnfoldDialog();
             break;
         }
 
@@ -2429,20 +2491,33 @@ void Application::handleShortcuts() {
         } else if (m_mirrorPickFace) {
             m_mirrorPickFace = false; // cancel "mirror across a face" mode
         } else if (m_gizmoDragging) {
-            // Revert the body to where the drag started — same idea as cancelling
-            // any other in-progress operation. Also cancel the gizmo's own drag
-            // state so it doesn't keep dragging once the mouse moves again.
+            // Cancel the drag. The live preview is GPU-only (model matrices on
+            // the mesh slots — the document never moved), so reverting the
+            // bodies is just resetting the matrices: no doc write, no remesh.
+            // Sketch planes / construction planes / axes WERE live-written
+            // during the drag, so restore those from their captured
+            // before-poses (the old cancel missed them — and missed every
+            // body but the primary in a multi-drag).
+            gizmoPreviewReset();
             try {
-                if (m_gizmoDragBodyId >= 0 && !m_gizmoDragOriginalShape.IsNull()) {
-                    m_document->updateBody(m_gizmoDragBodyId, m_gizmoDragOriginalShape);
+                for (auto& [sid, plnBefore] : m_sketchGizmoDragSketches) {
+                    auto sk = m_document->getSketch(sid);
+                    if (sk) sk->setPlane(plnBefore);
                 }
+                for (auto& [pid, plnBefore] : m_planeGizmoDrag)
+                    m_document->setPlane(pid, plnBefore);
+                for (auto& a : m_axisGizmoDrag)
+                    m_document->setAxis(a.id, a.origin, a.direction);
             } catch (...) {}
             m_gizmo->cancelDrag();
             m_gizmoDragging = false;
             m_gizmoDragOriginalShape.Nullify();
             m_gizmoDragBodyId = -1;
             m_gizmoTotalDelta = glm::vec3(0.0f);
-            m_meshesDirty = true;
+            m_gizmoDragOriginals.clear();
+            m_sketchGizmoDragSketches.clear();
+            m_planeGizmoDrag.clear();
+            m_axisGizmoDrag.clear();
         } else if (m_pushPullActive) {
             cancelPushPull();
         } else if (anyIopActive()) {
@@ -2474,17 +2549,17 @@ void Application::handleShortcuts() {
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) && m_edgeOpActive) {
-        m_edgeOpValue = static_cast<float>(std::atof(m_edgeOpInputBuf));
+        (void)materializr::parseFinite(m_edgeOpInputBuf, m_edgeOpValue);
         updateInteractiveEdgeOp();
         commitInteractiveEdgeOp();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) && m_extruding) {
-        m_extrudeDistance = static_cast<float>(std::atof(m_extrudeInputBuf));
+        (void)materializr::parseFinite(m_extrudeInputBuf, m_extrudeDistance);
         updateInteractiveExtrude();
         commitInteractiveExtrude();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) && m_pushPullActive) {
-        m_pushPullDistance = static_cast<float>(std::atof(m_pushPullInputBuf));
+        (void)materializr::parseFinite(m_pushPullInputBuf, m_pushPullDistance);
         updatePushPull();
         commitPushPull();
     }
@@ -2617,7 +2692,12 @@ void Application::rebuildMeshes() {
                     m_shapeRenderer->setSubtractPreview(idx, true);
                 }
             }
-            m_edgeRenderer->setBodyEdges(id, shape, deflection);
+            // Imported meshes have a facet edge per triangle; only draw that
+            // wireframe when the user wants it (clean shaded body otherwise).
+            if (m_document->isBodyMesh(id) && !m_meshShowWireframe)
+                m_edgeRenderer->removeBody(id);
+            else
+                m_edgeRenderer->setBodyEdges(id, shape, deflection);
         }
         m_dirtyBodyIds.clear();
         return;
@@ -2651,7 +2731,11 @@ void Application::rebuildMeshes() {
                 m_shapeRenderer->setSubtractPreview(idx, true);
             }
         }
-        m_edgeRenderer->setBodyEdges(id, shape, deflection);
+        // See note above: skip the facet wireframe for imported meshes unless on.
+        if (m_document->isBodyMesh(id) && !m_meshShowWireframe)
+            m_edgeRenderer->removeBody(id);
+        else
+            m_edgeRenderer->setBodyEdges(id, shape, deflection);
     }
 }
 
@@ -2704,6 +2788,16 @@ void Application::handleViewCubeAction(int action) {
         cmin = glm::vec3(static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(z0));
         cmax = glm::vec3(static_cast<float>(x1), static_cast<float>(y1), static_cast<float>(z1));
     }
+    // An in-progress sketch isn't in the Document yet, so the body loop above
+    // can't see it. Frame it too — otherwise a ViewCube click during the very
+    // first sketch snaps to the tiny default cube instead of the drawing.
+    if (m_activeSketch) {
+        glm::vec3 smin, smax;
+        if (m_activeSketch->getWorldBounds(smin, smax)) {
+            if (bbox.IsVoid()) { cmin = smin; cmax = smax; }
+            else { cmin = glm::min(cmin, smin); cmax = glm::max(cmax, smax); }
+        }
+    }
     glm::vec3 center = (cmin + cmax) * 0.5f;
     float radius = glm::length(cmax - cmin) * 0.5f;
     if (radius < 1.0f) radius = 1.0f;
@@ -2741,6 +2835,21 @@ void Application::handleViewCubeAction(int action) {
         case ViewCubeAction::FrontBottomLeft:  dir = {-1,-1, 1}; break;
         case ViewCubeAction::BackBottomRight:  dir = { 1,-1,-1}; break;
         case ViewCubeAction::BackBottomLeft:   dir = {-1,-1,-1}; break;
+        // Edge (two-face) views: look down the seam of two faces (one zero
+        // component) so both are visible. up stays world +Y — never parallel to
+        // an edge dir since each has a non-zero horizontal component.
+        case ViewCubeAction::TopFront:     dir = { 0, 1, 1}; break;
+        case ViewCubeAction::TopBack:      dir = { 0, 1,-1}; break;
+        case ViewCubeAction::TopLeft:      dir = {-1, 1, 0}; break;
+        case ViewCubeAction::TopRight:     dir = { 1, 1, 0}; break;
+        case ViewCubeAction::BottomFront:  dir = { 0,-1, 1}; break;
+        case ViewCubeAction::BottomBack:   dir = { 0,-1,-1}; break;
+        case ViewCubeAction::BottomLeft:   dir = {-1,-1, 0}; break;
+        case ViewCubeAction::BottomRight:  dir = { 1,-1, 0}; break;
+        case ViewCubeAction::FrontLeft:    dir = {-1, 0, 1}; break;
+        case ViewCubeAction::FrontRight:   dir = { 1, 0, 1}; break;
+        case ViewCubeAction::BackLeft:     dir = {-1, 0,-1}; break;
+        case ViewCubeAction::BackRight:    dir = { 1, 0,-1}; break;
         default: return;
     }
     dir = glm::normalize(dir);
@@ -2758,7 +2867,7 @@ void Application::saveProject() {
         [this](const std::string& chosenPath) {
             if (chosenPath.empty()) return;
             std::string path = chosenPath;
-#if !defined(__ANDROID__)
+#if !defined(MZ_MOBILE)
             // Keep the .materializr extension. The project file is gzip-
             // compressed, so without the extension the OS shows it as a generic
             // "compressed archive" and the open filter can't find it. (On
@@ -2775,9 +2884,9 @@ void Application::saveProject() {
                 // Save As also lands in Open Recent (persistable ref on Android).
                 {
                     std::string ref, name;
-#if defined(__ANDROID__)
-                    ref  = materializr::androidLastDocUri();
-                    name = materializr::androidLastDocName();
+#if defined(MZ_MOBILE)
+                    ref  = materializr::mobileLastDocUri();
+                    name = materializr::mobileLastDocName();
                     if (ref.empty()) ref = path;
 #else
                     ref = path;
@@ -2807,11 +2916,10 @@ void Application::saveProject() {
 }
 
 void Application::saveProjectQuick() {
-    // Saving mid-preview would persist the preview body and its phantom
-    // history step into the file (and the half-applied state crashed at
-    // least once). An explicit save expresses "keep what's committed" —
-    // cancel live previews first.
-    cancelAllInteractivePreviews();
+    // An explicit save expresses "keep what's committed" — captureProjectHistory
+    // cancels any live preview first, so a mid-preview save can't persist the
+    // preview body and its phantom history step. (Historically that leaked and
+    // crashed at least once.)
     if (m_currentProjectPath.empty()) {
         saveProject();
         return;
@@ -2841,7 +2949,16 @@ void Application::saveProjectQuick() {
     m_closeAfterSave = false;
 }
 
-ProjectHistory Application::captureProjectHistory() {
+ProjectHistory Application::captureProjectHistory(bool cancelPreviews) {
+    // A live preview writes the previewed geometry straight into the document
+    // body every frame. Since we seed the snapshot from the current body
+    // (below), an uncommitted preview would leak into the last committed step's
+    // snapshot — the shell-preview-not-cancelled leak that produced a hollow,
+    // un-re-shellable body with no shell op in the history. Cancel first so the
+    // capture reflects only committed operations. (Recovery opts out to avoid
+    // reverting the user's in-progress drag on a background autosave tick.)
+    if (cancelPreviews) cancelAllInteractivePreviews();
+
     ProjectHistory h;
     int n = m_history->currentStep() + 1; // number of applied steps
     if (n <= 0) return h;                  // nothing to persist
@@ -3005,19 +3122,24 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist,
             if (candidate && candidate->deserializeParams(params) &&
                 candidate->rehydrateFromReload(reload, *m_document)) {
                 op = std::move(candidate);
-                std::fprintf(stderr, "[Reload] step '%s' (%s): rehydrated as "
-                                     "real op (created=%zu modified=%zu)\n",
-                             st.name.c_str(), st.typeId.c_str(),
-                             reload.created.size(), reload.modifiedBefore.size());
+                // Per-step reload tracing is --verbose only (fires once per
+                // history step on every project load); the one-line [Reload]
+                // health summary below stays always-on for bug reports.
+                if (materializr::isVerbose())
+                    std::fprintf(stderr, "[Reload] step '%s' (%s): rehydrated as "
+                                         "real op (created=%zu modified=%zu)\n",
+                                 st.name.c_str(), st.typeId.c_str(),
+                                 reload.created.size(), reload.modifiedBefore.size());
             }
         }
         if (!op) {
             const bool affectsBody = !st.changed.empty() || !st.deleted.empty();
             if (affectsBody) ++bakedBodySteps; else ++bakedSketchSteps;
-            std::fprintf(stderr, "[Reload] step '%s' (%s): baked ReplayOp "
-                                 "(params=%s, affectsBody=%d)\n",
-                         st.name.c_str(), st.typeId.c_str(),
-                         st.params.empty() ? "none" : "present", (int)affectsBody);
+            if (materializr::isVerbose())
+                std::fprintf(stderr, "[Reload] step '%s' (%s): baked ReplayOp "
+                                     "(params=%s, affectsBody=%d)\n",
+                             st.name.c_str(), st.typeId.c_str(),
+                             st.params.empty() ? "none" : "present", (int)affectsBody);
             op = std::make_unique<ReplayOp>(
                 st.typeId, st.name, st.description,
                 std::move(before), std::move(after));
@@ -3046,6 +3168,29 @@ void Application::rebuildHistoryFromProject(const ProjectHistory& hist,
     // generated-face indices against the final body so ownsFace() matches the
     // face positions the user actually sees and can click.
     refreshAllEdgeOpFaces();
+
+    // Retrofit generative anchors onto fillets/chamfers loaded from a project
+    // that predates the feature (their saved params carry no anchor= key). Do
+    // it now, while their edges are still valid against the loaded body — the
+    // user's next sketch edit would otherwise break the rebind before anchors
+    // could ever be captured. Source sketch is derived from the body links.
+    if (m_history) {
+        auto links = sketchBodyLinks();
+        for (int i = 0; i < m_history->stepCount(); ++i) {
+            Operation* op = const_cast<Operation*>(m_history->getStep(i));
+            if (auto* f = dynamic_cast<FilletOp*>(op)) {
+                if (f->getSourceSketch() < 0)
+                    for (const auto& [sid, bodies] : links)
+                        if (bodies.count(f->getBodyId())) { f->setSourceSketch(sid); break; }
+                f->ensureAnchors(*m_document);
+            } else if (auto* c = dynamic_cast<ChamferOp*>(op)) {
+                if (c->getSourceSketch() < 0)
+                    for (const auto& [sid, bodies] : links)
+                        if (bodies.count(c->getBodyId())) { c->setSourceSketch(sid); break; }
+                c->ensureAnchors(*m_document);
+            }
+        }
+    }
 
     // Health report. Two sources of non-editable geometry:
     //  • baked body-affecting STEPS (an op that didn't round-trip), and
@@ -3092,6 +3237,11 @@ void Application::ensureSketchSourceFace(int sketchId) {
     auto sk = m_document->getSketch(sketchId);
     if (!sk) return;
     if (!sk->getSourceFace().IsNull()) return; // already set; nothing to do
+    // A detached sketch is independent of its former host: don't rebind its
+    // face (the geometric match below would fail anyway once moved, but a
+    // detached-in-place sketch could still match and inherit the host's
+    // hole wires into its regions).
+    if (sk->isDetachedFromBody()) return;
     int bid = sk->getSourceBody();
     if (bid < 0) return;
     TopoDS_Shape body;
@@ -3149,6 +3299,14 @@ bool Application::loadProjectAt(const std::string& path) {
     m_document->clear();
     m_history->clear();
     m_selection->clear();
+    // Every cached highlight tessellation belongs to the outgoing project's
+    // shapes — drop them (the entries pin their TShapes alive; see
+    // SelectionHighlight::clearCaches).
+    if (m_selectionHighlight) m_selectionHighlight->clearCaches();
+    // Same for the static-sketch GPU buffers (keyed on the outgoing
+    // project's sketch pointers; signature validation makes staleness
+    // harmless, but the GPU memory belongs to dead sketches).
+    if (m_sketchRenderer) m_sketchRenderer->clearCache();
     ProjectHistory hist;
     auto result = ProjectIO::load(path, *m_document, &hist);
     if (!result.success) {
@@ -3254,9 +3412,9 @@ void Application::openRecentProject(const AppSettings::RecentProject& r) {
     const std::string ref  = r.ref;
     const std::string name = r.name;
     guardedOpen([this, ref, name]() {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
         // ref is a persisted SAF content:// URI — resolve to a temp file, no picker.
-        std::string tmp = materializr::androidOpenUri(ref);
+        std::string tmp = materializr::mobileOpenUri(ref);
         if (tmp.empty()) {
             showToast("Couldn't open \"" + name + "\" - access may have been revoked.");
             removeRecentProject(ref);
@@ -3287,9 +3445,9 @@ void Application::loadProject() {
                 // Android (the `path` is a throwaway temp there), the real path
                 // on desktop.
                 std::string ref, name;
-#if defined(__ANDROID__)
-                ref  = materializr::androidLastDocUri();
-                name = materializr::androidLastDocName();
+#if defined(MZ_MOBILE)
+                ref  = materializr::mobileLastDocUri();
+                name = materializr::mobileLastDocName();
                 if (ref.empty()) ref = path; // fallback (non-persistable provider)
 #else
                 ref = path;
@@ -3456,10 +3614,10 @@ void Application::exportBodyAsStl(int bodyId) {
         return;
     }
 
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     // Touch: offer Share (to Drive/email/3D apps) or Save-to-device. Both context
     // menus (viewport long-press + Items panel) route here.
-    FileDialogs::androidExportShareOrSave(defaultFile, "application/octet-stream",
+    FileDialogs::mobileExportShareOrSave(defaultFile, "application/octet-stream",
         [shape](const std::string& path) {
             auto result = StlExport::exportShape(path, shape);
             if (result.success)
@@ -3508,8 +3666,8 @@ void Application::exportSketchAsSvg(int sketchId) {
     // Capture the shared_ptr so the (async) dialog callback can't dangle.
     auto sk = sketch;
 
-#if defined(__ANDROID__)
-    FileDialogs::androidExportShareOrSave(defaultFile, "image/svg+xml",
+#if defined(MZ_MOBILE)
+    FileDialogs::mobileExportShareOrSave(defaultFile, "image/svg+xml",
         [sk](const std::string& path) {
             auto result = materializr::SvgExport::exportSketch(path, *sk);
             if (result.success)
@@ -3689,6 +3847,43 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
         }
     }
 
+    // For an imported MESH face, the recovered plane is an arbitrary seed
+    // triangle's plane (UnifySameDomain keeps a seed, it doesn't best-fit), which
+    // at low import accuracy can be visibly tilted from the flat you picked. Best-
+    // fit the plane to the face's actual triangulation — an area-weighted normal +
+    // centroid — so the sketch lands on the region's true average plane. This is
+    // what makes "sketch on a flat-ish face" reliable regardless of import accuracy.
+    if (sourceBodyId >= 0 && m_document && m_document->isBodyMesh(sourceBodyId)) {
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull()) {
+            BRepMesh_IncrementalMesh mesher(face, 0.1);
+            mesher.Perform();
+            tri = BRep_Tool::Triangulation(face, loc);
+        }
+        if (!tri.IsNull() && tri->NbTriangles() > 0) {
+            const gp_Trsf& trsf = loc.Transformation();
+            const bool hasX = !loc.IsIdentity();
+            gp_Vec nSum(0.0, 0.0, 0.0);
+            gp_XYZ cSum(0.0, 0.0, 0.0);
+            double aSum = 0.0;
+            for (int i = 1; i <= tri->NbTriangles(); ++i) {
+                int a, b, c;
+                tri->Triangle(i).Get(a, b, c);
+                gp_Pnt p1 = tri->Node(a), p2 = tri->Node(b), p3 = tri->Node(c);
+                if (hasX) { p1.Transform(trsf); p2.Transform(trsf); p3.Transform(trsf); }
+                const gp_Vec cross = gp_Vec(p1, p2).Crossed(gp_Vec(p1, p3)); // 2·area·n̂
+                const double area = cross.Magnitude();
+                nSum += cross;
+                cSum += (p1.XYZ() + p2.XYZ() + p3.XYZ()) * (area / 3.0);
+                aSum += area;
+            }
+            if (nSum.Magnitude() > 1e-12 && aSum > 1e-12) {
+                pln = gp_Pln(gp_Pnt(cSum / aSum), gp_Dir(nSum));
+            }
+        }
+    }
+
     // Align the sketch plane's X axis to the face's LONGEST straight edge so the
     // grid runs parallel to the face. The plane recovered from the surface uses
     // the surface's intrinsic parametric X, which for a lofted face (e.g. a
@@ -3799,6 +3994,7 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
             gp_Pnt O = ax3.Location();
             gp_Dir Xd = ax3.XDirection();
             gp_Dir Yd = ax3.YDirection();
+            gp_Dir Nd = ax3.Direction();
             auto project = [&](const gp_Pnt& p) -> glm::vec2 {
                 double dx = p.X() - O.X();
                 double dy = p.Y() - O.Y();
@@ -3807,73 +4003,170 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
                 double v = dx * Yd.X() + dy * Yd.Y() + dz * Yd.Z();
                 return glm::vec2(static_cast<float>(u), static_cast<float>(v));
             };
+            // Signed distance of a 3D point from the sketch plane (along normal).
+            auto planeDist = [&](const gp_Pnt& p) -> double {
+                return (p.X() - O.X()) * Nd.X() + (p.Y() - O.Y()) * Nd.Y() +
+                       (p.Z() - O.Z()) * Nd.Z();
+            };
             auto dedup = [](std::vector<glm::vec2>& v, glm::vec2 p) {
                 for (const auto& q : v) {
                     if (glm::length(q - p) < 1e-4f) return;
                 }
                 v.push_back(p);
             };
+            auto dedupLine = [](std::vector<std::pair<glm::vec2, glm::vec2>>& v,
+                                glm::vec2 a, glm::vec2 b) {
+                for (const auto& q : v) {
+                    if ((glm::length(q.first - a) < 1e-4f && glm::length(q.second - b) < 1e-4f) ||
+                        (glm::length(q.first - b) < 1e-4f && glm::length(q.second - a) < 1e-4f))
+                        return;
+                }
+                v.emplace_back(a, b);
+            };
+            auto dedupCircle = [](std::vector<Sketch::FaceReference::Circle>& v,
+                                  const Sketch::FaceReference::Circle& c) {
+                for (const auto& q : v) {
+                    if (glm::length(q.center - c.center) < 1e-4f &&
+                        std::abs(q.radius - c.radius) < 1e-4f)
+                        return;
+                }
+                v.push_back(c);
+            };
 
-            // Vertices — the face's corner points.
-            for (TopExp_Explorer ex(face, TopAbs_VERTEX); ex.More(); ex.Next()) {
-                gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(ex.Current()));
-                dedup(refs.points, project(p));
-            }
-            // Edges — for straight edges, also stash the endpoint pair as a
-            // reference line (so on-line / midpoint inferences can fire) and
-            // the midpoint as a reference point. Curved edges get their
-            // endpoints (already covered by vertex iteration above).
-            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
-                TopoDS_Edge edge = TopoDS::Edge(ex.Current());
-                BRepAdaptor_Curve curve(edge);
-                double f = curve.FirstParameter();
-                double l = curve.LastParameter();
-                gp_Pnt pStart, pEnd;
-                curve.D0(f, pStart);
-                curve.D0(l, pEnd);
-                glm::vec2 a = project(pStart);
-                glm::vec2 b = project(pEnd);
-                if (curve.GetType() == GeomAbs_Line) {
-                    refs.lines.emplace_back(a, b);
-                    dedup(refs.points, 0.5f * (a + b)); // midpoint
-                } else if (curve.GetType() == GeomAbs_Circle) {
-                    // Circle / arc edge — add the centre as a snap point
-                    // (very common target: hole centres, fillet centres).
-                    // Also sample the perimeter so the cursor can catch the
-                    // curve itself along a few spots until proper curve-
-                    // perimeter snapping ships.
-                    gp_Circ circ = curve.Circle();
-                    dedup(refs.points, project(circ.Location()));
-                    const int samples = 8;
-                    for (int i = 1; i < samples; ++i) {
-                        double t = f + (l - f) * (double(i) / samples);
-                        gp_Pnt p;
-                        curve.D0(t, p);
-                        dedup(refs.points, project(p));
-                    }
-                } else if (curve.GetType() == GeomAbs_Ellipse) {
-                    // Ellipse also has a centre; treat it as a snap target.
-                    gp_Elips el = curve.Ellipse();
-                    dedup(refs.points, project(el.Location()));
-                    const int samples = 8;
-                    for (int i = 1; i < samples; ++i) {
-                        double t = f + (l - f) * (double(i) / samples);
-                        gp_Pnt p;
-                        curve.D0(t, p);
-                        dedup(refs.points, project(p));
-                    }
-                } else {
-                    // Splines / hyperbolas / etc. — just sample perimeter
-                    // points so something snappable exists along the curve.
-                    const int samples = 8;
-                    for (int i = 1; i < samples; ++i) {
-                        double t = f + (l - f) * (double(i) / samples);
-                        gp_Pnt p;
-                        curve.D0(t, p);
-                        dedup(refs.points, project(p));
+            // Project one face's vertices and edges into the sketch plane and
+            // append them to the reference set. Reused for the host face and
+            // each neighbouring face so the cursor can snap to the body's
+            // nearby corners / edges (Fusion-style projected geometry).
+            auto processFace = [&](const TopoDS_Face& f3d) {
+                // Vertices — the face's corner points.
+                for (TopExp_Explorer ex(f3d, TopAbs_VERTEX); ex.More(); ex.Next()) {
+                    gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(ex.Current()));
+                    dedup(refs.points, project(p));
+                }
+                // Edges — straight edges become reference lines (+ midpoint);
+                // in-plane circles become true circle refs for continuous
+                // perimeter snapping; everything else is sampled to points.
+                for (TopExp_Explorer ex(f3d, TopAbs_EDGE); ex.More(); ex.Next()) {
+                    TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                    BRepAdaptor_Curve curve(edge);
+                    double f = curve.FirstParameter();
+                    double l = curve.LastParameter();
+                    gp_Pnt pStart, pEnd;
+                    curve.D0(f, pStart);
+                    curve.D0(l, pEnd);
+                    glm::vec2 a = project(pStart);
+                    glm::vec2 b = project(pEnd);
+                    if (curve.GetType() == GeomAbs_Line) {
+                        dedupLine(refs.lines, a, b);
+                        dedup(refs.points, 0.5f * (a + b)); // midpoint
+                    } else if (curve.GetType() == GeomAbs_Circle) {
+                        gp_Circ circ = curve.Circle();
+                        dedup(refs.points, project(circ.Location()));
+                        // A circle lies *in* the sketch plane when its axis is
+                        // parallel to the plane normal and its centre sits on
+                        // the plane. Only then does it project to a true circle
+                        // we can snap to continuously; otherwise it foreshortens
+                        // to an ellipse, so we fall back to sampled points.
+                        bool inPlane =
+                            std::abs(circ.Axis().Direction().Dot(Nd)) > 0.999 &&
+                            std::abs(planeDist(circ.Location())) < 1e-4;
+                        if (inPlane) {
+                            Sketch::FaceReference::Circle fc;
+                            fc.center = project(circ.Location());
+                            fc.radius = static_cast<float>(circ.Radius());
+                            const float TWO_PI = 2.0f * static_cast<float>(M_PI);
+                            if (std::abs((l - f) - 2.0 * M_PI) < 1e-6) {
+                                fc.startAngle = 0.0f;
+                                fc.sweep = TWO_PI;
+                            } else {
+                                // Build the CCW span (in projected 2D) bounded by
+                                // the edge's start/end and verified to pass
+                                // through its midpoint param.
+                                gp_Pnt pm;
+                                curve.D0(0.5 * (f + l), pm);
+                                glm::vec2 m2 = project(pm);
+                                float a0 = std::atan2(a.y - fc.center.y, a.x - fc.center.x);
+                                float a1 = std::atan2(b.y - fc.center.y, b.x - fc.center.x);
+                                float am = std::atan2(m2.y - fc.center.y, m2.x - fc.center.x);
+                                auto ccw = [&](float from, float to) {
+                                    float d = to - from;
+                                    while (d < 0.0f) d += TWO_PI;
+                                    while (d >= TWO_PI) d -= TWO_PI;
+                                    return d;
+                                };
+                                if (ccw(a0, am) <= ccw(a0, a1)) {
+                                    fc.startAngle = a0;
+                                    fc.sweep = ccw(a0, a1);
+                                } else {
+                                    fc.startAngle = a1;
+                                    fc.sweep = ccw(a1, a0);
+                                }
+                            }
+                            dedupCircle(refs.circles, fc);
+                        } else {
+                            const int samples = 8;
+                            for (int i = 1; i < samples; ++i) {
+                                double t = f + (l - f) * (double(i) / samples);
+                                gp_Pnt p;
+                                curve.D0(t, p);
+                                dedup(refs.points, project(p));
+                            }
+                        }
+                    } else if (curve.GetType() == GeomAbs_Ellipse) {
+                        // Ellipse also has a centre; treat it as a snap target.
+                        gp_Elips el = curve.Ellipse();
+                        dedup(refs.points, project(el.Location()));
+                        const int samples = 8;
+                        for (int i = 1; i < samples; ++i) {
+                            double t = f + (l - f) * (double(i) / samples);
+                            gp_Pnt p;
+                            curve.D0(t, p);
+                            dedup(refs.points, project(p));
+                        }
+                    } else {
+                        // Splines / hyperbolas / etc. — just sample perimeter
+                        // points so something snappable exists along the curve.
+                        const int samples = 8;
+                        for (int i = 1; i < samples; ++i) {
+                            double t = f + (l - f) * (double(i) / samples);
+                            gp_Pnt p;
+                            curve.D0(t, p);
+                            dedup(refs.points, project(p));
+                        }
                     }
                 }
+            };
+
+            // The originating face.
+            processFace(face);
+
+            // Neighbouring faces: any face sharing one of the host face's edges.
+            // Their projected geometry (side-wall edges, bordering faces) becomes
+            // snappable too. One-time walk on sketch entry, so cost is fine.
+            if (sourceBodyId >= 0) {
+                try {
+                    const TopoDS_Shape& body = m_document->getBody(sourceBodyId);
+                    if (!body.IsNull()) {
+                        TopTools_IndexedDataMapOfShapeListOfShape edgeFaceMap;
+                        TopExp::MapShapesAndAncestors(body, TopAbs_EDGE,
+                                                      TopAbs_FACE, edgeFaceMap);
+                        TopTools_MapOfShape seenFaces;
+                        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+                            const TopoDS_Shape& he = ex.Current();
+                            if (!edgeFaceMap.Contains(he)) continue;
+                            // Range-based loop instead of
+                            // TopTools_ListIteratorOfListOfShape — vcpkg OCCT
+                            // drops that standalone iterator header on Windows.
+                            for (const TopoDS_Shape& nf : edgeFaceMap.FindFromKey(he)) {
+                                if (nf.IsSame(face)) continue;
+                                if (!seenFaces.Add(nf)) continue; // already projected
+                                processFace(TopoDS::Face(nf));
+                            }
+                        }
+                    }
+                } catch (...) {}
             }
+
             m_activeSketch->setFaceReferences(std::move(refs));
         }
     }
@@ -4078,12 +4371,28 @@ void Application::recordSketchMutation(const std::function<void()>& mutator) {
     auto signature = [](const Sketch& s) {
         size_t h = 1469598103934665603ull;
         auto mix = [&](size_t v) { h = (h ^ v) * 1099511628211ull; };
+        // Hash point positions and circle/arc radii too (quantised to 1e-4 mm)
+        // so a pure move/resize — a line length, rectangle W×H, or arc sweep
+        // edit that keeps every id and count fixed — still registers as a
+        // mutation and gets its own undoable history step.
+        auto mixPos = [&](glm::vec2 p) {
+            mix(static_cast<size_t>(std::llround(p.x * 1e4)));
+            mix(static_cast<size_t>(std::llround(p.y * 1e4)));
+        };
+        mix(s.getPoints().size());
+        for (const auto& p : s.getPoints()) { mix(static_cast<size_t>(p.id)); mixPos(p.pos); }
         mix(s.getLines().size());
         for (const auto& l : s.getLines()) mix(static_cast<size_t>(l.id));
         mix(s.getCircles().size());
-        for (const auto& c : s.getCircles()) mix(static_cast<size_t>(c.id));
+        for (const auto& c : s.getCircles()) {
+            mix(static_cast<size_t>(c.id));
+            mix(static_cast<size_t>(std::llround(c.radius * 1e4)));
+        }
         mix(s.getArcs().size());
-        for (const auto& a : s.getArcs()) mix(static_cast<size_t>(a.id));
+        for (const auto& a : s.getArcs()) {
+            mix(static_cast<size_t>(a.id));
+            mix(static_cast<size_t>(std::llround(a.radius * 1e4)));
+        }
         mix(s.getSplines().size());
         for (const auto& sp : s.getSplines()) mix(static_cast<size_t>(sp.id));
         mix(s.getPolygons().size());
@@ -4105,7 +4414,33 @@ void Application::recordSketchMutation(const std::function<void()>& mutator) {
     };
     size_t beforeSig = signature(*m_activeSketch);
     auto before = std::make_shared<Sketch>(*m_activeSketch);
+    // Fold a deferred anchor snapshot (from the first click of a line chain) in
+    // as the "before", so the anchor + first segment undo as ONE step. Drop it
+    // if it belongs to a different sketch (stale).
+    if (m_deferredSketchBefore) {
+        if (m_deferredSketchOwner == m_activeSketch.get()) {
+            before = m_deferredSketchBefore;
+            beforeSig = m_deferredSketchBeforeSig;
+        } else {
+            m_deferredSketchBefore.reset();
+            m_deferredSketchOwner = nullptr;
+        }
+    }
     mutator();
+    // A line-chain anchor click (only the start point placed) shouldn't be its
+    // own undo step: hold its before-snapshot and let the first segment absorb
+    // it. Esc (onCancel removes the anchor) and Enter (leaves an orphan) fall
+    // through the paths below and resolve correctly.
+    if (m_sketchTool && m_sketchTool->isChainAnchorPending()) {
+        if (!m_deferredSketchBefore) {
+            m_deferredSketchBefore = before;
+            m_deferredSketchBeforeSig = beforeSig;
+            m_deferredSketchOwner = m_activeSketch.get();
+        }
+        return;
+    }
+    m_deferredSketchBefore.reset();
+    m_deferredSketchOwner = nullptr;
     size_t afterSig = signature(*m_activeSketch);
     if (afterSig == beforeSig) return; // nothing structural changed → no history step
     auto after = std::make_shared<Sketch>(*m_activeSketch);
@@ -4240,10 +4575,14 @@ void Application::extrudeSketchById(int sketchId, ExtrudeMode mode) {
 
     int targetBody = -1;
     if (mode == ExtrudeMode::Subtract) {
-        targetBody = sketch->getSourceBody();
+        // A detached sketch no longer belongs to its former host — cutting
+        // that body from a sketch moved elsewhere is never what's meant.
+        targetBody = sketch->isDetachedFromBody() ? -1
+                                                  : sketch->getSourceBody();
         if (targetBody < 0) {
-            std::fprintf(stderr, "Subtract needs a sketch drawn on a body face; "
-                                 "this sketch has no source body\n");
+            std::fprintf(stderr, "Subtract needs a sketch attached to a body "
+                                 "face; this sketch is free-floating or was "
+                                 "unlinked from its body\n");
             return;
         }
     }
@@ -4254,10 +4593,13 @@ void Application::subtractSketchRegion(int sketchId, int regionIndex) {
     auto sketch = m_document->getSketch(sketchId);
     if (!sketch) return;
 
-    int targetBody = sketch->getSourceBody();
+    // Detached sketch: see subtract path above — never cut the former host.
+    int targetBody = sketch->isDetachedFromBody() ? -1
+                                                  : sketch->getSourceBody();
     if (targetBody < 0) {
-        std::fprintf(stderr, "Subtract needs a sketch drawn on a body face; "
-                             "this sketch has no source body\n");
+        std::fprintf(stderr, "Subtract needs a sketch attached to a body "
+                             "face; this sketch is free-floating or was "
+                             "unlinked from its body\n");
         return;
     }
 
@@ -4284,28 +4626,42 @@ void Application::alignCameraToActiveSketch() {
     glm::vec3 normal(static_cast<float>(n.X()), static_cast<float>(n.Y()), static_cast<float>(n.Z()));
     glm::vec3 up(static_cast<float>(y.X()), static_cast<float>(y.Y()), static_cast<float>(y.Z()));
 
-    // Frame the host face when one is present: target the face's 3D centre
-    // (the plane origin may not coincide with it for off-centre faces), and
-    // size the ortho box to its bbox diagonal.
+    // Frame the drawn content: union the host face's bbox (when present, for
+    // context) with the sketch geometry's own world bounds, then target that
+    // union's centre and size the ortho box to its diagonal. Framing the face
+    // alone left off-face or off-origin drawings shoved into a corner; framing
+    // the plane origin (the no-source-face case) was worse — the origin sits
+    // at a corner of the drawing, so the whole sketch landed in one quadrant.
     float orthoSize = std::max(20.0f, m_sketchGridStep * 40.0f);
     glm::vec3 lookAt = planeOrigin;
-    if (!m_activeSketch->getSourceFace().IsNull()) {
-        try {
-            Bnd_Box bb;
-            BRepBndLib::Add(m_activeSketch->getSourceFace(), bb);
-            if (!bb.IsVoid()) {
-                double xmin, ymin, zmin, xmax, ymax, zmax;
-                bb.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-                float dx = static_cast<float>(xmax - xmin);
-                float dy = static_cast<float>(ymax - ymin);
-                float dz = static_cast<float>(zmax - zmin);
-                float diag = 0.5f * std::sqrt(dx*dx + dy*dy + dz*dz);
-                if (diag > 1e-3f) orthoSize = diag * 1.2f;
-                lookAt = glm::vec3(static_cast<float>((xmin + xmax) * 0.5),
-                                   static_cast<float>((ymin + ymax) * 0.5),
-                                   static_cast<float>((zmin + zmax) * 0.5));
-            }
-        } catch (...) {}
+    {
+        glm::vec3 bmin( std::numeric_limits<float>::max());
+        glm::vec3 bmax(-std::numeric_limits<float>::max());
+        bool haveBounds = false;
+        if (!m_activeSketch->getSourceFace().IsNull()) {
+            try {
+                Bnd_Box bb;
+                BRepBndLib::Add(m_activeSketch->getSourceFace(), bb);
+                if (!bb.IsVoid()) {
+                    double x0, y0, z0, x1, y1, z1;
+                    bb.Get(x0, y0, z0, x1, y1, z1);
+                    bmin = glm::min(bmin, glm::vec3((float)x0, (float)y0, (float)z0));
+                    bmax = glm::max(bmax, glm::vec3((float)x1, (float)y1, (float)z1));
+                    haveBounds = true;
+                }
+            } catch (...) {}
+        }
+        glm::vec3 smin, smax;
+        if (m_activeSketch->getWorldBounds(smin, smax)) {
+            bmin = glm::min(bmin, smin);
+            bmax = glm::max(bmax, smax);
+            haveBounds = true;
+        }
+        if (haveBounds) {
+            float diag = 0.5f * glm::length(bmax - bmin);
+            if (diag > 1e-3f) orthoSize = diag * 1.2f;
+            lookAt = (bmin + bmax) * 0.5f;
+        }
     }
 
     // Snap the look-at point to the nearest world-grid intersection PROJECTED
@@ -4611,7 +4967,10 @@ void Application::writeProjectRecoveryIfDue() {
     const double kThrottleSec = 5.0;
     if (!newStep && now - m_lastRecoveryWrite < kThrottleSec) return;
 
-    ProjectHistory hist = captureProjectHistory();
+    // Don't cancel a live preview on a background recovery tick — that would
+    // revert the user's in-progress drag. The recovery file may then capture a
+    // preview, which is acceptable for crash recovery (best-effort snapshot).
+    ProjectHistory hist = captureProjectHistory(/*cancelPreviews=*/false);
     if (materializr::writeProjectRecovery(*m_document, &hist, m_currentProjectPath,
                                           bodies, curStep + 1)) {
         m_lastRecoveryWrite = now;
@@ -4646,7 +5005,9 @@ void Application::renderProjectRecoveryPrompt() {
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard", ImVec2(140, 0))) {
-            materializr::clearProjectRecovery();
+            // The candidate is the dead session's orphaned snapshot — our own
+            // live slot is separate and untouched.
+            materializr::clearProjectRecoveryCandidate();
             m_pendingProjectRecovery = false;
             ImGui::CloseCurrentPopup();
         }
@@ -4657,16 +5018,22 @@ void Application::renderProjectRecoveryPrompt() {
 void Application::restoreProjectRecoveryNow() {
     materializr::ProjectRecoveryMeta meta;
     materializr::readProjectRecoveryMeta(meta);
-    const std::string recPath = materializr::projectRecoveryPath();
+    // The dead session's orphaned snapshot — NOT projectRecoveryPath(), which
+    // is this instance's own (live, empty-so-far) slot.
+    const std::string recPath = materializr::projectRecoveryRestorePath();
     // Load the snapshot through the normal project loader (rebuilds bodies +
     // editable history). loadProjectAt sets m_currentProjectPath to the sidecar
     // and marks it saved — override both with the project's ORIGINAL identity so
     // the user can't overwrite the sidecar and unsaved work stays unsaved/dirty.
-    if (!loadProjectAt(recPath)) {
+    if (recPath.empty() || !loadProjectAt(recPath)) {
         std::fprintf(stderr, "[Recovery] failed to load project snapshot\n");
-        materializr::clearProjectRecovery();
+        materializr::clearProjectRecoveryCandidate();
         return;
     }
+    // Consumed: drop the orphan so it isn't offered again next launch. The
+    // restored state is re-snapshotted into OUR slot within seconds (the
+    // markDirty below makes writeProjectRecoveryIfDue fire).
+    materializr::clearProjectRecoveryCandidate();
     m_currentProjectPath = meta.projectPath; // "" if it was never saved
     markDirty();                             // unsaved since the snapshot
     saveAppSettings();                       // fix lastProjectPath off the sidecar
@@ -4758,27 +5125,39 @@ void Application::run() {
         // makes the whole desktop's cursor lag on a shared GPU, and it's pure
         // waste on mobile. Autosave + deferred tasks below still run; FOCUS_GAINED
         // is a significant event so we repaint instantly on return.
-#if defined(__ANDROID__)
+        // Force continuous rendering for a short grace right after launch so the
+        // splash→UI handoff ALWAYS completes on its own. At a fresh idle startup
+        // there's no input event (m_wakeFrames == 0) and no active work, so the
+        // idle-skip below would otherwise leave the first real UI frame undrawn
+        // behind the loading screen until the user clicks or moves the mouse.
+        // This is a hard override of BOTH the focus gate and the idle-skip — the
+        // earlier "foreground for 3 s" only neutralised the focus term, leaving
+        // the idle term to still skip (the splash-hang regression).
+        const bool launchGrace = (SDL_GetTicks() - runStartMs < 3000u);
+#if defined(MZ_IOS)
+        // iOS: the OS pauses a backgrounded app too, but there is a window
+        // around WILLENTERBACKGROUND where GL calls get the app terminated by
+        // the watchdog. Hard-stop rendering while UIKit says we are backgrounded
+        // (the 500 ms event-wait below keeps the loop cheap until suspension).
+        const bool foreground = !materializr::iosInBackground();
+#elif defined(MZ_MOBILE)
         // Android exemption: the OS already pauses the activity (and SDL the GL
         // surface) when backgrounded, so the gate buys nothing here — and
         // SDL_WINDOW_INPUT_FOCUS isn't set until the first touch, so gating on it
         // froze the startup splash→UI handoff until the user tapped the screen.
         const bool foreground = true;
 #else
-        // Desktop: respect window focus to suspend when backgrounded — BUT force
-        // rendering for a short grace after launch. The WM may not report
-        // INPUT_FOCUS for a beat (especially when launched from a terminal that
-        // keeps focus), and the idle-skip below would otherwise leave the first
-        // real UI frame undrawn behind the loading screen until the user clicks.
-        const bool foreground = m_window->isForeground() ||
-                                (SDL_GetTicks() - runStartMs < 3000u);
+        // Desktop: respect window focus to suspend when backgrounded.
+        const bool foreground = m_window->isForeground() || launchGrace;
 #endif
 
         // When idle (or backgrounded), block up to 500 ms for the next event.
         // 500 ms is enough for autosave / update-check polling; anything
         // interactive wakes us immediately via SDL events. Force the wait when
-        // backgrounded so an active preview can't busy-spin pollEvents(0).
-        int waitMs = (!foreground || (m_wakeFrames == 0 && !hasActiveWork())) ? 500 : 0;
+        // backgrounded so an active preview can't busy-spin pollEvents(0). During
+        // the launch grace we never block — keep frames flowing for the handoff.
+        int waitMs = (!launchGrace &&
+                      (!foreground || (m_wakeFrames == 0 && !hasActiveWork()))) ? 500 : 0;
         int eventLevel = m_window->pollEvents(waitMs);
         // Significant events (click, key, scroll, resize, focus): 5 frames.
         // Trivial events (mouse motion, expose): 25 frames — at 60 fps that is
@@ -4899,8 +5278,9 @@ void Application::run() {
 
         // Skip rendering entirely when nothing has changed — saves ~30 % idle
         // GPU on a static viewport. hasActiveWork() is re-evaluated after the
-        // deferred task and close checks above may have changed state.
-        if (!foreground || (m_wakeFrames == 0 && !hasActiveWork())) continue;
+        // deferred task and close checks above may have changed state. The launch
+        // grace overrides the skip so the first real UI frame draws on its own.
+        if (!launchGrace && (!foreground || (m_wakeFrames == 0 && !hasActiveWork()))) continue;
         if (m_wakeFrames > 0) m_wakeFrames--;
         ++perfRendered;   // passed the idle skip → this iteration renders a frame
 
@@ -4918,48 +5298,70 @@ void Application::run() {
             // "Edit Diameter" button only appears when the picked face is a
             // cylinder on a solid-cylinder or tube body. Detection populates
             // m_resizeCyl* fields as a side effect — we throw the result away
-            // here, those are only used by the actual begin path.
-            m_toolbar->setCanEditDiameter(!m_resizeCylActive &&
-                                          detectCylindricalResizeCandidate());
-            // "Frozen round" hint: a selected fillet-shaped face (cylinder /
-            // torus) that NO enabled op owns reloaded as baked geometry — there's
-            // no editable FilletOp behind it. The toolbar surfaces a one-liner
-            // pointing at Repair Geometry. A FULL 2π cylinder is a hole / pin
-            // (Edit Diameter handles it), not a round, so it's excluded.
+            // here, those are only used by the actual begin path (which
+            // re-runs the detection itself when the button is pressed).
+            //
+            // Both this detection (OCCT surface queries + a whole-body face
+            // walk for edge picks) and the frozen-round scan below (surface
+            // query + an ownsFace() history walk) used to run EVERY rendered
+            // frame while a face was selected — the normal working state.
+            // They only depend on the selection and the history, so memoize
+            // on those revisions and recompute only when one changes.
             {
-                bool frozenRound = false;
-                TopoDS_Shape pf;
-                for (const auto& e : m_selection->getSelection())
-                    if (e.type == SelectionType::Face && !e.shape.IsNull()) {
-                        pf = e.shape; break;
-                    }
-                if (!pf.IsNull() && pf.ShapeType() == TopAbs_FACE) {
-                    try {
-                        TopoDS_Face f = TopoDS::Face(pf);
-                        Handle(Geom_Surface) s = BRep_Tool::Surface(f);
-                        bool round = false;
-                        if (!s.IsNull()) {
-                            if (s->IsKind(STANDARD_TYPE(Geom_ToroidalSurface))) {
-                                round = true; // curved-edge fillet
-                            } else if (s->IsKind(STANDARD_TYPE(Geom_CylindricalSurface))) {
-                                double u1, u2, v1, v2;
-                                BRepTools::UVBounds(f, u1, u2, v1, v2);
-                                round = (u2 - u1) < 2.0 * M_PI - 0.05; // partial = fillet
-                            }
+                static unsigned s_selRev = ~0u, s_histRev = ~0u;
+                static bool s_resizeActive = false;
+                static bool s_canEditDiameter = false;
+                static bool s_frozenRound = false;
+                const unsigned selRev  = m_selection->revision();
+                const unsigned histRev = m_history->revision();
+                if (selRev != s_selRev || histRev != s_histRev ||
+                    m_resizeCylActive != s_resizeActive) {
+                    s_selRev = selRev;
+                    s_histRev = histRev;
+                    s_resizeActive = m_resizeCylActive;
+                    s_canEditDiameter = !m_resizeCylActive &&
+                                        detectCylindricalResizeCandidate();
+                    // "Frozen round" hint: a selected fillet-shaped face
+                    // (cylinder / torus) that NO enabled op owns reloaded as
+                    // baked geometry — there's no editable FilletOp behind it.
+                    // The toolbar surfaces a one-liner pointing at Repair
+                    // Geometry. A FULL 2π cylinder is a hole / pin (Edit
+                    // Diameter handles it), not a round, so it's excluded.
+                    s_frozenRound = false;
+                    TopoDS_Shape pf;
+                    for (const auto& e : m_selection->getSelection())
+                        if (e.type == SelectionType::Face && !e.shape.IsNull()) {
+                            pf = e.shape; break;
                         }
-                        if (round) {
-                            frozenRound = true; // assume frozen until an op claims it
-                            for (const auto& op : m_history->operations())
-                                if (op && op->isEnabled() && op->ownsFace(pf) &&
-                                    (op->typeId() == "fillet" ||
-                                     op->typeId() == "chamfer")) {
-                                    frozenRound = false;
-                                    break;
+                    if (!pf.IsNull() && pf.ShapeType() == TopAbs_FACE) {
+                        try {
+                            TopoDS_Face f = TopoDS::Face(pf);
+                            Handle(Geom_Surface) s = BRep_Tool::Surface(f);
+                            bool round = false;
+                            if (!s.IsNull()) {
+                                if (s->IsKind(STANDARD_TYPE(Geom_ToroidalSurface))) {
+                                    round = true; // curved-edge fillet
+                                } else if (s->IsKind(STANDARD_TYPE(Geom_CylindricalSurface))) {
+                                    double u1, u2, v1, v2;
+                                    BRepTools::UVBounds(f, u1, u2, v1, v2);
+                                    round = (u2 - u1) < 2.0 * M_PI - 0.05; // partial = fillet
                                 }
-                        }
-                    } catch (...) {}
+                            }
+                            if (round) {
+                                s_frozenRound = true; // assume frozen until an op claims it
+                                for (const auto& op : m_history->operations())
+                                    if (op && op->isEnabled() && op->ownsFace(pf) &&
+                                        (op->typeId() == "fillet" ||
+                                         op->typeId() == "chamfer")) {
+                                        s_frozenRound = false;
+                                        break;
+                                    }
+                            }
+                        } catch (...) {}
+                    }
                 }
-                m_toolbar->setSelectedFaceFrozenRound(frozenRound);
+                m_toolbar->setCanEditDiameter(s_canEditDiameter);
+                m_toolbar->setSelectedFaceFrozenRound(s_frozenRound);
             }
             m_toolbar->setShowTooltips(m_showToolbarTooltips);
             // Mirror the live inference level (Full/Reduced/Off) so the sketch
@@ -5048,6 +5450,7 @@ void Application::run() {
                     else if (pending == "PrimitiveSphere")   beginPrimitivePopup(2);
                     else if (pending == "PrimitiveCone")     beginPrimitivePopup(3);
                     else if (pending == "PrimitiveTorus")    beginPrimitivePopup(4);
+                    else if (pending == "StlImport")         beginStlImportDialog();
                     // Unknown ids are silently ignored — future plugins can
                     // ship their own without modifying Application by routing
                     // through whatever new dispatcher is added here.
@@ -5144,10 +5547,13 @@ void Application::run() {
             renderSectionPanel();
             renderTextToolPanel();
             renderSvgToolPanel();
+            renderMirrorToolPanel();
             renderLoftPanel();
             renderConstructionPlanePanel();
             renderConstructionAxisPanel();
             renderPrimitivePopup();
+            renderStlImportDialog();
+            renderUnfoldDialog();
             renderRevolvePopup();
             renderRotatePlaneAboutAxisPopup();
             renderSketchMovePanel();
@@ -5164,6 +5570,33 @@ void Application::run() {
             // collapse with the right edge handle (or Hide Panels).
             if (!m_rightPanelHidden) {
                 m_historyPanel->setHistoryLocked(anyInteractivePreviewActive());
+                // Reverse-link viewport → history: when exactly one sketch
+                // element is selected with the sketch select tool, highlight the
+                // step that introduced it so it's obvious where to edit it.
+                {
+                    int hl = -1;
+                    if (m_inSketchMode && m_sketchTool && m_activeSketch && m_history) {
+                        const auto& sl = m_sketchTool->getSelectedLines();
+                        const auto& sa = m_sketchTool->getSelectedArcs();
+                        const auto& sc = m_sketchTool->getSelectedCircles();
+                        if (sl.size() + sa.size() + sc.size() == 1) {
+                            int lid = sl.empty() ? -1 : *sl.begin();
+                            int aid = sa.empty() ? -1 : *sa.begin();
+                            int cid = sc.empty() ? -1 : *sc.begin();
+                            for (int s = 0; s < m_history->stepCount(); ++s) {
+                                auto* se = dynamic_cast<const SketchEditOp*>(
+                                    m_history->getStep(s));
+                                if (!se || se->getTarget() != m_activeSketch) continue;
+                                std::set<int> L, C, A;
+                                se->getEditedElements(L, C, A);
+                                if ((lid >= 0 && L.count(lid)) ||
+                                    (aid >= 0 && A.count(aid)) ||
+                                    (cid >= 0 && C.count(cid))) { hl = s; break; }
+                            }
+                        }
+                    }
+                    m_historyPanel->setHighlightStep(hl);
+                }
                 if (m_showHistory && m_historyPanel->render()) {
                     m_meshesDirty = true;
                 }

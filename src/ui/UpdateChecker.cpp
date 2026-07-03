@@ -85,23 +85,75 @@ std::vector<int> parseNumericComponents(const std::string& v) {
     return parts;
 }
 
-} // namespace
+bool isAllDigits(const std::string& s) {
+    if (s.empty()) return false;
+    for (char c : s) if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    return true;
+}
 
-int UpdateChecker::compareVersions(const std::string& a, const std::string& b) {
-    auto pa = parseNumericComponents(stripV(a));
-    auto pb = parseNumericComponents(stripV(b));
-    size_t n = std::max(pa.size(), pb.size());
-    pa.resize(n, 0);
-    pb.resize(n, 0);
+// Compare two semver pre-release tag lists (the dot-separated bits after the
+// "-"). An EMPTY list means a final release, which outranks any pre-release.
+// Otherwise compare identifier by identifier: numeric ones numerically, a
+// numeric identifier ranks below a non-numeric one, and a shorter prefix ranks
+// below a longer one (1.0-beta < 1.0-beta.1). Mirrors semver §11.
+int comparePre(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    if (a.empty() && b.empty()) return 0;
+    if (a.empty()) return 1;   // a is a final release -> higher
+    if (b.empty()) return -1;
+    size_t n = std::max(a.size(), b.size());
     for (size_t i = 0; i < n; ++i) {
-        if (pa[i] < pb[i]) return -1;
-        if (pa[i] > pb[i]) return  1;
+        if (i >= a.size()) return -1; // a is a shorter prefix of b
+        if (i >= b.size()) return 1;
+        const std::string& x = a[i];
+        const std::string& y = b[i];
+        bool xn = isAllDigits(x), yn = isAllDigits(y);
+        if (xn && yn) {
+            int xi = 0, yi = 0;
+            try { xi = std::stoi(x); } catch (...) {}
+            try { yi = std::stoi(y); } catch (...) {}
+            if (xi != yi) return xi < yi ? -1 : 1;
+        } else if (xn != yn) {
+            return xn ? -1 : 1;       // numeric identifiers rank below alphanumeric
+        } else {
+            int c = x.compare(y);
+            if (c != 0) return c < 0 ? -1 : 1;
+        }
     }
     return 0;
 }
 
+} // namespace
+
+int UpdateChecker::compareVersions(const std::string& a, const std::string& b) {
+    // Split "X.Y.Z-pre.tokens" into numeric core + pre-release token list.
+    auto split = [](std::string v) {
+        v = stripV(v);
+        std::string core = v, pre;
+        size_t dash = v.find('-');
+        if (dash != std::string::npos) { core = v.substr(0, dash); pre = v.substr(dash + 1); }
+        std::vector<std::string> preToks;
+        if (!pre.empty()) {
+            std::stringstream ss(pre);
+            std::string tok;
+            while (std::getline(ss, tok, '.')) preToks.push_back(tok);
+        }
+        return std::make_pair(parseNumericComponents(core), preToks);
+    };
+    auto [ca, pra] = split(a);
+    auto [cb, prb] = split(b);
+    size_t n = std::max(ca.size(), cb.size());
+    ca.resize(n, 0);
+    cb.resize(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        if (ca[i] < cb[i]) return -1;
+        if (ca[i] > cb[i]) return  1;
+    }
+    return comparePre(pra, prb);
+}
+
 UpdateChecker::Result UpdateChecker::check(const std::string& owner,
-                                           const std::string& repo) {
+                                           const std::string& repo,
+                                           bool includePrereleases) {
     Result r;
     r.current = MATERIALIZR_VERSION;
     r.releasePageUrl = "https://github.com/" + owner + "/" + repo + "/releases";
@@ -109,8 +161,15 @@ UpdateChecker::Result UpdateChecker::check(const std::string& owner,
     CURL* curl = curl_easy_init();
     if (!curl) { r.errorMessage = "Failed to initialise libcurl."; return r; }
 
+    // Stable channel uses /releases/latest (GitHub excludes pre-releases from
+    // it). Beta channel uses /releases, which lists everything newest-first —
+    // the first element is the most recent build, pre-release or not. Both
+    // responses put the release's own tag_name / html_url first in the JSON
+    // (before the nested author/asset objects), so the same first-match parse
+    // works for either.
     std::string url = "https://api.github.com/repos/" + owner + "/" + repo +
-                      "/releases/latest";
+                      (includePrereleases ? "/releases?per_page=10"
+                                          : "/releases/latest");
     std::string body;
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Accept: application/vnd.github+json");
@@ -159,6 +218,14 @@ UpdateChecker::Result UpdateChecker::check(const std::string& owner,
 
     std::string tag = findJsonString(body, "tag_name");
     if (tag.empty()) {
+        // Beta channel with an empty release list ("[]") lands here — treat it
+        // as "nothing newer" rather than an error.
+        if (includePrereleases) {
+            r.ok = true;
+            r.latest = r.current;
+            r.errorMessage = "No pre-release builds published yet.";
+            return r;
+        }
         r.errorMessage = "Could not find tag_name in GitHub response.";
         return r;
     }

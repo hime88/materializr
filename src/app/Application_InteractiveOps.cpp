@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <set>
 
 #include "app/Application.h"
@@ -185,16 +186,44 @@ void Application::beginInteractiveEdgeOp(EdgeOpType type) {
         m_edgeOpMid = glm::vec3(p.X(), p.Y(), p.Z());
         if (tan.Magnitude() > 1e-9) {
             m_edgeOpDir = glm::normalize(glm::vec3(tan.X(), tan.Y(), tan.Z()));
-            // Outward handle direction: from the body centre to the edge, made
-            // perpendicular to the edge, so the arrow faces straight out of the edge.
-            Bnd_Box bb; BRepBndLib::Add(m_edgeOpPreviousShape, bb);
-            if (!bb.IsVoid()) {
-                double x1,y1,z1,x2,y2,z2; bb.Get(x1,y1,z1,x2,y2,z2);
-                glm::vec3 c((x1+x2)*0.5f, (y1+y2)*0.5f, (z1+z2)*0.5f);
-                glm::vec3 out = m_edgeOpMid - c;
-                out -= glm::dot(out, m_edgeOpDir) * m_edgeOpDir; // perpendicular to edge
-                if (glm::length(out) > 1e-5f) m_edgeOpOutDir = glm::normalize(out);
+            // Outward handle direction = the average of the two adjacent faces'
+            // OUTWARD normals at the edge, made perpendicular to the edge. This
+            // points the arrow the way the fillet actually grows for BOTH convex
+            // (outer) edges AND concave inner corners — e.g. the inside corners
+            // of a thin-wall hollow box, where the fillet bulges into the cavity.
+            // The old "bbox centre → edge" heuristic was inverted on concave
+            // edges (arrow faced out toward the wall). Falls back to it if the
+            // adjacent faces can't be read.
+            glm::vec3 out(0.0f);
+            try {
+                TopTools_IndexedDataMapOfShapeListOfShape efMap;
+                TopExp::MapShapesAndAncestors(m_edgeOpPreviousShape, TopAbs_EDGE,
+                                              TopAbs_FACE, efMap);
+                const TopoDS_Edge& e0 = TopoDS::Edge(edges.front());
+                if (efMap.Contains(e0)) {
+                    const TopTools_ListOfShape& fl = efMap.FindFromKey(e0);
+                    for (const TopoDS_Shape& fs : fl) {
+                        BRepGProp_Face gf(TopoDS::Face(fs));
+                        Standard_Real u0,u1,v0,v1; gf.Bounds(u0,u1,v0,v1);
+                        gp_Pnt fp; gp_Vec fn;
+                        gf.Normal(0.5*(u0+u1), 0.5*(v0+v1), fp, fn); // outward (orientation-corrected)
+                        if (fn.Magnitude() > 1e-9) {
+                            fn.Normalize();
+                            out += glm::vec3(fn.X(), fn.Y(), fn.Z());
+                        }
+                    }
+                }
+            } catch (...) {}
+            if (glm::length(out) <= 1e-5f) {   // fallback: bbox centre → edge
+                Bnd_Box bb; BRepBndLib::Add(m_edgeOpPreviousShape, bb);
+                if (!bb.IsVoid()) {
+                    double x1,y1,z1,x2,y2,z2; bb.Get(x1,y1,z1,x2,y2,z2);
+                    glm::vec3 c((x1+x2)*0.5f, (y1+y2)*0.5f, (z1+z2)*0.5f);
+                    out = m_edgeOpMid - c;
+                }
             }
+            out -= glm::dot(out, m_edgeOpDir) * m_edgeOpDir; // perpendicular to edge
+            if (glm::length(out) > 1e-5f) m_edgeOpOutDir = glm::normalize(out);
             m_edgeOpHasHandle = true;
         }
     } catch (...) {}
@@ -337,19 +366,34 @@ bool Application::updateInteractiveEdgeOp() {
         // are rejected inside editStep (the op snaps back to its last good
         // parameters), so the preview can never strand the model.
         if (m_edgeOpValue < 0.01f) return false; // don't preview "remove" mid-drag
+        // Partial remesh: re-tessellate only the bodies the replay changes, not
+        // every visible body — see CREATE mode below.
+        std::map<int, TopoDS_Shape> before;
+        for (int id : m_document->getAllBodyIds()) before[id] = m_document->getBody(id);
         setEdgeOpParam(m_history->getStep(m_edgeOpEditingIndex),
                        m_edgeOpType == EdgeOpType::Fillet,
                        m_edgeOpValue,
                        m_edgeOpTwoDist ? m_edgeOpValue2 : -1.0f);
         m_history->editStep(m_edgeOpEditingIndex, *m_document);
-        m_meshesDirty = true;
+        std::set<int> now;
+        for (int id : m_document->getAllBodyIds()) {
+            now.insert(id);
+            auto it = before.find(id);
+            if (it == before.end() || !it->second.IsEqual(m_document->getBody(id)))
+                m_dirtyBodyIds.insert(id);
+        }
+        for (auto& [id, s] : before) if (!now.count(id)) m_dirtyBodyIds.insert(id);
         return true;
     }
 
-    // CREATE mode: transient op against the snapshotted pre-state.
-    // Restore original first, so dragging back to ~0 shows no fillet/chamfer.
+    // CREATE mode: transient op against the snapshotted pre-state, touching
+    // ONLY m_edgeOpBodyId. Mark just that body dirty (partial remesh) instead
+    // of the global m_meshesDirty — a fillet on one body in a large scene was
+    // re-tessellating EVERY visible body per preview frame, which is why the
+    // op felt heavy with siblings shown and snappy with them hidden. Restore
+    // first, so dragging back to ~0 shows no fillet/chamfer.
     m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
-    m_meshesDirty = true;
+    m_dirtyBodyIds.insert(m_edgeOpBodyId); // rebuildMeshes re-meshes its final state
     if (m_edgeOpValue < 0.01f) return false;
 
     try {
@@ -360,10 +404,7 @@ bool Application::updateInteractiveEdgeOp() {
             for (const auto& e : m_edgeOpEdges) typedEdges.push_back(TopoDS::Edge(e));
             op->setEdges(typedEdges);
             op->setRadius(static_cast<double>(m_edgeOpValue));
-            if (op->execute(*m_document)) {
-                m_meshesDirty = true;
-                return true;
-            }
+            if (op->execute(*m_document)) return true;
             // Failed — restore original
             m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
         } else {
@@ -374,10 +415,7 @@ bool Application::updateInteractiveEdgeOp() {
             op->setEdges(typedEdges);
             op->setDistance(static_cast<double>(m_edgeOpValue));
             if (m_edgeOpTwoDist) op->setDistance2(static_cast<double>(m_edgeOpValue2));
-            if (op->execute(*m_document)) {
-                m_meshesDirty = true;
-                return true;
-            }
+            if (op->execute(*m_document)) return true;
             m_document->updateBody(m_edgeOpBodyId, m_edgeOpPreviousShape);
         }
     } catch (...) {
@@ -472,6 +510,11 @@ void Application::commitInteractiveEdgeOp() {
         for (const auto& e : m_edgeOpEdges) typedEdges.push_back(TopoDS::Edge(e));
         op->setEdges(typedEdges);
         op->setRadius(static_cast<double>(m_edgeOpValue));
+        // Generative anchoring: tell the fillet which sketch drives this body
+        // so a filleted corner can follow a later dimension edit. Inert unless
+        // every filleted edge is a corner over a sketch vertex.
+        for (const auto& [sid, bodies] : sketchBodyLinks())
+            if (bodies.count(m_edgeOpBodyId)) { op->setSourceSketch(sid); break; }
         committed = m_history->pushOperation(std::move(op), *m_document);
     } else {
         auto op = std::make_unique<ChamferOp>();
@@ -481,6 +524,8 @@ void Application::commitInteractiveEdgeOp() {
         op->setEdges(typedEdges);
         op->setDistance(static_cast<double>(m_edgeOpValue));
         if (m_edgeOpTwoDist) op->setDistance2(static_cast<double>(m_edgeOpValue2));
+        for (const auto& [sid, bodies] : sketchBodyLinks())
+            if (bodies.count(m_edgeOpBodyId)) { op->setSourceSketch(sid); break; }
         committed = m_history->pushOperation(std::move(op), *m_document);
     }
 
@@ -1095,7 +1140,8 @@ void Application::cancelInteractiveExtrude() {
 // pushing and undoing successive preview ops on the history stack.
 
 Application::SketchRegionHit Application::pickSketchRegion(float screenX, float screenY,
-                                                           float vpW, float vpH) const {
+                                                           float vpW, float vpH,
+                                                           bool buildIfCold) const {
     SketchRegionHit hit;
     if (!m_document || !m_viewport) return hit;
 
@@ -1143,6 +1189,13 @@ Application::SketchRegionHit Application::pickSketchRegion(float screenX, float 
         glm::vec2 p2d;
         if (!projectToPlane(rayOrigin, rayDir, t, p2d)) return;
         if (t >= bestT) return;
+
+        // Cold region cache: building it runs the OCCT general fuse — on a
+        // heavy sketch (SVG import, text) that's a SECONDS-long stall. The
+        // per-frame HOVER pick must never trigger it (unhiding a complex
+        // sketch used to freeze the app on the very next mouse move); a
+        // CLICK still builds (one user-initiated wait, exactly as before).
+        if (!buildIfCold && !sketch.regionsCached()) return;
 
         // Screen-space pick tolerance: how far ~6px maps to on this plane, so the
         // boundary catch area is a consistent, comfortable width at any zoom.
@@ -1326,7 +1379,14 @@ void Application::beginPushPull() {
             PushPullTarget t;
             t.sketchId = e.sketchId;
             t.regionIndex = e.subShapeIndex;
-            t.sourceBodyId = sketch->getSourceBody();
+            // A DETACHED sketch has been deliberately broken away from its
+            // former host (moved independently in 3D). Keeping the stale
+            // source-body id fused the new prism into a body that can be
+            // hundreds of mm away — a push/pull on an unlinked sketch must
+            // behave like a free-floating sketch and make its own body.
+            t.sourceBodyId = sketch->isDetachedFromBody()
+                                 ? -1
+                                 : sketch->getSourceBody();
             t.profile = regions[e.subShapeIndex].face;
             if (t.profile.IsNull()) continue;
             m_pushPullTargets.push_back(t);
@@ -1676,6 +1736,8 @@ void Application::beginMoveFace(FaceXform kind) {
     m_moveFaceAngle = m_moveFaceAngleBase = 0.0f;
     m_moveFaceRotAccum = glm::mat3(1.0f);
     m_moveFaceRotHasAccum = false;
+    m_moveFaceTwist = m_moveFaceTwistBase = 0.0f;
+    m_moveFaceIsTwist = false;
     m_moveFaceScale = m_moveFaceScaleBase = 1.0f;
     m_moveFaceScaleA = m_moveFaceScaleABase = 1.0f;
     m_moveFaceScaleB = m_moveFaceScaleBBase = 1.0f;
@@ -1967,6 +2029,8 @@ glm::mat3 Application::faceRotTotal() const {
 // Bake the just-released ring drag into the accumulated tilt (so the next ring
 // drag stacks on top), then reset the live angle.
 void Application::bakeFaceRotationDrag() {
+    // Twist isn't a tilt-matrix accumulation — nothing to bake for it.
+    if (m_moveFaceIsTwist) return;
     if (m_faceXformKind != FaceXform::Rotate || std::abs(m_moveFaceAngle) < 1e-5f)
         return;
     m_moveFaceRotAccum = rodrigues(m_moveFaceRotAxis, m_moveFaceAngle) * m_moveFaceRotAccum;
@@ -1983,6 +2047,11 @@ void Application::configureFaceOp(MoveFaceOp& op) const {
             op.setMoveVector(gp_Vec(m_moveFaceVec.x, m_moveFaceVec.y, m_moveFaceVec.z));
             break;
         case FaceXform::Rotate: {
+            if (m_moveFaceIsTwist) { // third ring = twist about the normal
+                op.setKind(MoveFaceOp::Kind::Twist);
+                op.setTwist(m_moveFaceTwist);
+                break;
+            }
             op.setKind(MoveFaceOp::Kind::Rotate);
             // Composed rotation (live drag ∘ accumulated tilts) as a gp_Trsf
             // about the pivot, so stacked tilts about both axes apply at once.
@@ -2013,8 +2082,10 @@ void Application::configureFaceOp(MoveFaceOp& op) const {
 bool Application::faceXformNontrivial() const {
     switch (m_faceXformKind) {
         case FaceXform::Translate: return glm::length(m_moveFaceVec) > 1e-4f;
-        case FaceXform::Rotate:    return std::abs(m_moveFaceAngle) > 1e-4f ||
-                                          m_moveFaceRotHasAccum;
+        case FaceXform::Rotate:
+            return m_moveFaceIsTwist
+                ? std::abs(m_moveFaceTwist) > 1e-4f
+                : (std::abs(m_moveFaceAngle) > 1e-4f || m_moveFaceRotHasAccum);
         case FaceXform::Scale:
             return m_moveFaceScaleUniform
                 ? std::abs(m_moveFaceScale - 1.0f) > 1e-4f
@@ -2108,7 +2179,8 @@ void Application::commitMoveFace() {
         committed = m_history->pushOperation(std::move(op), *m_document);
         if (committed)
             std::fprintf(stdout, "Face %s committed\n",
-                         m_faceXformKind == FaceXform::Rotate ? "tilt"
+                         (m_faceXformKind == FaceXform::Rotate && m_moveFaceIsTwist) ? "twist"
+                         : m_faceXformKind == FaceXform::Rotate ? "tilt"
                          : m_faceXformKind == FaceXform::Scale ? "scale" : "move");
     }
 
@@ -2463,9 +2535,16 @@ void Application::commitLoft() {
 // follow" workflow this trade-off is fine: simple chains just work; chained
 // workflows leave the downstream ops on the stale body and the user
 // manually re-runs them.
-std::map<int, std::set<int>> Application::sketchBodyLinks() const {
-    std::map<int, std::set<int>> links;
+const std::map<int, std::set<int>>& Application::sketchBodyLinks() const {
+    // Memoized on the history revision — the Properties panel reads the link
+    // hint every frame a body/sketch is selected, and this walk (dynamic_cast
+    // + captureDiff per step, fresh map/set nodes) was running per frame.
+    if (m_history && m_linkMapRevision == m_history->revision())
+        return m_linkMapCache;
+    std::map<int, std::set<int>>& links = m_linkMapCache;
+    links.clear();
     if (!m_history) return links;
+    m_linkMapRevision = m_history->revision();
     int n = m_history->stepCount();
     for (int i = 0; i < n; ++i) {
         const Operation* op = m_history->getStep(i);
@@ -2521,7 +2600,7 @@ void Application::relinkSketch(bool isBody, int id) {
     if (!m_document) return;
     std::vector<int> sketches;
     if (isBody) {
-        auto links = sketchBodyLinks();
+        const auto& links = sketchBodyLinks();
         for (const auto& [sid, bodies] : links)
             if (bodies.count(id)) sketches.push_back(sid);
     } else {
@@ -2542,7 +2621,7 @@ void Application::relinkSketch(bool isBody, int id) {
 
 std::string Application::linkHintFor(bool isBody, int id) const {
     if (!m_document) return "";
-    auto links = sketchBodyLinks();
+    const auto& links = sketchBodyLinks();
     auto nameList = [&](const std::set<int>& ids, bool bodies) {
         std::string s;
         for (int v : ids) {
@@ -2629,7 +2708,28 @@ void Application::cascadeFromSketchEdit(int sketchId) {
     // the new profiles take effect and ALL downstream ops re-run on the updated
     // geometry. If any can't follow (e.g. a fillet whose edge no longer exists
     // after the change), the entire model is restored — never half-built.
+    //
+    // Snapshot every body's shape BEFORE the replay so we can re-tessellate
+    // ONLY the bodies it actually changes — not the whole scene. On a multi-
+    // body project a sketch edit touching one body would otherwise re-mesh
+    // every body, which is the dominant cost on a tablet. A re-executed op
+    // hands its bodies a fresh TShape, so IsEqual cleanly separates changed
+    // bodies from untouched ones; created/removed ids are covered below.
+    std::map<int, TopoDS_Shape> beforeBodies;
+    for (int id : m_document->getAllBodyIds())
+        beforeBodies[id] = m_document->getBody(id);
+
+    // Pin the edited sketch's FINAL state for the replay: re-executing the
+    // chain rolls the live sketch back through its SketchEditOp snapshots, so
+    // mid-replay it holds a STALE state — while the extrude below was rebuilt
+    // from the final one. A fillet/chamfer re-finding its edges from "the
+    // sketch the user just edited" (generative anchors) must read the final
+    // state or it looks for the old geometry and fails every time.
+    if (auto sk = m_document->getSketch(sketchId))
+        m_document->setCascadeSketchOverride(
+            sketchId, std::make_shared<materializr::Sketch>(*sk));
     bool ok = m_history->editStep(earliest, *m_document, /*transactional=*/true);
+    m_document->clearCascadeSketchOverrides();
     std::fprintf(stderr, "[Cascade] sketchId=%d replay from step %d: %s\n",
                  sketchId, earliest, ok ? "applied" : "reverted");
     if (!ok) {
@@ -2637,7 +2737,20 @@ void Application::cascadeFromSketchEdit(int sketchId) {
                   "downstream feature (e.g. a fillet) couldn't follow it, so the "
                   "model was left unchanged.");
     }
-    m_meshesDirty = true;
+
+    // Partial remesh: mark only bodies whose shape changed, plus any that were
+    // created or removed. On a failed (reverted) replay every body is restored
+    // to its snapshot TShape, so nothing is marked — no needless remesh at all.
+    std::set<int> nowIds;
+    for (int id : m_document->getAllBodyIds()) {
+        nowIds.insert(id);
+        auto it = beforeBodies.find(id);
+        if (it == beforeBodies.end() ||
+            !it->second.IsEqual(m_document->getBody(id)))
+            m_dirtyBodyIds.insert(id);            // changed or newly created
+    }
+    for (const auto& [id, shp] : beforeBodies)
+        if (!nowIds.count(id)) m_dirtyBodyIds.insert(id); // removed → mesh cleared
 }
 
 void Application::cancelLoft() {

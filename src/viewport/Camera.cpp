@@ -130,11 +130,36 @@ void Camera::pan(float deltaX, float deltaY)
     glm::vec3 right = glm::normalize(glm::cross(forward, m_up));
     glm::vec3 up = glm::normalize(glm::cross(right, forward));
 
-    // In ortho, visible size depends on m_orthoSize (not distance), so pan should
-    // track that instead — otherwise panning at distance 0.1 looks frozen while
-    // panning at distance 100 throws the model off-screen.
-    float scaleRef = m_orthographic ? m_orthoSize : glm::length(m_target - m_position);
-    float panScale = scaleRef * m_panSpeed * m_mouseSensitivity;
+    float panScale;
+    if (m_viewHeightPx > 1.0f) {
+        // Exact screen-space pan: move the world by precisely one pixel's
+        // world size per pixel of mouse motion, so the point you "grab"
+        // stays under the cursor at every zoom level. In perspective the
+        // pixel size depends on depth — use the pan anchor (the content
+        // under the cursor at drag start) when the app provided one; the
+        // target distance is only the fallback, because on large projects
+        // it can sit metres from the geometry on screen (stale after
+        // cursor-zoom), which used to make pan twitchy up close and frozen
+        // far away.
+        if (m_orthographic) {
+            panScale = (2.0f * m_orthoSize) / m_viewHeightPx;
+        } else {
+            float ref = (m_panRefDist > 0.0f)
+                            ? m_panRefDist
+                            : glm::length(m_target - m_position);
+            panScale = (2.0f * ref * std::tan(glm::radians(m_fov) * 0.5f)) /
+                       m_viewHeightPx;
+        }
+        panScale *= m_mouseSensitivity;
+    } else {
+        // Legacy distance-fraction pan (no viewport height known). In ortho,
+        // visible size depends on m_orthoSize (not distance) — otherwise
+        // panning at distance 0.1 looks frozen while panning at distance 100
+        // throws the model off-screen.
+        float scaleRef =
+            m_orthographic ? m_orthoSize : glm::length(m_target - m_position);
+        panScale = scaleRef * m_panSpeed * m_mouseSensitivity;
+    }
 
     glm::vec3 offset = -right * deltaX * panScale + up * deltaY * panScale;
     m_position += offset;

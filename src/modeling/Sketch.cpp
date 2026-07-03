@@ -35,6 +35,9 @@
 #include <TopExp_Explorer.hxx>
 
 #include <algorithm>
+#include <cstdio>
+#include <limits>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <cmath>
@@ -92,6 +95,34 @@ const SketchPoint* Sketch::getPoint(int id) const {
     return nullptr;
 }
 
+bool Sketch::getWorldBounds(glm::vec3& outMin, glm::vec3& outMax) const {
+    if (m_points.empty()) return false;
+    glm::vec3 lo( std::numeric_limits<float>::max());
+    glm::vec3 hi(-std::numeric_limits<float>::max());
+    auto addPt = [&](const gp_Pnt& p) {
+        glm::vec3 v(static_cast<float>(p.X()), static_cast<float>(p.Y()),
+                    static_cast<float>(p.Z()));
+        lo = glm::min(lo, v);
+        hi = glm::max(hi, v);
+    };
+    for (const auto& pt : m_points) addPt(sketchToWorld(pt.pos));
+    // Points only capture circle centres; expand by radius along the plane axes
+    // so the rim is enclosed too (arc/polygon extents are covered by their
+    // generated endpoints/vertices).
+    for (const auto& c : m_circles) {
+        const SketchPoint* ctr = getPoint(c.centerPointId);
+        if (!ctr) continue;
+        float r = static_cast<float>(c.radius);
+        addPt(sketchToWorld(ctr->pos + glm::vec2( r, 0)));
+        addPt(sketchToWorld(ctr->pos + glm::vec2(-r, 0)));
+        addPt(sketchToWorld(ctr->pos + glm::vec2( 0, r)));
+        addPt(sketchToWorld(ctr->pos + glm::vec2( 0,-r)));
+    }
+    outMin = lo;
+    outMax = hi;
+    return true;
+}
+
 const std::vector<SketchPoint>& Sketch::getPoints() const {
     return m_points;
 }
@@ -135,6 +166,220 @@ void Sketch::setCircleRadius(int circleId, double r) {
 void Sketch::setArcRadius(int arcId, double r) {
     for (auto& a : m_arcs) {
         if (a.id == arcId) { a.radius = std::max(r, 1e-6); return; }
+    }
+}
+
+namespace {
+// CCW swept angle (0, 2π] of an arc going start->end about centre c. Mirrors
+// the start->end CCW convention buildWires() uses to emit the arc edge.
+double ccwSweep(glm::vec2 c, glm::vec2 s, glm::vec2 e) {
+    double aS = std::atan2(s.y - c.y, s.x - c.x);
+    double aE = std::atan2(e.y - c.y, e.x - c.x);
+    double d = aE - aS;
+    while (d <= 0.0)        d += 2.0 * M_PI;
+    while (d > 2.0 * M_PI)  d -= 2.0 * M_PI;
+    return d;
+}
+} // namespace
+
+void Sketch::moveEndpointPreservingArcs(int pointId, glm::vec2 newPos) {
+    // Capture the arcs hinging on this point BEFORE moving it — the swept angle
+    // has to be read from the current geometry. We also remember the opposite
+    // (unmoved) endpoint's position, which stays put.
+    struct Cap { int arcId; double sweep; glm::vec2 fixedPt; bool movedIsStart; };
+    std::vector<Cap> caps;
+    for (const auto& a : m_arcs) {
+        bool isStart = (a.startPointId == pointId);
+        bool isEnd   = (a.endPointId == pointId);
+        if (!isStart && !isEnd) continue;
+        const SketchPoint* c = getPoint(a.centerPointId);
+        const SketchPoint* s = getPoint(a.startPointId);
+        const SketchPoint* e = getPoint(a.endPointId);
+        if (!c || !s || !e) continue;
+        caps.push_back({a.id, ccwSweep(c->pos, s->pos, e->pos),
+                        isStart ? e->pos : s->pos, isStart});
+    }
+
+    movePoint(pointId, newPos);
+
+    for (const auto& cap : caps) {
+        SketchArc* a = nullptr;
+        for (auto& x : m_arcs) if (x.id == cap.arcId) { a = &x; break; }
+        if (!a) continue;
+        glm::vec2 S = cap.movedIsStart ? newPos : cap.fixedPt;
+        glm::vec2 E = cap.movedIsStart ? cap.fixedPt : newPos;
+        glm::vec2 chord = E - S;
+        double c = glm::length(chord);
+        double half = cap.sweep * 0.5;
+        double sinH = std::sin(half);
+        if (c < 1e-9 || std::abs(sinH) < 1e-9) continue; // degenerate; leave arc
+        double R = std::abs(c / (2.0 * sinH));
+        glm::vec2 mid = 0.5f * (S + E);
+        glm::vec2 dir = chord / static_cast<float>(c);
+        glm::vec2 n(-dir.y, dir.x);                 // left normal of the chord
+        double h = R * std::cos(half);              // signed offset mid->centre
+        glm::vec2 c1 = mid + n * static_cast<float>(h);
+        glm::vec2 c2 = mid - n * static_cast<float>(h);
+        // Two centres give the same circle; pick the one whose CCW start->end
+        // sweep matches the angle we're preserving (vs. its 2π-complement).
+        auto err = [&](glm::vec2 cc) {
+            double d = std::abs(ccwSweep(cc, S, E) - cap.sweep);
+            return std::min(d, std::abs(d - 2.0 * M_PI));
+        };
+        glm::vec2 center = (err(c1) <= err(c2)) ? c1 : c2;
+        movePoint(a->centerPointId, center);
+        a->radius = R;
+    }
+}
+
+void Sketch::setLineLength(int lineId, double newLength) {
+    SketchLine* l = nullptr;
+    for (auto& x : m_lines) if (x.id == lineId) { l = &x; break; }
+    if (!l) return;
+    const SketchPoint* p1 = getPoint(l->startPointId);
+    const SketchPoint* p2 = getPoint(l->endPointId);
+    if (!p1 || !p2) return;
+    glm::vec2 a = p1->pos, b = p2->pos;
+    glm::vec2 d = b - a;
+    double len = glm::length(d);
+    glm::vec2 dir = (len > 1e-9) ? d / static_cast<float>(len) : glm::vec2(1.0f, 0.0f);
+    glm::vec2 mid = 0.5f * (a + b);
+    float half = static_cast<float>(std::max(newLength, 1e-6) * 0.5);
+    moveEndpointPreservingArcs(l->startPointId, mid - dir * half);
+    moveEndpointPreservingArcs(l->endPointId,   mid + dir * half);
+}
+
+void Sketch::resizeArc(int arcId, double newRadius) {
+    SketchArc* a = nullptr;
+    for (auto& x : m_arcs) if (x.id == arcId) { a = &x; break; }
+    if (!a) return;
+    const SketchPoint* c = getPoint(a->centerPointId);
+    if (!c) return;
+    glm::vec2 C = c->pos;
+    float R = static_cast<float>(std::max(newRadius, 1e-6));
+    auto reproject = [&](int pid) {
+        const SketchPoint* p = getPoint(pid);
+        if (!p) return;
+        glm::vec2 v = p->pos - C;
+        double l = glm::length(v);
+        glm::vec2 dir = (l > 1e-9) ? v / static_cast<float>(l) : glm::vec2(1.0f, 0.0f);
+        movePoint(pid, C + dir * R);
+    };
+    reproject(a->startPointId);
+    reproject(a->endPointId);
+    a->radius = R;
+}
+
+void Sketch::setArcChord(int arcId, double chordLen) {
+    SketchArc* a = nullptr;
+    for (auto& x : m_arcs) if (x.id == arcId) { a = &x; break; }
+    if (!a) return;
+    const SketchPoint* c = getPoint(a->centerPointId);
+    const SketchPoint* s = getPoint(a->startPointId);
+    const SketchPoint* e = getPoint(a->endPointId);
+    if (!c || !s || !e) return;
+    // Keep the SAME arc shape (sweep angle), just scaled so the endpoints are
+    // `chordLen` apart: chord = 2 R sin(sweep/2)  ->  R = chord / (2 sin(sweep/2)).
+    // Then resize, which holds the centre and both endpoint angles and slides
+    // the ends radially — so the arc grows/shrinks symmetrically and the sweep
+    // is unchanged.
+    double sweep = ccwSweep(c->pos, s->pos, e->pos);
+    double sinHalf = std::sin(sweep * 0.5);
+    if (std::abs(sinHalf) < 1e-9) return; // ~0° or ~360°: chord undefined
+    resizeArc(arcId, std::max(chordLen, 1e-6) / (2.0 * std::abs(sinHalf)));
+}
+
+void Sketch::setArcSweep(int arcId, double sweepRad) {
+    SketchArc* a = nullptr;
+    for (auto& x : m_arcs) if (x.id == arcId) { a = &x; break; }
+    if (!a) return;
+    const SketchPoint* c = getPoint(a->centerPointId);
+    const SketchPoint* s = getPoint(a->startPointId);
+    if (!c || !s) return;
+    double sweep = std::clamp(sweepRad, 1.0 * M_PI / 180.0, 359.0 * M_PI / 180.0);
+    double aS = std::atan2(s->pos.y - c->pos.y, s->pos.x - c->pos.x);
+    double aE = aS + sweep; // CCW from start
+    float R = static_cast<float>(a->radius);
+    movePoint(a->endPointId,
+              glm::vec2(c->pos.x + std::cos(aE) * R, c->pos.y + std::sin(aE) * R));
+}
+
+bool Sketch::findAxisAlignedRect(int lineId, RectInfo& out) const {
+    const SketchLine* l0 = nullptr;
+    for (const auto& x : m_lines) if (x.id == lineId) { l0 = &x; break; }
+    if (!l0) return false;
+
+    // Walk a closed 4-cycle of lines: each step hops to the (unique) other line
+    // sharing the current point. Bail on any T-junction (a point used by >2
+    // lines) or a chain that doesn't close after exactly four hops.
+    auto otherLineAt = [&](int pid, int excludeLine) -> const SketchLine* {
+        const SketchLine* found = nullptr;
+        for (const auto& x : m_lines) {
+            if (x.id == excludeLine) continue;
+            if (x.startPointId == pid || x.endPointId == pid) {
+                if (found) return nullptr; // ambiguous: more than one
+                found = &x;
+            }
+        }
+        return found;
+    };
+    auto otherEnd = [](const SketchLine& l, int pid) {
+        return (l.startPointId == pid) ? l.endPointId : l.startPointId;
+    };
+
+    const SketchLine* lines[4] = {l0, nullptr, nullptr, nullptr};
+    int corners[4];
+    corners[0] = l0->startPointId;
+    int cur = l0->endPointId;
+    corners[1] = cur;
+    for (int i = 1; i < 4; ++i) {
+        const SketchLine* nxt = otherLineAt(cur, lines[i - 1]->id);
+        if (!nxt) return false;
+        lines[i] = nxt;
+        cur = otherEnd(*nxt, cur);
+        if (i < 3) corners[i + 1] = cur;
+    }
+    // The fourth line must close back onto the start point.
+    if (cur != corners[0]) return false;
+    // Four distinct corners.
+    for (int i = 0; i < 4; ++i)
+        for (int j = i + 1; j < 4; ++j)
+            if (corners[i] == corners[j]) return false;
+
+    glm::vec2 P[4];
+    for (int i = 0; i < 4; ++i) {
+        const SketchPoint* p = getPoint(corners[i]);
+        if (!p) return false;
+        P[i] = p->pos;
+    }
+    // Every side axis-aligned (horizontal or vertical).
+    const float axTol = 1e-4f;
+    for (int i = 0; i < 4; ++i) {
+        glm::vec2 d = P[(i + 1) % 4] - P[i];
+        if (std::abs(d.x) > axTol && std::abs(d.y) > axTol) return false;
+    }
+    float minx = std::min(std::min(P[0].x, P[1].x), std::min(P[2].x, P[3].x));
+    float maxx = std::max(std::max(P[0].x, P[1].x), std::max(P[2].x, P[3].x));
+    float miny = std::min(std::min(P[0].y, P[1].y), std::min(P[2].y, P[3].y));
+    float maxy = std::max(std::max(P[0].y, P[1].y), std::max(P[2].y, P[3].y));
+    out.center = glm::vec2(0.5f * (minx + maxx), 0.5f * (miny + maxy));
+    out.width  = maxx - minx;
+    out.height = maxy - miny;
+    for (int i = 0; i < 4; ++i) { out.cornerPts[i] = corners[i]; out.lineIds[i] = lines[i]->id; }
+    return true;
+}
+
+void Sketch::setRectangleSize(int lineId, double width, double height) {
+    RectInfo r;
+    if (!findAxisAlignedRect(lineId, r)) return;
+    float hw = static_cast<float>(std::max(width, 1e-6) * 0.5);
+    float hh = static_cast<float>(std::max(height, 1e-6) * 0.5);
+    for (int i = 0; i < 4; ++i) {
+        const SketchPoint* p = getPoint(r.cornerPts[i]);
+        if (!p) continue;
+        glm::vec2 q = p->pos - r.center;  // keep each corner in its own quadrant
+        glm::vec2 np(q.x >= 0.0f ? hw : -hw, q.y >= 0.0f ? hh : -hh);
+        moveEndpointPreservingArcs(r.cornerPts[i], r.center + np);
     }
 }
 
@@ -441,6 +686,11 @@ std::vector<TopoDS_Wire> Sketch::buildWires() const {
         // points; emitOcctEdge interpolates a smooth B-spline through ALL
         // its control points.
         int splineIdx = -1;
+        // Spline sub-edge: when a point lands on the spline and splits it, a
+        // sub-edge emits only samp[splineSampStart..splineSampEnd] of the sampled
+        // curve (sample density must match emitOcctEdge). -1/-1 = whole spline.
+        int splineSampStart = -1;
+        int splineSampEnd = -1;
     };
     std::vector<EdgeSpec> edges;
 
@@ -630,10 +880,63 @@ std::vector<TopoDS_Wire> Sketch::buildWires() const {
         const auto& sp = m_splines[si];
         if (sp.isConstruction) continue;
         if (sp.controlPointIds.size() < 2) continue;
+        const bool closedSp = sp.controlPointIds.size() > 2 &&
+                              sp.controlPointIds.front() == sp.controlPointIds.back();
+        // Sample the curve (density MUST match emitOcctEdge's sampleSpline2D) and
+        // find any adjacency node lying ON it other than the spline's own control
+        // points — a line endpoint landed there, and the spline must split so the
+        // loop-walker (and a dividing line) can route through that point.
+        std::vector<glm::vec2> samp = sampleSpline2D(sp, 24);
+        const int ns = static_cast<int>(samp.size());
+        std::unordered_set<int> ownCtrl(sp.controlPointIds.begin(), sp.controlPointIds.end());
+        // A landed point sits ANYWHERE on the curve (between samples), so project
+        // each candidate onto the sample SEGMENTS, not just the vertices — a
+        // vertex-only test misses a point on a chord and the loop never closes.
+        struct SplineSplit { int seg; float t; int ptId; };   // on segment [seg, seg+1]
+        std::vector<SplineSplit> splits;
+        if (ns >= 3) {
+            for (const auto& kv : coord) {
+                if (ownCtrl.count(kv.first)) continue;
+                int bestSeg = -1; float bestT = 0.0f, bestD = onLineTol;
+                for (int i = 0; i + 1 < ns; ++i) {
+                    glm::vec2 a = samp[i], ab = samp[i + 1] - a;
+                    float len2 = glm::dot(ab, ab);
+                    if (len2 < 1e-12f) continue;
+                    float t = glm::clamp(glm::dot(kv.second - a, ab) / len2, 0.0f, 1.0f);
+                    float d = glm::length(kv.second - (a + ab * t));
+                    if (d < bestD) { bestD = d; bestSeg = i; bestT = t; }
+                }
+                if (bestSeg >= 0) splits.push_back({bestSeg, bestT, kv.first});
+            }
+            std::sort(splits.begin(), splits.end(),
+                      [](const SplineSplit& a, const SplineSplit& b) {
+                          return a.seg != b.seg ? a.seg < b.seg : a.t < b.t; });
+        }
+        if (splits.empty()) {
+            EdgeSpec es;
+            es.splineIdx = static_cast<int>(si);
+            es.startPtId = sp.controlPointIds.front();
+            es.endPtId = sp.controlPointIds.back();
+            edges.push_back(es);
+            continue;
+        }
+        // Contiguous sub-edges front -> cut0 -> ... -> back. A cut on segment s
+        // ends the previous sub-edge at sample s and starts the next at sample
+        // s+1; the exact cut point is pinned in emitOcctEdge.
+        int prevStart = 0, prevPt = sp.controlPointIds.front();
+        for (const auto& s : splits) {
+            EdgeSpec es;
+            es.splineIdx = static_cast<int>(si);
+            es.startPtId = prevPt; es.endPtId = s.ptId;
+            es.splineSampStart = prevStart; es.splineSampEnd = s.seg;
+            edges.push_back(es);
+            prevStart = s.seg + 1; prevPt = s.ptId;
+        }
         EdgeSpec es;
         es.splineIdx = static_cast<int>(si);
-        es.startPtId = sp.controlPointIds.front();
-        es.endPtId = sp.controlPointIds.back();
+        es.startPtId = prevPt;
+        es.endPtId = closedSp ? sp.controlPointIds.front() : sp.controlPointIds.back();
+        es.splineSampStart = prevStart; es.splineSampEnd = ns - 1;
         edges.push_back(es);
     }
 
@@ -667,20 +970,6 @@ std::vector<TopoDS_Wire> Sketch::buildWires() const {
         }
     }
 
-    // Adjacency: pointId -> list of surviving edge indices
-    std::unordered_map<int, std::vector<int>> pointToEdges;
-    for (size_t i = 0; i < edges.size(); ++i) {
-        if (!alive[i]) continue;
-        pointToEdges[edges[i].startPtId].push_back(static_cast<int>(i));
-        pointToEdges[edges[i].endPtId].push_back(static_cast<int>(i));
-    }
-
-    std::unordered_set<int> usedEdges;
-
-    auto otherEnd = [&](const EdgeSpec& e, int p) {
-        return (e.startPtId == p) ? e.endPtId : e.startPtId;
-    };
-
     auto emitOcctEdge = [&](const EdgeSpec& es, int fromPt, BRepBuilderAPI_MakeWire& wm) -> bool {
         // Resolve through the coord table so synthetic crossing nodes (which have
         // no SketchPoint) work alongside real points.
@@ -693,23 +982,42 @@ std::vector<TopoDS_Wire> Sketch::buildWires() const {
             return false; // (a CLOSED spline legitimately starts where it ends)
 
         if (es.splineIdx >= 0) {
-            // The SAME centripetal Catmull-Rom curve the renderer draws,
-            // densely sampled and fitted with a B-spline — what you see is
-            // what extrudes. Walked in the chain's direction.
+            // The SAME centripetal Catmull-Rom curve the renderer draws, densely
+            // sampled and fitted with a B-spline — what you see is what extrudes.
+            // A sub-edge (splineSampStart/End set, from a point landing on the
+            // spline and splitting it) emits only that slice, with its ends pinned
+            // to the shared points so the pieces + the landing line meet exactly.
             const SketchSpline& sp = m_splines[es.splineIdx];
-            std::vector<glm::vec2> samp = sampleSpline2D(sp, 24);
+            std::vector<glm::vec2> full = sampleSpline2D(sp, 24); // density matches adjacency
+            const bool subEdge = (es.splineSampStart >= 0 && es.splineSampEnd >= 0);
+            std::vector<glm::vec2> samp;
+            if (subEdge) {
+                int a = std::max(0, es.splineSampStart);
+                int b = std::min(static_cast<int>(full.size()) - 1, es.splineSampEnd);
+                samp.push_back(sc->second);                     // exact start (pinned)
+                for (int i = a; i <= b; ++i) samp.push_back(full[i]);
+                samp.push_back(ec->second);                     // exact end (pinned)
+                // Drop a duplicate where a pinned end coincides with its sample
+                // (front/back sub-edges begin/end ON a control-point sample).
+                std::vector<glm::vec2> ded;
+                for (const auto& q : samp)
+                    if (ded.empty() || glm::length(q - ded.back()) > 1e-6f) ded.push_back(q);
+                samp.swap(ded);
+            } else {
+                samp = std::move(full);
+            }
             if (samp.size() < 2) return false;
-            bool closedSp = sp.controlPointIds.size() > 2 &&
-                            sp.controlPointIds.front() ==
-                                sp.controlPointIds.back();
+            bool closedSp = !subEdge && sp.controlPointIds.size() > 2 &&
+                            sp.controlPointIds.front() == sp.controlPointIds.back();
             if (fromPt == es.endPtId && !closedSp)
                 std::reverse(samp.begin(), samp.end());
             try {
                 TColgp_Array1OfPnt arr(1, static_cast<int>(samp.size()));
                 for (size_t k = 0; k < samp.size(); ++k)
-                    arr.SetValue(static_cast<int>(k) + 1,
-                                 sketchToWorld(samp[k]));
-                GeomAPI_PointsToBSpline fit(arr, 3, 8, GeomAbs_C2, 1.0e-3);
+                    arr.SetValue(static_cast<int>(k) + 1, sketchToWorld(samp[k]));
+                int degMin = std::min(3, static_cast<int>(samp.size()) - 1);
+                if (degMin < 1) return false;
+                GeomAPI_PointsToBSpline fit(arr, degMin, 8, GeomAbs_C2, 1.0e-3);
                 if (!fit.IsDone()) return false;
                 BRepBuilderAPI_MakeEdge mk(fit.Curve());
                 if (!mk.IsDone()) return false;
@@ -765,65 +1073,156 @@ std::vector<TopoDS_Wire> Sketch::buildWires() const {
         return true;
     };
 
-    for (size_t startIdx = 0; startIdx < edges.size(); ++startIdx) {
-        if (!alive[startIdx]) continue;
-        if (usedEdges.count(static_cast<int>(startIdx))) continue;
+    // ── Planar face traversal ──────────────────────────────────────────────
+    // Trace every minimal face of the planar graph via half-edges: each
+    // undirected edge becomes two directed half-edges, and at each vertex the
+    // face turns to the next edge in angular order. Every DIRECTED half-edge is
+    // used once, so two faces can share an edge — a bump attached to a loop, or
+    // a region split by a chord — which the old one-use-per-edge greedy walker
+    // could not (it consumed the shared edge for one face and starved the other,
+    // merging the bump or breaking the main loop). The unbounded outer face
+    // comes out clockwise and is dropped by its signed area.
 
-        std::vector<int> chain;
-        chain.push_back(static_cast<int>(startIdx));
-        usedEdges.insert(static_cast<int>(startIdx));
+    // A self-loop edge (a closed spline with no split points) is already a
+    // complete closed wire — emit it directly and keep it out of the graph.
+    std::vector<bool> edgeDead(edges.size(), false);
+    for (size_t i = 0; i < edges.size(); ++i) {
+        if (!alive[i]) { edgeDead[i] = true; continue; }
+        if (edges[i].startPtId == edges[i].endPtId) {
+            edgeDead[i] = true;
+            BRepBuilderAPI_MakeWire wm;
+            if (emitOcctEdge(edges[i], edges[i].startPtId, wm) && wm.IsDone())
+                wires.push_back(wm.Wire());
+        }
+    }
 
-        int firstPointId = edges[startIdx].startPtId;
-        int currentPointId = edges[startIdx].endPtId;
-
-        bool closed = false;
-        bool extended = true;
-        while (extended && !closed) {
-            extended = false;
-            if (currentPointId == firstPointId) { closed = true; break; }
-            auto it = pointToEdges.find(currentPointId);
-            if (it == pointToEdges.end()) break;
-            for (int idx : it->second) {
-                if (usedEdges.count(idx)) continue;
-                int nextPt = otherEnd(edges[idx], currentPointId);
-                if (nextPt < 0) continue;
-                chain.push_back(idx);
-                usedEdges.insert(idx);
-                currentPointId = nextPt;
-                extended = true;
-                break;
+    // 2D polyline of an edge from its `from` endpoint to its `to` endpoint,
+    // curves sampled — used both for the outgoing tangent (so a spline's two
+    // sub-arcs leaving a shared point are ordered right) and for the face's TRUE
+    // signed area (a corners-only polygon has ~zero area for a 2-spline loop).
+    auto edgePolyline = [&](const EdgeSpec& es, int fromPt) -> std::vector<glm::vec2> {
+        std::vector<glm::vec2> pts;
+        auto sc = coord.find(es.startPtId), ec = coord.find(es.endPtId);
+        glm::vec2 sPos = (sc != coord.end()) ? sc->second : glm::vec2(0.0f);
+        glm::vec2 ePos = (ec != coord.end()) ? ec->second : glm::vec2(0.0f);
+        if (es.splineIdx >= 0) {
+            const SketchSpline& sp = m_splines[es.splineIdx];
+            std::vector<glm::vec2> full = sampleSpline2D(sp, 24);
+            if (es.splineSampStart >= 0 && es.splineSampEnd >= 0 && !full.empty()) {
+                int a = std::max(0, es.splineSampStart);
+                int b = std::min(static_cast<int>(full.size()) - 1, es.splineSampEnd);
+                pts.push_back(sPos);
+                for (int i = a; i <= b; ++i) pts.push_back(full[i]);
+                pts.push_back(ePos);
+                std::vector<glm::vec2> ded;
+                for (const auto& q : pts)
+                    if (ded.empty() || glm::length(q - ded.back()) > 1e-6f) ded.push_back(q);
+                pts.swap(ded);
+            } else {
+                pts = full;
             }
-        }
-
-        if (!closed) {
-            for (int idx : chain) usedEdges.erase(idx);
-            continue;
-        }
-
-        // Emit OCCT wire from the chain
-        BRepBuilderAPI_MakeWire wireMaker;
-        int curPt = firstPointId;
-        bool valid = true;
-        for (int idx : chain) {
-            const EdgeSpec& es = edges[idx];
-            // A zero-length line (degenerate input — duplicate consecutive
-            // points) contributes no curve. SKIP it instead of failing:
-            // failing here used to silently drop the ENTIRE closed wire,
-            // which is how SVG circles with degenerate joint cubics
-            // vanished from region detection.
-            if (!es.isArc && es.splineIdx < 0) {
-                auto sc = coord.find(es.startPtId);
-                auto ec = coord.find(es.endPtId);
-                if (sc != coord.end() && ec != coord.end() &&
-                    glm::length(sc->second - ec->second) < 1e-6f) {
-                    curPt = otherEnd(es, curPt);
-                    continue;
+        } else if (es.isArc) {
+            glm::vec2 center(0); double radius = 0; bool ok = false;
+            if (es.circleId >= 0 && es.circleId < static_cast<int>(m_circles.size())) {
+                if (const SketchPoint* cp = getPoint(m_circles[es.circleId].centerPointId)) {
+                    center = cp->pos; radius = m_circles[es.circleId].radius; ok = true; }
+            } else {
+                int ai = -es.circleId - 2;
+                if (ai >= 0 && ai < static_cast<int>(m_arcs.size()))
+                    if (const SketchPoint* cp = getPoint(m_arcs[ai].centerPointId)) {
+                        center = cp->pos; radius = m_arcs[ai].radius; ok = true; }
+            }
+            if (ok && radius > 1e-9) {
+                const int N = 12;
+                for (int k = 0; k <= N; ++k) {
+                    float ang = es.startAngle + (es.endAngle - es.startAngle) * (static_cast<float>(k) / N);
+                    pts.push_back(center + glm::vec2(std::cos(ang), std::sin(ang)) * static_cast<float>(radius));
                 }
             }
-            if (!emitOcctEdge(es, curPt, wireMaker)) { valid = false; break; }
-            curPt = otherEnd(es, curPt);
         }
+        if (pts.size() < 2) pts = {sPos, ePos};
+        if (fromPt == es.endPtId) std::reverse(pts.begin(), pts.end());
+        return pts;
+    };
+    auto outgoingDir = [&](const EdgeSpec& es, int vpt) -> glm::vec2 {
+        std::vector<glm::vec2> poly = edgePolyline(es, vpt);
+        if (poly.size() < 2) return glm::vec2(1.0f, 0.0f);
+        glm::vec2 d = poly[1] - poly[0];
+        float l = glm::length(d);
+        return l > 1e-9f ? d / l : glm::vec2(1.0f, 0.0f);
+    };
 
+    // Half-edges: 2*i = start->end, 2*i+1 = end->start (twin = index ^ 1).
+    struct HE { int edge; int from; int to; float ang; };
+    std::vector<HE> he(edges.size() * 2, HE{-1, -1, -1, 0.0f});
+    for (size_t i = 0; i < edges.size(); ++i) {
+        if (edgeDead[i]) continue;
+        glm::vec2 ds = outgoingDir(edges[i], edges[i].startPtId);
+        glm::vec2 de = outgoingDir(edges[i], edges[i].endPtId);
+        he[2 * i]     = {static_cast<int>(i), edges[i].startPtId, edges[i].endPtId, std::atan2(ds.y, ds.x)};
+        he[2 * i + 1] = {static_cast<int>(i), edges[i].endPtId, edges[i].startPtId, std::atan2(de.y, de.x)};
+    }
+    std::unordered_map<int, std::vector<int>> outHE;
+    for (int i = 0; i < static_cast<int>(he.size()); ++i)
+        if (he[i].edge >= 0) outHE[he[i].from].push_back(i);
+    for (auto& kv : outHE)
+        std::sort(kv.second.begin(), kv.second.end(),
+                  [&](int a, int b) { return he[a].ang < he[b].ang; });
+
+    // Face's next half-edge: at the arrival vertex, the edge immediately
+    // clockwise of the twin in the CCW angular order.
+    auto nextHE = [&](int h) -> int {
+        int v = he[h].to, t = h ^ 1;       // twin is an outgoing half-edge at v
+        auto it = outHE.find(v);
+        if (it == outHE.end()) return -1;
+        const auto& lst = it->second;
+        int pos = -1, n = static_cast<int>(lst.size());
+        for (int i = 0; i < n; ++i) if (lst[i] == t) { pos = i; break; }
+        if (pos < 0) return -1;
+        return lst[(pos - 1 + n) % n];
+    };
+
+    std::vector<bool> heUsed(he.size(), false);
+    for (int h0 = 0; h0 < static_cast<int>(he.size()); ++h0) {
+        if (he[h0].edge < 0 || heUsed[h0]) continue;
+        std::vector<int> face;
+        int h = h0; bool closed = false;
+        for (int step = 0; step <= static_cast<int>(he.size()); ++step) {
+            if (h < 0 || heUsed[h]) break;
+            heUsed[h] = true; face.push_back(h);
+            int nh = nextHE(h);
+            if (nh == h0) { closed = true; break; }
+            h = nh;
+        }
+        if (!closed || face.empty()) continue;
+        // TRUE signed area from the sampled face outline (a corners-only polygon
+        // is ~zero for a 2-spline loop): keep CCW interior faces, drop the CW
+        // unbounded outer face and any zero-area degenerate.
+        std::vector<glm::vec2> poly;
+        for (int hh : face) {
+            std::vector<glm::vec2> ep = edgePolyline(edges[he[hh].edge], he[hh].from);
+            for (size_t k = (poly.empty() ? 0 : 1); k < ep.size(); ++k) poly.push_back(ep[k]);
+        }
+        double area2 = 0;
+        for (size_t k = 0; k < poly.size(); ++k) {
+            const glm::vec2& A = poly[k];
+            const glm::vec2& B = poly[(k + 1) % poly.size()];
+            area2 += static_cast<double>(A.x) * B.y - static_cast<double>(B.x) * A.y;
+        }
+        if (area2 <= 1e-7) continue;
+        BRepBuilderAPI_MakeWire wireMaker;
+        bool valid = true;
+        for (int hh : face) {
+            const EdgeSpec& es = edges[he[hh].edge];
+            // Skip a zero-length line (degenerate duplicate points) rather than
+            // failing the whole wire (that used to drop SVG circles).
+            if (!es.isArc && es.splineIdx < 0) {
+                auto sc = coord.find(es.startPtId), ec = coord.find(es.endPtId);
+                if (sc != coord.end() && ec != coord.end() &&
+                    glm::length(sc->second - ec->second) < 1e-6f) continue;
+            }
+            if (!emitOcctEdge(es, he[hh].from, wireMaker)) { valid = false; break; }
+        }
         if (valid && wireMaker.IsDone()) wires.push_back(wireMaker.Wire());
     }
 
@@ -875,8 +1274,18 @@ void densifyWire2D(const TopoDS_Wire& wire, const gp_Pln& plane,
         double f, l;
         Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
         if (curve.IsNull()) continue;
+        // Sample in the WIRE's traversal direction, not the curve's natural
+        // f->l one. BRepTools_WireExplorer walks edges head-to-tail, but a
+        // TopAbs_REVERSED edge (which the BOP region-builder routinely emits
+        // for multi-loop sketches) runs opposite to its curve parameter — so
+        // sampling f->l appends its points backwards, producing a self-
+        // intersecting polygon that makes the even-odd point-in-polygon test
+        // miscount. Honouring the orientation keeps the polygon simple so
+        // interior clicks land. (Same scramble noted in getSourceFaceCentroid.)
+        const bool rev = (ex.Orientation() == TopAbs_REVERSED);
         for (int i = 0; i < samplesPerEdge; ++i) {
-            double t = f + (l - f) * (double(i) / samplesPerEdge);
+            double frac = double(i) / samplesPerEdge;
+            double t = rev ? l - (l - f) * frac : f + (l - f) * frac;
             gp_Pnt p;
             curve->D0(t, p);
             out.push_back(toSketch2D(p));
@@ -908,6 +1317,10 @@ std::vector<Sketch::Region> Sketch::buildRegions() const {
     m_regionHash = h;
     m_regionCacheValid = true;
     return m_regionCache;
+}
+
+bool Sketch::regionsCached() const {
+    return m_regionCacheValid && geometryHash() == m_regionHash;
 }
 
 // FNV-1a over everything region construction depends on. ~10 µs on a text
@@ -1166,13 +1579,48 @@ std::vector<Sketch::Region> Sketch::buildRegionsUncached() const {
         if (atomic.empty()) atomic = faces; // fall back to the un-fused faces
     }
 
-    // Split those faces by every sketch line, so an open interior line that
+    // Split those faces by every open sketch curve, so an interior curve that
     // divides a region (e.g. a wall splitting a room) yields separate selectable
-    // cells. Lines that merely trace a face boundary are no-ops here; only lines
+    // cells. Curves that merely trace a face boundary are no-ops here; only those
     // crossing a face's interior actually subdivide it. (GF above handles closed
-    // overlaps/holes; this handles open dividing lines.)
+    // overlaps/holes; this handles open dividing lines, ARCS and splines — the
+    // greedy wire-walker in buildWires can miss interior bands bounded by two
+    // arcs, so feeding the arcs to the splitter recovers those cells.)
     {
         TopTools_ListOfShape toolEdges;
+        // A tool curve should only SUBDIVIDE a face when it crosses the interior;
+        // one that merely traces the boundary must be a no-op. BOPAlgo honours
+        // that for straight edges, but a boundary ARC gets imprinted and carves a
+        // thin sliver off each rounded corner (newly visible once SVG import
+        // recovers real arcs). So only feed a curve whose midpoint has face
+        // interior on BOTH sides — true for an interior divider, false for a
+        // boundary edge.
+        std::vector<std::vector<glm::vec2>> atomicPolys;
+        for (const auto& f : atomic) {
+            std::vector<glm::vec2> poly;
+            densifyWire2D(BRepTools::OuterWire(f), m_plane, poly);
+            if (!poly.empty()) atomicPolys.push_back(std::move(poly));
+        }
+        glm::vec2 abMin(0.0f), abMax(0.0f); bool haveAB = false;
+        for (const auto& poly : atomicPolys)
+            for (const auto& q : poly) {
+                if (!haveAB) { abMin = abMax = q; haveAB = true; }
+                else { abMin.x = std::min(abMin.x, q.x); abMin.y = std::min(abMin.y, q.y);
+                       abMax.x = std::max(abMax.x, q.x); abMax.y = std::max(abMax.y, q.y); }
+            }
+        const float divEps = std::max(1e-4f,
+            0.01f * glm::length(abMax - abMin));
+        auto insideAny = [&](glm::vec2 p) {
+            for (const auto& poly : atomicPolys)
+                if (pointInPolygon2D(poly, p)) return true;
+            return false;
+        };
+        auto isDivider = [&](glm::vec2 mid, glm::vec2 nrm) {
+            float nl = glm::length(nrm);
+            if (nl < 1e-9f) return true;           // degenerate: leave as-is
+            nrm /= nl;
+            return insideAny(mid + nrm * divEps) && insideAny(mid - nrm * divEps);
+        };
         for (const auto& line : m_lines) {
             const SketchPoint* a = getPoint(line.startPointId);
             const SketchPoint* b = getPoint(line.endPointId);
@@ -1180,8 +1628,58 @@ std::vector<Sketch::Region> Sketch::buildRegionsUncached() const {
             gp_Pnt p1 = sketchToWorld(a->pos);
             gp_Pnt p2 = sketchToWorld(b->pos);
             if (p1.Distance(p2) < 1e-9) continue;
+            glm::vec2 mid = 0.5f * (a->pos + b->pos);
+            glm::vec2 nrm(-(b->pos.y - a->pos.y), b->pos.x - a->pos.x);
+            if (!isDivider(mid, nrm)) continue;
             BRepBuilderAPI_MakeEdge mk(p1, p2);
             if (mk.IsDone()) toolEdges.Append(mk.Edge());
+        }
+        // Arcs as dividing tools — same three-point construction as emitOcctEdge.
+        for (const auto& arc : m_arcs) {
+            const SketchPoint* c = getPoint(arc.centerPointId);
+            const SketchPoint* s = getPoint(arc.startPointId);
+            const SketchPoint* e = getPoint(arc.endPointId);
+            if (!c || !s || !e) continue;
+            float sA = std::atan2(s->pos.y - c->pos.y, s->pos.x - c->pos.x);
+            float eA = std::atan2(e->pos.y - c->pos.y, e->pos.x - c->pos.x);
+            if (eA <= sA) eA += 2.0f * static_cast<float>(M_PI);
+            float midA = 0.5f * (sA + eA);
+            glm::vec2 mid2d(c->pos.x + std::cos(midA) * static_cast<float>(arc.radius),
+                            c->pos.y + std::sin(midA) * static_cast<float>(arc.radius));
+            gp_Pnt p1 = sketchToWorld(s->pos);
+            gp_Pnt pm = sketchToWorld(mid2d);
+            gp_Pnt p2 = sketchToWorld(e->pos);
+            if (p1.Distance(p2) < 1e-9 && p1.Distance(pm) < 1e-9) continue;
+            if (!isDivider(mid2d, glm::vec2(mid2d.x - c->pos.x, mid2d.y - c->pos.y)))
+                continue;
+            try {
+                GC_MakeArcOfCircle arcMaker(p1, pm, p2);
+                if (!arcMaker.IsDone()) continue;
+                BRepBuilderAPI_MakeEdge mk(arcMaker.Value());
+                if (mk.IsDone()) toolEdges.Append(mk.Edge());
+            } catch (...) {}
+        }
+        // Splines as dividing tools — same B-spline fit as emitOcctEdge.
+        for (const auto& sp : m_splines) {
+            if (sp.isConstruction || sp.controlPointIds.size() < 2) continue;
+            std::vector<glm::vec2> samp = sampleSpline2D(sp, 24);
+            if (samp.size() < 2) continue;
+            {   // boundary splines (e.g. an imported outline) must not sliver
+                size_t mi = samp.size() / 2;
+                size_t lo = mi > 0 ? mi - 1 : mi;
+                size_t hiK = mi + 1 < samp.size() ? mi + 1 : mi;
+                glm::vec2 tang = samp[hiK] - samp[lo];
+                if (!isDivider(samp[mi], glm::vec2(-tang.y, tang.x))) continue;
+            }
+            try {
+                TColgp_Array1OfPnt arr(1, static_cast<int>(samp.size()));
+                for (size_t k = 0; k < samp.size(); ++k)
+                    arr.SetValue(static_cast<int>(k) + 1, sketchToWorld(samp[k]));
+                GeomAPI_PointsToBSpline fit(arr, 3, 8, GeomAbs_C2, 1.0e-3);
+                if (!fit.IsDone()) continue;
+                BRepBuilderAPI_MakeEdge mk(fit.Curve());
+                if (mk.IsDone()) toolEdges.Append(mk.Edge());
+            } catch (...) {}
         }
         if (!toolEdges.IsEmpty() && !atomic.empty()) {
             try {

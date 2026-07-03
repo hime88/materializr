@@ -157,6 +157,12 @@ bool MoveFaceOp::execute(Document& doc) {
                 if (m_rotUseExplicit) topT = m_rotExplicit;
                 else topT.SetRotation(gp_Ax1(pivot, m_rotAxis), m_rotAngle);
                 break;
+            case Kind::Twist:
+                // Geometry is built by the layered loft below (loftTwist), not
+                // by topT. topT is set AFTER the axis is known so on-face
+                // sketches still follow the spin (see near m_appliedXform).
+                if (std::fabs(m_twistAngle) < 1e-6) return false;
+                break;
             case Kind::Scale:
                 if (m_scaleNonUniform) {
                     // M = sA·(A⊗A) + sB·(B⊗B) + 1·(N⊗N); T pins the pivot.
@@ -281,6 +287,58 @@ bool MoveFaceOp::execute(Document& doc) {
             return slides ? moved(w) : w;
         };
 
+        // ── Twist: layered loft about the prism's central axis ──────────────
+        // A single ruled loft re-aligns wires and only twists honestly to
+        // ~45deg; stepping the rotation up the height in small increments keeps
+        // corner correspondence for any angle (proven in probe_twist_face). The
+        // axis runs through the BASE centroid along the face normal; each layer
+        // is the base wire rotated by angle·t and lifted by heightVec·t. Holes
+        // ride the same axis (they orbit + spin), so a hole loft twists too.
+        const gp_Pnt twBaseCtr = centroid(baseOuter);
+        const gp_Ax1 twAxis(twBaseCtr, gp_Dir(N.X(), N.Y(), N.Z()));
+        const gp_Vec twHeight(twBaseCtr, pivot);
+        int twSteps = 2;
+        {
+            // ~10deg per layer: the ruled walls chord the true helicoid, so
+            // finer steps hug it closer (less volume shaved, smoother look).
+            // 10deg keeps a 90 twist to 9 layers / ~0.5% volume loss; capped so
+            // an extreme twist can't explode the face count.
+            double deg = std::fabs(m_twistAngle) * 180.0 / M_PI;
+            twSteps = std::max(2, static_cast<int>(std::ceil(deg / 10.0)));
+            if (twSteps > 64) twSteps = 64;
+        }
+        auto loftTwist = [&](const TopoDS_Wire& w, double angle,
+                             TopoDS_Shape& out) -> bool {
+            BRepOffsetAPI_ThruSections ts(Standard_True /*solid*/, Standard_True /*ruled*/);
+            for (int i = 0; i <= twSteps; ++i) {
+                double t = static_cast<double>(i) / twSteps;
+                gp_Trsf rot; rot.SetRotation(twAxis, angle * t);
+                gp_Trsf tr;  tr.SetTranslation(twHeight * t);
+                TopoDS_Wire wi = TopoDS::Wire(
+                    BRepBuilderAPI_Transform(w, tr * rot, Standard_True).Shape());
+                if (i == 0) wi.Reverse(); // base orientation (matches buildFeature)
+                ts.AddWire(wi);
+            }
+            try { ts.Build(); } catch (...) { return false; }
+            if (!ts.IsDone() || ts.Shape().IsNull()) return false;
+            out = ts.Shape();
+            return true;
+        };
+        auto buildTwistFeature = [&](bool applyMove) -> TopoDS_Shape {
+            double angle = applyMove ? m_twistAngle : 0.0;
+            TopoDS_Shape feat;
+            if (!loftTwist(baseOuter, angle, feat)) return TopoDS_Shape();
+            for (const auto& bi : baseInners) {
+                TopoDS_Shape holeSolid;
+                if (!loftTwist(bi, angle, holeSolid)) continue;
+                try {
+                    BRepAlgoAPI_Cut cut(feat, holeSolid);
+                    if (cut.IsDone() && !cut.Shape().IsNull()) feat = cut.Shape();
+                } catch (...) {}
+            }
+            return feat;
+        };
+
         // Build the feature solid base→top. applyMove OFF reconstructs the
         // ORIGINAL feature (the cut tool); ON builds the transformed one. The
         // hole rings ride/stay per the three-state flags (TILT must ride, else
@@ -316,7 +374,12 @@ bool MoveFaceOp::execute(Document& doc) {
             return feat;
         };
 
-        TopoDS_Shape newFeature = buildFeature(true);
+        const bool isTwist = (m_kind == Kind::Twist);
+        // On-face sketches follow the spin: give topT the full rotation now that
+        // the axis is known (topT was left identity in the switch for Twist).
+        if (isTwist) topT.SetRotation(twAxis, m_twistAngle);
+
+        TopoDS_Shape newFeature = isTwist ? buildTwistFeature(true) : buildFeature(true);
         if (newFeature.IsNull()) {
             std::fprintf(stderr, "[MoveFace] feature loft failed — refusing\n");
             return false;
@@ -328,7 +391,7 @@ bool MoveFaceOp::execute(Document& doc) {
         } else {
             // Cut the ORIGINAL feature out of the body, fuse the transformed one
             // back — keeps every other feature (the funnel above the spout).
-            TopoDS_Shape oldFeature = buildFeature(false);
+            TopoDS_Shape oldFeature = isTwist ? buildTwistFeature(false) : buildFeature(false);
             if (oldFeature.IsNull()) {
                 std::fprintf(stderr, "[MoveFace] original-feature loft failed\n");
                 return false;
@@ -419,6 +482,11 @@ bool MoveFaceOp::undo(Document& doc) {
 
 std::string MoveFaceOp::description() const {
     char buf[96];
+    if (m_kind == Kind::Twist) {
+        std::snprintf(buf, sizeof(buf), "Twist Face %.1f°",
+                      m_twistAngle * 180.0 / M_PI);
+        return buf;
+    }
     std::snprintf(buf, sizeof(buf), "Move Face by (%.2f, %.2f, %.2f)",
                   m_move.X(), m_move.Y(), m_move.Z());
     return buf;
@@ -440,9 +508,15 @@ OperationDiff MoveFaceOp::captureDiff() const {
 
 std::string MoveFaceOp::serializeParams() const {
     std::string blob;
-    char buf[160];
-    std::snprintf(buf, sizeof(buf), "body=%d;mx=%.6f;my=%.6f;mz=%.6f",
-                  m_bodyId, m_move.X(), m_move.Y(), m_move.Z());
+    char buf[200];
+    // k = kind (0 Translate, 1 Rotate, 2 Scale, 3 Twist); tw = twist radians.
+    // Older files omit both → deserialize keeps the Translate default (the only
+    // kind that ever round-tripped before); a Twist round-trips as an editable
+    // op via k+tw, other kinds still bake as a ReplayOp on reload.
+    std::snprintf(buf, sizeof(buf),
+                  "body=%d;k=%d;tw=%.6f;mx=%.6f;my=%.6f;mz=%.6f",
+                  m_bodyId, static_cast<int>(m_kind), m_twistAngle,
+                  m_move.X(), m_move.Y(), m_move.Z());
     blob += buf;
     if (!m_previousShape.IsNull() && !m_face.IsNull()) {
         std::vector<TopoDS_Shape> faces{m_face};
@@ -463,6 +537,9 @@ bool MoveFaceOp::deserializeParams(const std::string& blob) {
         std::string key = blob.substr(pos, eq - pos);
         std::string val = blob.substr(eq + 1, end - eq - 1);
         if      (key == "body") { m_bodyId = std::atoi(val.c_str()); any = true; }
+        else if (key == "k")    { int k = std::atoi(val.c_str());
+                                  if (k >= 0 && k <= 3) m_kind = static_cast<Kind>(k); any = true; }
+        else if (key == "tw")   { m_twistAngle = std::atof(val.c_str()); any = true; }
         else if (key == "mx")   { m_move.SetX(std::atof(val.c_str())); any = true; }
         else if (key == "my")   { m_move.SetY(std::atof(val.c_str())); any = true; }
         else if (key == "mz")   { m_move.SetZ(std::atof(val.c_str())); any = true; }

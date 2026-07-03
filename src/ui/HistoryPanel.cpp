@@ -70,9 +70,9 @@ bool HistoryPanel::render() {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
             "Step %d (%s) couldn't recompute — the geometry it referenced no "
-            "longer exists after the upstream edit. Edit an upstream step "
-            "(it retries automatically), edit this step's parameters, or "
-            "delete it.",
+            "longer exists after an upstream step was edited or disabled. "
+            "Re-enable the disabled step, edit an upstream step (it retries "
+            "automatically), edit this step's parameters, or delete it.",
             failedAt + 1, fop ? fop->name().c_str() : "?");
         ImGui::PopTextWrapPos();
         ImGui::Separator();
@@ -109,9 +109,15 @@ bool HistoryPanel::render() {
         bool isAboveCurrent = (i > currentStep);
         bool isFrozen = op->isReloaded(); // baked: reloaded with no editable params
 
+        // Soft highlight: the step owning the viewport-selected sketch element.
+        // Orange to match the in-viewport element highlight; editing (blue) wins.
+        bool isHighlighted = (i == m_highlightStep) && !isCurrentlyEditing;
+
         ImGui::PushID(i);
         if (isCurrentlyEditing) {
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.5f, 1.0f, 0.3f));
+        } else if (isHighlighted) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(1.0f, 0.55f, 0.1f, 0.30f));
         }
         // Colour precedence: dim (inactive/disabled) wins so the active row set
         // reads clearly; otherwise a frozen step is amber so it's easy to spot.
@@ -134,16 +140,24 @@ bool HistoryPanel::render() {
                       detail.c_str(),
                       isDisabled ? " [disabled]" : "",
                       isFrozen ? " (frozen)" : "");
-        bool selected = (i == m_editingStep);
+        bool selected = (i == m_editingStep) || isHighlighted;
         if (ImGui::Selectable(label, selected)) {
-            m_editingStep = i;
-            m_showProperties = true;
+            // Re-clicking the active step toggles it off, clearing the orange
+            // viewport highlight (which tracks the editing step) — otherwise
+            // there's no way to dismiss it.
+            if (i == m_editingStep) {
+                m_editingStep = -1;
+                m_showProperties = false;
+            } else {
+                m_editingStep = i;
+                m_showProperties = true;
+            }
             m_deleteConflict = false;
         }
         if (pushedText) {
             ImGui::PopStyleColor();
         }
-        if (isCurrentlyEditing) {
+        if (isCurrentlyEditing || isHighlighted) {
             ImGui::PopStyleColor();
         }
         if (ImGui::BeginPopupContextItem("StepContextMenu")) {
@@ -152,8 +166,9 @@ bool HistoryPanel::render() {
                 m_showProperties = true;
             }
             if (ImGui::MenuItem(op->isEnabled() ? "Disable" : "Enable")) {
-                const_cast<Operation*>(op)->setEnabled(!op->isEnabled());
-                m_history->replayAll(*m_document);
+                // In-place toggle — preserves base bodies the op modifies
+                // (replayAll's doc.clear() would delete them).
+                m_history->setStepEnabled(i, !op->isEnabled(), *m_document);
                 modified = true;
             }
             if (ImGui::MenuItem("Set Breakpoint Here")) {
@@ -179,7 +194,7 @@ bool HistoryPanel::render() {
     // expanded, all older buckets are collapsed (so the panel boots
     // minimised).
     using ymd_t = std::tuple<int, int, int>; // year, month, day (0-based mon)
-    auto stepDate = [&](int idx) -> ymd_t {
+    auto computeStepDate = [&](int idx) -> ymd_t {
         const Operation* op = m_history->getStep(idx);
         if (!op) return {1970, 0, 1};
         std::time_t tt = std::chrono::system_clock::to_time_t(op->timestamp());
@@ -190,6 +205,24 @@ bool HistoryPanel::render() {
         localtime_r(&tt, &local);
 #endif
         return {local.tm_year + 1900, local.tm_mon, local.tm_mday};
+    };
+    // Step timestamps never change, so their calendar dates are cached and
+    // rebuilt only when history mutates — the grouping loop below reads the
+    // date of EVERY step EVERY frame, which was 150+ localtime_r calls per
+    // frame on a long history. ("Today"/"Yesterday" labels still use a fresh
+    // `today` below, so the midnight rollover renames buckets correctly.)
+    static std::vector<ymd_t> s_stepDates;
+    static unsigned s_stepDatesRev = ~0u;
+    if (s_stepDatesRev != m_history->revision() ||
+        static_cast<int>(s_stepDates.size()) != stepCount) {
+        s_stepDatesRev = m_history->revision();
+        s_stepDates.resize(stepCount);
+        for (int k = 0; k < stepCount; ++k) s_stepDates[k] = computeStepDate(k);
+    }
+    auto stepDate = [&](int idx) -> ymd_t {
+        return (idx >= 0 && idx < static_cast<int>(s_stepDates.size()))
+                   ? s_stepDates[idx]
+                   : ymd_t{1970, 0, 1};
     };
     auto dateLabel = [](ymd_t d, ymd_t today, ymd_t yest) -> std::string {
         if (d == today) return "Today";

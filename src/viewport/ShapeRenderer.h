@@ -97,9 +97,6 @@ public:
     /// Get a color from a cycling palette for the given body index.
     static glm::vec3 bodyColor(int index);
 
-    /// Get the number of stored meshes.
-    int getMeshCount() const { return static_cast<int>(m_meshes.size()); }
-
 private:
     struct MeshData {
         unsigned int vao = 0;
@@ -111,12 +108,6 @@ private:
         bool selected = false;
         bool subtractPreview = false;
     };
-
-    // Internal: upload a tessellated shape's vertex buffer into `slot`.
-    // Frees the slot's previous GL resources, recomputes triangles, and
-    // re-uploads. Returns true on success.
-    bool uploadTessellatedInto(int slot, const TopoDS_Shape& shape,
-                               float deflection, float angularDeflection);
 
     bool compileShader(unsigned int& shader, unsigned int type, const char* source);
     bool linkProgram(unsigned int program, unsigned int vertShader, unsigned int fragShader);

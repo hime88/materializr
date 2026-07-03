@@ -104,6 +104,21 @@ public:
     void setMouseSensitivity(float s) { m_mouseSensitivity = s; }
     float getMouseSensitivity() const { return m_mouseSensitivity; }
 
+    /// Viewport height in the same units the pan deltas arrive in (ImGui
+    /// points). With this set, pan() moves the world EXACTLY one
+    /// world-size-of-a-pixel per pixel dragged — the point under the cursor
+    /// stays under the cursor at any zoom. Unset (<= 0) keeps the legacy
+    /// distance-fraction pan. Refreshed every frame by the app.
+    void setViewHeightPx(float px) { m_viewHeightPx = px; }
+
+    /// Depth anchor for perspective pan: distance from the camera to the
+    /// content the user is grabbing (the hover pick at drag start). The
+    /// camera TARGET distance is a bad proxy on large projects — cursor-zoom
+    /// can leave the target metres from (or millimetres in front of) the
+    /// geometry on screen, making pan frozen or twitchy. <= 0 falls back to
+    /// the target distance. Cleared when the pan gesture ends.
+    void setPanRefDist(float d) { m_panRefDist = d; }
+
 private:
     glm::vec3 m_position;
     glm::vec3 m_target;
@@ -124,6 +139,9 @@ private:
     float m_zoomSpeed;
     // User-facing sensitivity multiplier (see setMouseSensitivity).
     float m_mouseSensitivity = 1.0f;
+    // Exact-pan support (see setViewHeightPx / setPanRefDist).
+    float m_viewHeightPx = 0.0f;
+    float m_panRefDist = -1.0f;
 };
 
 } // namespace materializr

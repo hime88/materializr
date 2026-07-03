@@ -25,6 +25,14 @@ struct ProjectRecoveryMeta {
 };
 
 // Absolute path of the recovery snapshot (~/.config/materializr/recovery/...).
+// MULTI-INSTANCE SAFETY: every running instance claims its own recovery SLOT
+// (an OS file lock on recovery/slot<N>.lock, held for the process lifetime and
+// auto-released by the kernel on crash). projectRecoveryPath() is THIS
+// instance's slot file — slot 0 keeps the legacy "autosave.materializr" name,
+// later slots get "autosave-<N>.materializr". Two instances therefore never
+// write (or truncate) each other's snapshot: the old single shared path let
+// instance A's rename/overwrite yank the file out from under instance B
+// (SIGBUS) and made the restore prompt offer the WRONG session's work.
 std::string projectRecoveryPath();
 
 // Snapshot the document (+ optional history) to the recovery sidecar, written to
@@ -35,14 +43,26 @@ bool writeProjectRecovery(const Document& doc, const ProjectHistory* history,
                           const std::string& projectPath, int bodyCount,
                           int stepCount);
 
-// True if a recovery snapshot currently exists on disk.
+// Startup scan: true if some ORPHANED recovery snapshot exists — one whose
+// owning instance is provably dead (its slot lock is acquirable). A snapshot
+// belonging to a live instance (or to us) is never offered. When several
+// orphans exist the newest is chosen; the rest surface on later launches.
+// Remembers the chosen snapshot for the calls below.
 bool hasProjectRecovery();
 
-// Read just the sidecar metadata (for the restore prompt). The geometry itself
-// is restored by loading projectRecoveryPath() through the normal loader.
+// Path of the orphaned snapshot chosen by hasProjectRecovery() ("" if none).
+// This is what the restore loads — NOT projectRecoveryPath(), which is our
+// own (live) slot.
+std::string projectRecoveryRestorePath();
+
+// Read the chosen orphan's sidecar metadata (for the restore prompt).
 bool readProjectRecoveryMeta(ProjectRecoveryMeta& meta);
 
-// Delete the recovery snapshot + its meta (clean exit / user discard).
+// Delete THIS instance's snapshot + meta (clean exit).
 void clearProjectRecovery();
+
+// Delete the chosen ORPHANED snapshot + meta (user discard, failed restore,
+// or right after a successful restore so it isn't offered again).
+void clearProjectRecoveryCandidate();
 
 } // namespace materializr

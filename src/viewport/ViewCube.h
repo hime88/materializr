@@ -11,6 +11,11 @@ enum class ViewCubeAction {
     None, Front, Back, Left, Right, Top, Bottom,
     FrontTopRight, FrontTopLeft, BackTopRight, BackTopLeft,
     FrontBottomRight, FrontBottomLeft, BackBottomRight, BackBottomLeft,
+    // Edge (two-face) views — clicking the seam between two faces looks down
+    // that edge so both faces are seen at once. One zero component each.
+    TopFront, TopBack, TopLeft, TopRight,
+    BottomFront, BottomBack, BottomLeft, BottomRight,
+    FrontLeft, FrontRight, BackLeft, BackRight,
     RotateLeft, RotateRight, RotateUp, RotateDown,
     // Roll the camera 90° around the view axis (CCW / CW). Lets the user
     // re-orient a snapped ortho view (e.g. Top) without un-snapping.

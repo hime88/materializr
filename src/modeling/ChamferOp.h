@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Operation.h"
 #include "../core/Document.h"
+#include "EdgeAnchor.h"
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -19,6 +20,11 @@ public:
     // Second setback (along the OTHER face of each edge). <= 0 means symmetric:
     // both faces use setDistance(). > 0 makes an asymmetric chamfer.
     void setDistance2(double distance) { m_distance2 = distance; }
+
+    // Generative edge tracking (see FilletOp / EdgeAnchor.h): source sketch so
+    // a chamfered corner/rim edge follows a later dimension edit.
+    void setSourceSketch(int sketchId) { m_sourceSketchId = sketchId; }
+    int  getSourceSketch() const { return m_sourceSketchId; }
 
     // Getters
     int getBodyId() const { return m_bodyId; }
@@ -70,4 +76,18 @@ private:
     TopoDS_Shape m_resultShape;
     std::vector<int> m_edgeIndices;
     std::vector<int> m_genFaceIndices;
+
+    // Generative anchors (EdgeAnchor.h) — same scheme as FilletOp.
+    int m_sourceSketchId = -1;
+    std::vector<EdgeAnchor::Anchor> m_edgeAnchors;
+    void computeAnchors(Document& doc);
+    bool resolveAnchors(Document& doc, const TopoDS_Shape& base);
+
+public:
+    // Retrofit anchors for a chamfer loaded from a pre-anchoring project.
+    // Anchoring consults every sketch in the document (see FilletOp).
+    void ensureAnchors(Document& doc) {
+        if (m_edgeAnchors.empty() && !m_edges.empty())
+            computeAnchors(doc);
+    }
 };

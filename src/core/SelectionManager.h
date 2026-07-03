@@ -67,6 +67,12 @@ public:
     bool navigationOnly() const { return m_navigationOnly; }
     void setNavigationOnly(bool b) { m_navigationOnly = b; }
 
+    // Monotonic counter bumped by every mutation (select/add/remove/toggle/
+    // clear). Lets callers memoize per-selection work — e.g. the toolbar's
+    // "Edit Diameter" candidate detection, which was re-running OCCT surface
+    // queries every rendered frame while a face was selected.
+    unsigned revision() const { return m_revision; }
+
 private:
     int findEntry(const SelectionEntry& entry) const;
     void publishChanged();
@@ -74,4 +80,5 @@ private:
     std::vector<SelectionEntry> m_selection;
     materializr::EventBus* m_eventBus = nullptr;
     bool m_navigationOnly = false;
+    unsigned m_revision = 0;
 };

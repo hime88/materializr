@@ -39,7 +39,9 @@ enum class ToolAction {
     // Geometric constraints that need circle/arc selection (Session 4 catalogue).
     SketchConstrainTangent, SketchConstrainConcentric,
     // General
-    Measure, ResetCamera
+    Measure, ResetCamera,
+    // Fabrication: unfold a body into a flat pattern for laser/CNC/cut templates.
+    Unfold
 };
 
 class Toolbar {

@@ -34,7 +34,7 @@ void Viewport::bind()
     // NOTE: glBindFramebuffer requires glad or GL 3.0+ function pointer
     if (m_samples > 0 && m_msaaFbo) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_msaaFbo);
-#if !defined(__ANDROID__)
+#if !defined(MZ_GLES)
         // GL ES has no GL_MULTISAMPLE toggle — MSAA is implied by the
         // multisampled renderbuffer/EGL config and is always active.
         glEnable(GL_MULTISAMPLE);
@@ -54,7 +54,7 @@ void Viewport::unbind()
         glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height,
                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_windowFramebuffer);
 }
 
 void Viewport::setSamples(int samples)
@@ -71,41 +71,6 @@ void Viewport::setSamples(int samples)
     m_samples = samples;
     destroyFramebuffer();
     createFramebuffer();
-}
-
-void Viewport::handleInput()
-{
-    if (!m_isHovered) {
-        m_isDragging = false;
-        return;
-    }
-
-    ImGuiIO& io = ImGui::GetIO();
-    glm::vec2 mousePos(io.MousePos.x, io.MousePos.y);
-    glm::vec2 mouseDelta = mousePos - m_lastMousePos;
-
-    // Scroll wheel -> zoom
-    if (io.MouseWheel != 0.0f) {
-        m_camera.zoom(io.MouseWheel);
-    }
-
-    // Middle mouse button interactions
-    bool middleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-
-    if (middleDown) {
-        if (io.KeyShift) {
-            // Shift + middle mouse drag -> pan
-            m_camera.pan(mouseDelta.x, mouseDelta.y);
-        } else {
-            // Middle mouse drag -> orbit
-            m_camera.orbit(mouseDelta.x, mouseDelta.y);
-        }
-        m_isDragging = true;
-    } else {
-        m_isDragging = false;
-    }
-
-    m_lastMousePos = mousePos;
 }
 
 void Viewport::createFramebuffer()
@@ -158,7 +123,7 @@ void Viewport::createFramebuffer()
                                   GL_RENDERBUFFER, m_msaaDepth);
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_windowFramebuffer);
 }
 
 void Viewport::destroyFramebuffer()

@@ -25,7 +25,13 @@ public:
     //   Translate: slide the face in its plane (Move).
     //   Rotate:    tilt the face about an in-plane axis through its centre (Taper).
     //   Scale:     grow/shrink the face about its centre (Scale Face).
-    enum class Kind { Translate, Rotate, Scale };
+    //   Twist:     spin the face about its NORMAL relative to the opposite cap,
+    //              so the walls spiral. Unlike the others this is a LAYERED loft
+    //              (base -> N intermediate rotated sections -> top) because a
+    //              single ruled loft re-aligns wires and caps out at ~45deg; the
+    //              small per-step rotation keeps corner correspondence honest for
+    //              any total angle (see probe_twist_face).
+    enum class Kind { Translate, Rotate, Scale, Twist };
 
     void setBody(int bodyId) { m_bodyId = bodyId; }
     void setFace(const TopoDS_Face& f) { m_face = f; }
@@ -42,6 +48,9 @@ public:
     void setRotationExplicit(const gp_Trsf& t) {
         m_rotExplicit = t; m_rotUseExplicit = true;
     }
+    // Twist: rotation angle (radians) of the selected face about its normal,
+    // relative to the opposite cap. The walls spiral between them.
+    void setTwist(double angleRad) { m_twistAngle = angleRad; }
     // Scale: uniform factor about the face centre.
     void setScaleFactor(double f) { m_scaleFactor = f; m_scaleNonUniform = false; }
     // Scale: NON-uniform — separate factors along two in-plane axes (about the
@@ -93,6 +102,7 @@ private:
     double m_rotAngle = 0.0;       // radians (Rotate)
     gp_Trsf m_rotExplicit;         // composed rotation (Rotate, explicit mode)
     bool m_rotUseExplicit = false;
+    double m_twistAngle = 0.0;     // radians about the face normal (Twist)
     double m_scaleFactor = 1.0;    // uniform (Scale)
     bool m_scaleNonUniform = false;
     gp_Dir m_scaleAxisA{1.0, 0.0, 0.0}, m_scaleAxisB{0.0, 1.0, 0.0};

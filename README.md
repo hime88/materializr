@@ -24,6 +24,15 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 | Windows (portable) | `Materializr-windows-x64.zip` | unzip anywhere, run `materializr.exe` |
 | Android (F-Droid) | [on F-Droid](https://f-droid.org/packages/com.materializr.app/) | install + auto-update from the F-Droid app; tablets recommended |
 | Android (latest APK) | `Materializr-*-arm64-v8a.apk` | sideload (enable "install unknown apps") for the freshest fixes; tablets recommended |
+| macOS (Apple Silicon) | `Materializr-*-arm64.dmg` | open the `.dmg`, drag **Materializr** to Applications — see the first-launch note below |
+
+> **Linux glibc requirement:** the AppImage is built on a current toolchain, so
+> it needs **glibc 2.38 or newer** (Ubuntu 24.04+, Fedora 39+, Zorin 18+ — any
+> 2024-or-later distro). On older systems it won't start, failing with
+> `GLIBC_2.38 not found` / `GLIBCXX_3.4.32 not found`. If you're on an older
+> distro, either [build from source](docs/building.md) — it compiles against
+> your own libraries, so there's no version floor — or run the AppImage inside
+> an `ubuntu:24.04` [Distrobox](https://distrobox.it/) / Toolbox container.
 
 > **Prefer F-Droid?** It builds each release from source on its own
 > roughly-weekly cadence, so a brand-new bug fix can take a few days to reach it.
@@ -33,6 +42,13 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 > rejects the signature change. Switching sources means uninstalling first,
 > which clears the app's on-device files, so export any projects you want to
 > keep beforehand. Easiest is to pick one source and stick with it.
+
+> **macOS first launch:** the app is Apple-Silicon only (M1 or newer) and is
+> ad-hoc signed, not notarized — so the first time you open it, macOS
+> Gatekeeper will say it "cannot be opened because the developer cannot be
+> verified." Right-click (or Control-click) the app in Applications and choose
+> **Open**, then **Open** again in the dialog — this is a one-time approval.
+> (Equivalently: System Settings → Privacy & Security → **Open Anyway**.)
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![CMake](https://img.shields.io/badge/CMake-3.20%2B-blue)
@@ -73,7 +89,8 @@ spin or a hinge open), loft, booleans, fillet/chamfer, shell, mirror,
 linear & circular patterns, split. Drop in a **primitive** (box,
 cylinder, sphere, cone, torus) when that's the faster start. Direct face
 editing: **taper** (draft), **scale face** (pinch a wing tip into a winglet),
-edit a hole or boss to an exact diameter.
+**twist a face** about its normal to spiral the walls, edit a hole or boss to
+an exact diameter.
 
 **Detail** — validated **screw threads** (internal & external, standard
 coarse defaults from the diameter), and **Projection**: engrave or emboss
@@ -113,7 +130,16 @@ up front:
   threading is treated as a terminal finishing step rather than something you
   build on top of.
 
-These are tracked and on the roadmap; both ease once topological naming is in.
+- **Chamfering an edge that meets a fillet fails.** If a chamfer's edge runs
+  into a rounded (filleted) edge, the operation is refused where the chamfer and
+  the swept fillet surface intersect — there's no tolerance setting that rescues
+  it. *Why:* it's an upstream limit in OpenCASCADE's chamfer builder, not
+  something a knob fixes. *Workaround:* cut the chamfer with a sketch instead, or
+  chamfer the edge before you fillet its neighbour.
+
+The first two ease once topological naming lands; the chamfer/fillet case is an
+upstream OpenCASCADE limit we're tracking for a cut-based fallback. All three
+are on the roadmap.
 
 ## Documentation
 
@@ -140,9 +166,9 @@ project is GPLv3 from here on.)
 
 ## Contributing
 
-Contributions welcome — bug reports and missing-workflow notes especially,
-as the road to 1.0 is field testing. Open an issue first for substantial
-changes; small fixes can go straight to a PR.
+Contributions welcome — bug reports and missing-workflow notes especially;
+real-world dogfooding is what hardens each release. Open an issue first for
+substantial changes; small fixes can go straight to a PR.
 
 Join the community on **[Discord](https://discord.gg/BRjzbMGZvE)** for questions, show-and-tell, and development chat.
 

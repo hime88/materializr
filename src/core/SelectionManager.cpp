@@ -5,6 +5,10 @@
 #include <algorithm>
 
 void SelectionManager::publishChanged() {
+    // Every mutation funnels through here — the revision counter rides along
+    // so per-selection memoizations (see revision()) invalidate exactly when
+    // the selection actually changes.
+    ++m_revision;
     if (m_eventBus) m_eventBus->publish(materializr::SelectionChangedEvent{});
 }
 

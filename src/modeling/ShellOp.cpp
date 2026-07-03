@@ -2,16 +2,114 @@
 #include "SubShapeIndex.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <vector>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffset_Mode.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <GeomAbs_JoinType.hxx>
+#include <GeomAbs_SurfaceType.hxx>
 #include <Standard_ErrorHandler.hxx> // OCC_CATCH_SIGNALS
 #include <TopoDS.hxx>
+#include <TopExp_Explorer.hxx>
+#include <gp_Vec.hxx>
+#include <algorithm>
 #include <imgui.h>
 
+namespace {
+
+// A face's outward normal and a point on it, sampled at its parametric centre.
+bool faceNormalPoint(const TopoDS_Face& f, gp_Dir& outN, gp_Pnt& outP) {
+    try {
+        BRepGProp_Face gf(f);
+        Standard_Real u0, u1, v0, v1; gf.Bounds(u0, u1, v0, v1);
+        gp_Pnt p; gp_Vec n;
+        gf.Normal(0.5 * (u0 + u1), 0.5 * (v0 + v1), p, n);
+        if (n.Magnitude() < 1e-9) return false;
+        outN = gp_Dir(n);
+        outP = p;
+        return true;
+    } catch (...) { return false; }
+}
+
+// Is `face` one of `shape`'s faces (same underlying TShape)?
+bool faceInShape(const TopoDS_Face& face, const TopoDS_Shape& shape) {
+    for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next())
+        if (ex.Current().IsSame(face)) return true;
+    return false;
+}
+
+} // namespace
+
 ShellOp::ShellOp() = default;
+
+std::vector<double> ShellOp::roundedFaceRadii(const TopoDS_Shape& body) {
+    std::vector<double> radii;
+    if (body.IsNull()) return radii;
+    for (TopExp_Explorer ex(body, TopAbs_FACE); ex.More(); ex.Next()) {
+        try {
+            BRepAdaptor_Surface sa(TopoDS::Face(ex.Current()));
+            double r = -1.0;
+            if (sa.GetType() == GeomAbs_Cylinder)   r = sa.Cylinder().Radius();
+            else if (sa.GetType() == GeomAbs_Torus) r = sa.Torus().MinorRadius();
+            if (r <= 0.0) continue;
+            bool seen = false;
+            for (double e : radii) if (std::abs(e - r) < 1e-4) { seen = true; break; }
+            if (!seen) radii.push_back(r);
+        } catch (...) {}
+    }
+    std::sort(radii.begin(), radii.end());
+    return radii;
+}
+
+void ShellOp::captureFaceAnchors(const TopoDS_Shape& shape) {
+    if (!m_faceAnchors.empty() || m_facesToRemove.IsEmpty() || shape.IsNull())
+        return;
+    for (const TopoDS_Shape& s : m_facesToRemove) {
+        gp_Dir n; gp_Pnt p;
+        if (faceNormalPoint(TopoDS::Face(s), n, p))
+            m_faceAnchors.push_back({ n, p });
+    }
+}
+
+bool ShellOp::rebindFaces(const TopoDS_Shape& shape) {
+    if (shape.IsNull()) return false;
+    // Nothing to open (a fully-closed hollow) is legitimate.
+    if (m_facesToRemove.IsEmpty() && m_faceAnchors.empty()) return true;
+
+    // Fast path: every stored face is still a live face of this body.
+    bool allLive = !m_facesToRemove.IsEmpty();
+    for (const TopoDS_Shape& s : m_facesToRemove)
+        if (!faceInShape(TopoDS::Face(s), shape)) { allLive = false; break; }
+    if (allLive) return true;
+
+    // Rebind from anchors: for each opened face, pick the body face whose
+    // normal best aligns AND whose plane is nearest the anchor point (so a
+    // lateral resize that keeps the cap's orientation still matches it).
+    if (m_faceAnchors.empty()) return false;
+    TopTools_ListOfShape rebound;
+    for (const FaceAnchor& a : m_faceAnchors) {
+        TopoDS_Face best; double bestScore = -1e18;
+        for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
+            TopoDS_Face f = TopoDS::Face(ex.Current());
+            gp_Dir n; gp_Pnt p;
+            if (!faceNormalPoint(f, n, p)) continue;
+            double dot = n.Dot(a.normal);
+            if (dot < 0.9) continue; // must face (nearly) the same way
+            // Distance from the anchor point to this face's plane along n.
+            double planeDist = std::abs(gp_Vec(p, a.point).Dot(gp_Vec(n)));
+            // Prefer best alignment, then nearest plane.
+            double score = dot - 0.01 * planeDist;
+            if (score > bestScore) { bestScore = score; best = f; }
+        }
+        if (best.IsNull()) return false;
+        rebound.Append(best);
+    }
+    m_facesToRemove = rebound;
+    return true;
+}
 
 void ShellOp::setBody(int id) {
     m_bodyId = id;
@@ -38,18 +136,41 @@ bool ShellOp::execute(Document& doc) {
         // Store previous shape for undo
         m_previousShape = doc.getBody(m_bodyId);
 
-        // The default arc-join offset is fragile on lofted / BSpline side walls
-        // (e.g. a Scale-Face frustum), where it silently produced nothing. Try
-        // the arc join first, then an intersection-join retry that survives more
-        // of those cases. Validate the result before accepting it.
+        // Re-bind the opened faces to the (possibly regenerated) body before
+        // offsetting — without this, an upstream sketch edit that rebuilds the
+        // body leaves m_facesToRemove pointing at the OLD body's faces, so the
+        // opening is silently lost and the whole shell vanishes on the next
+        // edit. Mirrors FilletOp's edge rebind. Capture the anchors first (on
+        // the initial run they're still valid against this body).
+        captureFaceAnchors(m_previousShape);
+        if (!rebindFaces(m_previousShape)) {
+            std::fprintf(stderr,
+                "[Shell] could not re-find the opened face(s) on the rebuilt "
+                "body (thickness %.3f mm).\n", m_thickness);
+            return false;
+        }
+
+        // Two join strategies, tried in order:
+        //  • Arc (rolling-ball) — the default; rounds inner transitions. This
+        //    is the one that OCCT can drive to a hard fault when the wall is
+        //    thicker than a concave fillet on the body can absorb (the inner
+        //    offset of an R fillet collapses at thickness >= R).
+        //  • Intersection (sharp corners) — survives some lofted/BSpline side
+        //    walls the arc join can't. BUT on a filleted body at an over-thick
+        //    wall it does NOT fail cleanly — it spins in an unbounded internal
+        //    loop (OCCT "Cote PT2PT3 nul"), freezing the app.
+        // So: if the Arc attempt THREW (thickness exceeds the geometry's
+        // capacity), do NOT fall through to Intersection — that's the hang.
+        // Only try Intersection when Arc failed *cleanly* (produced an invalid
+        // or null result without throwing), i.e. the lofted-wall case.
+        enum Outcome { Ok, CleanFail, Threw };
         auto tryShell = [&](Standard_Boolean inter, GeomAbs_JoinType join,
-                            TopoDS_Shape& out) -> bool {
+                            TopoDS_Shape& out) -> Outcome {
             try {
                 // A thick-solid that exceeds the body's available wall space can
-                // SIGSEGV deep in BRepOffset (issue #3: shell-on-shell). With
-                // OCC_CONVERT_SIGNALS enabled, OCC_CATCH_SIGNALS turns that
-                // kernel signal into a Standard_Failure the catch below absorbs,
-                // so the op cleanly fails instead of taking the app down.
+                // SIGSEGV deep in BRepOffset. With OCC_CONVERT_SIGNALS enabled,
+                // OCC_CATCH_SIGNALS turns that kernel signal into a
+                // Standard_Failure the catch below absorbs.
                 OCC_CATCH_SIGNALS
                 BRepOffsetAPI_MakeThickSolid mk;
                 mk.MakeThickSolidByJoin(m_previousShape, m_facesToRemove,
@@ -59,20 +180,29 @@ bool ShellOp::execute(Document& doc) {
                 if (mk.IsDone() && !mk.Shape().IsNull() &&
                     BRepCheck_Analyzer(mk.Shape()).IsValid()) {
                     out = mk.Shape();
-                    return true;
+                    return Ok;
                 }
-            } catch (...) {}
-            return false;
+            } catch (...) {
+                return Threw;
+            }
+            return CleanFail;
         };
 
         TopoDS_Shape result;
-        if (!tryShell(Standard_False, GeomAbs_Arc, result) &&
-            !tryShell(Standard_True, GeomAbs_Intersection, result)) {
-            std::fprintf(stderr,
-                "[Shell] failed at thickness %.3f mm — the wall may be too thick, "
-                "or the body has lofted/complex faces the offset can't shell.\n",
-                m_thickness);
-            return false;
+        Outcome arc = tryShell(Standard_False, GeomAbs_Arc, result);
+        if (arc != Ok) {
+            // Only the clean-fail (lofted-wall) case earns the intersection
+            // retry; a throw means the wall is too thick for the geometry, and
+            // the intersection join would hang instead of refusing.
+            if (arc == Threw ||
+                tryShell(Standard_True, GeomAbs_Intersection, result) != Ok) {
+                std::fprintf(stderr,
+                    "[Shell] failed at thickness %.3f mm — the wall is too thick "
+                    "for the body (it must stay below the smallest inner fillet "
+                    "radius), or the body has faces the offset can't shell.\n",
+                    m_thickness);
+                return false;
+            }
         }
 
         doc.updateBody(m_bodyId, result);

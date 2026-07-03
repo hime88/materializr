@@ -1,4 +1,5 @@
 #include "ThreadOp.h"
+#include "../core/Verbose.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -72,9 +73,10 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
     const double depth = std::min({m_depth, 0.65 * m_pitch, 0.45 * m_radius});
     if (depth <= 0.0) return {};
 
-    std::fprintf(stderr, "[Thread] buildResult: pitch=%.3f depth=%.3f r=%.3f "
-                         "len=%.3f hole=%d\n",
-                 m_pitch, m_depth, m_radius, m_length, m_isHole ? 1 : 0);
+    if (materializr::isVerbose())
+        std::fprintf(stderr, "[Thread] buildResult: pitch=%.3f depth=%.3f r=%.3f "
+                             "len=%.3f hole=%d\n",
+                     m_pitch, m_depth, m_radius, m_length, m_isHole ? 1 : 0);
 
     // PRE-FLIGHT STRATEGY CHECK. The single compound band tool only cuts
     // reliably against FULL, CLOSED cylinders — after ~40 harness
@@ -147,8 +149,9 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
         double vHi = m_length +
                      (endIsFree(m_length + 0.6 * m_pitch) ? 0.5 * m_pitch : 0.0);
         turns = (vHi - vLo) / m_pitch;
-        std::fprintf(stderr, "[Thread] runout: vLo=%.3f vHi=%.3f turns=%.1f\n",
-                     vLo, vHi, turns);
+        if (materializr::isVerbose())
+            std::fprintf(stderr, "[Thread] runout: vLo=%.3f vHi=%.3f turns=%.1f\n",
+                         vLo, vHi, turns);
 
         // Build the groove cutter for a helix span [lo, hi] along the axis
         // using the canonical OCCT threading construction (the "bottle
@@ -712,9 +715,10 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                     return {};
                 }
             }
-            std::fprintf(stderr, "[Thread] per-turn: %d turns, %d skipped "
-                                 "(no material), %d failed\n",
-                         nT, skipped, failed);
+            if (materializr::isVerbose())
+                std::fprintf(stderr, "[Thread] per-turn: %d turns, %d skipped "
+                                     "(no material), %d failed\n",
+                             nT, skipped, failed);
             // The whole pass must have removed SOMETHING — a body that no
             // groove intersects is a no-op, and no-ops suspend (same rule
             // as the compound path's volume guard).
@@ -730,8 +734,9 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
 
         TopoDS_Shape result;
         if (fullCylinder) {
-            std::fprintf(stderr, "[Thread] cutting (span %.2f..%.2f)...\n",
-                         vLo, vHi);
+            if (materializr::isVerbose())
+                std::fprintf(stderr, "[Thread] cutting (span %.2f..%.2f)...\n",
+                             vLo, vHi);
             result = tryCut(buildCutter(vLo, vHi));
             // NO exact-span compound retry here. When the extended compound
             // cut inverts, the exact-span retry historically "succeeded"
@@ -750,7 +755,8 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
             std::fprintf(stderr, "[Thread] boolean cut FAILED\n");
             return {};
         }
-        std::fprintf(stderr, "[Thread] buildResult OK\n");
+        if (materializr::isVerbose())
+            std::fprintf(stderr, "[Thread] buildResult OK\n");
         return result;
     } catch (...) {
         std::fprintf(stderr, "[Thread] buildResult threw\n");

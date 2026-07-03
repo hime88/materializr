@@ -408,14 +408,6 @@ int ShapeRenderer::findSlotByBody(int bodyId) const
     return (it == m_bodyToSlot.end()) ? -1 : it->second;
 }
 
-bool ShapeRenderer::uploadTessellatedInto(int /*slot*/, const TopoDS_Shape& /*shape*/,
-                                          float /*defl*/, float /*angDef*/)
-{
-    // Reserved for a future refactor that splits tessellation from upload —
-    // currently unused; setBodyMesh swaps tail-into-slot which avoids the need.
-    return false;
-}
-
 void ShapeRenderer::render(const glm::mat4& view, const glm::mat4& projection,
                            const glm::vec3& viewPos)
 {

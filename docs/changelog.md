@@ -3,6 +3,363 @@
 All notable changes to Materializr are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [1.3.0] — 2026-07-02
+
+The stable rollup of the whole `1.3.0-beta.1 … beta.11` line, plus one fix that
+landed after the last beta. Per-beta detail is in the entries below; the
+headline additions since **1.2.8**:
+
+### Highlights
+
+- **Unfold / flatten to 2D cut patterns.** Lay a 3D body flat into a developable
+  net and export it as **SVG** or **tiled PDF** — with a live page-break preview,
+  magenta **registration crosses** in the overlaps for precise multi-sheet
+  assembly, rotate / auto-fit, and a conformal option for double-curved shells.
+  Straight from solid to laser cutter, vinyl, or paper template.
+- **STL import.** Bring in a mesh (accuracy slider, wireframe toggle) and sketch
+  on its flat faces — reference or rework printed/scanned parts.
+- **Twist Face** and direct face editing — the Rotate gizmo's third ring spins a
+  face about its normal to spiral the walls; alongside taper and scale-face.
+- **Interactive Mirror** — place and rotate a mirror line, snap, and mirror
+  points / lines / circles / arcs / splines with coincident welding.
+- **Navigation that tracks 1:1.** Pan, push/pull, extrude and scale-face drags
+  move exactly with the cursor at any zoom; **orbit spins around the object**
+  (the pivot re-anchors onto the geometry at the view centre).
+- **Crisp UI on scaled Windows displays.** The app is now per-monitor DPI-aware,
+  so at 125–200% scaling it renders at native resolution (sharp) instead of a
+  blurry bitmap-upscale. *(New in stable — landed after beta.11.)*
+- **Smarter sketch snapping** — snaps onto the host body's adjacent-face edges
+  and continuously along in-plane hole rims / fillet arcs; grid-relative snap
+  bands so fine grids draw short segments; post-draw resize of lines, rects and
+  arcs by exact dimension.
+- **Opt-in beta channel** — Settings toggle to receive pre-release builds early.
+- A broad **stability & performance pass**: multi-instance crash-recovery fix,
+  GPU-cached sketch/selection rendering, and a backend audit — smoother on
+  complex models and tablets.
+
+APK versionCode 28.
+
+## [1.3.0-beta.11] — 2026-07-02 (pre-release)
+
+Feature-complete cut for 1.3.0. APK versionCode 27.
+
+### Added
+
+- **Twist Face.** The direct face-editing gizmo's Rotate mode gains its third
+  ring — the blue one, lying *in* the face plane (about the face normal). Grab it
+  to **spin a face relative to the opposite cap**, spiralling the walls between
+  them; the panel also takes an exact twist angle. Built as a layered ruled loft,
+  so any total angle works (a single loft would cap at ~45°), and an over-twist
+  that self-intersects is refused cleanly rather than producing garbage. Tilt and
+  twist are separate operations — one gesture does either, not both.
+
+### Changed
+
+- **Navigation tracks 1:1 at any zoom.** Pan, and the push/pull, extrude, and
+  scale-face drag handles, now move the world/face exactly one pixel's worth per
+  pixel dragged, instead of a fixed scale that felt sluggish zoomed in and jumpy
+  zoomed out. The grabbed point stays under the cursor.
+- **Orbit spins around the object.** The pivot re-anchors onto the geometry at
+  the view centre at the start of each orbit (with a ring-sample fallback that
+  lands between two parts when you're looking down the gap between them), instead
+  of a point that had drifted behind the model — which used to read as a blend of
+  pan and rotate. The image doesn't jump; only the pivot moves.
+- **Sketch snapping scales with the grid.** At a fine grid (e.g. 0.1 mm) the snap
+  bands are now grid-relative, so you can draw short segments and place points one
+  increment apart. Point/endpoint snapping — including loop closure — is gated
+  behind the inference toggle: with inferences off, nothing captures the cursor.
+  The live length readout shows hundredths (trailing zeros trimmed).
+- **Isolate & visibility.** Right-click **Isolate** now actually hides the other
+  bodies from the viewport menu, a new **Show All Bodies** brings them back, and
+  the redundant "Hide Others" entry was removed.
+
+### Fixed
+
+- **Crash-recovery race between two running instances** (a `SIGBUS` / wrong-session
+  restore) — each instance now claims its own recovery slot via an OS file lock,
+  so they never fight over one autosave file.
+- **"Unhide sketch → not responding"** on heavy projects — unhiding a complex
+  sketch no longer forces a full re-tessellation or an OCCT region rebuild on the
+  hover path.
+- **Push/pull on an unlinked sketch** no longer fuses the new material into the
+  body the sketch was *originally* drawn on; a detached sketch behaves as
+  free-floating.
+- **Couldn't draw short lines/arcs** — a segment no longer welds its second point
+  back onto its own start, so sub-0.3 mm geometry commits.
+- **Selection outline / gizmo lagging** at the pre-move position after a
+  multi-body move.
+- **Non-finite numeric input** (e.g. `1e999` → infinity) is rejected at every
+  entry box instead of flowing into the geometry kernel; pattern instance counts
+  are clamped so a huge typed number can't hang the app.
+
+### Performance
+
+- Big pass for complex projects and tablets: **gizmo Move/Rotate/Scale drags are
+  GPU-only** (no per-frame remesh), **static sketches and selection highlights
+  render from cached GPU buffers**, and several per-frame document walks (the
+  sketch↔body link map, the toolbar's face scans, history/items panel work) are
+  now memoized. Noticeably smoother orbit and drag with many bodies on screen.
+- Leftover per-interaction debug output is now gated behind `--verbose`, and a
+  round of dead code was removed.
+
+## [1.3.0-beta.10] — 2026-06-30 (pre-release)
+
+### Fixed
+
+- **Oversized window on small / scaled Windows displays.** On a 1080p (or
+  smaller) Windows screen at the OS-default 125–150% display scaling, the fixed
+  1600×900 window opened larger than the virtualised desktop and spilled past
+  every edge — hiding the taskbar, the title-bar close button, and the sides of
+  both dock panels. The window now clamps its initial size to the display's
+  usable work area (taskbar excluded) and starts **maximized** when the screen is
+  too small; the clamped size becomes the restore size, so un-maximizing or a
+  minimize→restore no longer overruns the display. 2K+ Windows screens, Linux,
+  macOS, and Android were unaffected.
+
+### Changed
+
+- **Android: OCCT geometry kernel 7.8.1 → 7.9.3**, matching the desktop/Linux
+  build so behaviour stays consistent across platforms. APK versionCode 26.
+
+## [1.3.0-beta.9] — 2026-06-30 (pre-release)
+
+### Added
+
+- **Flat-pattern viewer: rotate + print preview.** The Unfold dialog can now
+  **rotate** the whole pattern — a slider, **−/+ 1°** fine steps, a **+90°**
+  button, and **Auto-fit**, which snaps to the orientation that needs the fewest
+  pages. A single **Export** button with an **SVG / PDF** dropdown drives the
+  preview: SVG shows a clean 1:1 layout, PDF overlays a live **page-break grid**
+  with a page count so you can see exactly how it tiles before exporting.
+- **PDF alignment marks.** Tiled PDFs get magenta **registration crosses** in the
+  page overlaps — the same point prints on both adjacent sheets, so you overlay
+  and slide until the crosses coincide for precise assembly. A **Marks** dropdown
+  (None / Sparse / Normal / Dense) sets their density.
+
+### Fixed
+
+- **Conformal unwrap of a cone** came out a wrapped full disk (~12000% stretch);
+  it now slits the apex and unwraps to a clean **sector** like the developable
+  net. Conformal on a closed solid (which can't flatten to one piece) now shows a
+  clear warning steering you to untick Conformal for the developable net.
+
+## [1.3.0-beta.8] — 2026-06-30 (pre-release)
+
+### Added
+
+- **Unfold / flatten surfaces into 2D cut patterns.** Select a body — or just
+  the faces of one panel — and **Unfold / Flatten** lays the surfaces out flat
+  for laser cutters, CNC, or printed templates. Flat and box-like parts unfold
+  into a connected net; **developable** curved skins (cylinders, cones, extruded
+  profiles, a square→round loft) unroll into one connected piece, hinging whole
+  panels along their shared edges and picking the layout with the smallest flat
+  area. **Doubly-curved** surfaces (spheres, funnels) flatten via an opt-in
+  **Conformal unwrap** (Least-Squares Conformal Map, Blender-style) that
+  auto-cuts a seam to open closed shapes. A **material** setting (Pliable /
+  Semi-rigid / Rigid) and **thickness** drive the bend/score lines and mitre
+  offsets (e.g. ½″ ply at a 90° corner → a 6.5 mm mitre line). Export the flat
+  pattern as **SVG** (1:1 mm, for laser/CNC) or a **tiled, full-size PDF** (US
+  Letter or A4) with crop marks, tile overlap, and a 50 mm scale bar to verify
+  the print came out at true scale.
+
+## [1.3.0-beta.7] — 2026-06-29 (pre-release)
+
+### Added
+
+- **Import STL meshes.** File ▸ Import ▸ STL brings in an STL (ASCII or binary)
+  as a mesh body. An import dialog offers an **Accuracy** slider — lower
+  simplifies the mesh (faster, with larger merged flat faces), higher keeps more
+  detail — and a **wireframe** toggle. Genuinely near-coplanar facets are merged
+  into single planar faces, so you can **pick a flat region and use "Sketch on
+  Face"** to retrace it by hand — handy for recreating a model from a scan or a
+  print when it can't be done automatically. Sketching on a mesh face best-fits
+  the plane to the region you picked, so it stays accurate even on a simplified
+  import. Imported bodies are tagged as meshes (saved with the project) and use a
+  fast cached picker so selection stays smooth; the facet wireframe can be turned
+  off here or in Settings ▸ Rendering.
+
+### Fixed
+
+- The sketch grid step now persists across launches (it was written to the
+  settings file but never read back).
+- Settings export/import (JSON) now round-trips the panel-visibility toggles and
+  touch sensitivities, matching the on-disk settings.
+
+## [1.3.0-beta.6] — 2026-06-29 (pre-release)
+
+### Added
+
+- **Snap to the host body's edges while sketching.** Starting a sketch on a
+  solid's face already let the cursor snap to that face's own corners and edges;
+  now it also snaps to the edges of every neighbouring face that touches it —
+  the side walls and bordering edges around the face you're drawing on — so you
+  can line geometry up with the existing body, not just the single face.
+- **Continuous snapping along round host edges.** Hole rims and fillet arcs that
+  lie in the sketch plane are now snapped along their whole perimeter (respecting
+  the arc's span), instead of catching only at a few sampled points.
+
+## [1.3.0-beta.5] — 2026-06-29 (pre-release)
+
+### Added
+
+- **Interactive Mirror.** The sketch Mirror tool now places a movable, rotatable
+  mirror line (with a live ghost preview) instead of mirroring instantly across a
+  fixed vertical axis. The line carries the same move/rotate gizmo as sketch
+  elements — drag the arrows/centre to position it, the ring to rotate (snaps to
+  5° increments) — plus Vertical/Horizontal presets and ±45° nudges in its panel.
+  It now mirrors points, lines, circles, arcs and splines (was points + lines),
+  welding coincident vertices. The line snaps to half the grid step, so the
+  reflected geometry lands on whole grid increments.
+
+### Changed
+
+- **Copy lands offset and selected.** A sketch Copy now drops the duplicate two
+  grid steps away (not exactly on the original) with the move gizmo already over
+  it, so you can immediately drag it into place instead of fishing two stacked
+  copies apart.
+- **Box-select catches curves.** Click-and-drag selection now includes circles,
+  arcs and splines, not just points and lines — and selected splines are
+  highlighted like everything else.
+- **Splines render in the standard cobalt** instead of green, matching every
+  other sketch element.
+- **Bigger move/rotate gizmo on touch.** The sketch gizmo's handles and catch
+  radius scale up in touch mode so they're comfortably finger-sized.
+
+### Fixed
+
+- **ViewCube frames the in-progress sketch.** Clicking the ViewCube during the
+  very first sketch (no committed bodies yet) snapped to a tiny default cube;
+  it now encompasses the sketch you've drawn so far.
+- **Two-finger pan/zoom mid-sketch leaves no debris.** Starting a two-finger
+  gesture while a drawing tool is active no longer drops a stray start vertex or
+  half-placed shape from the first finger — the placement is rolled back so
+  navigation is clean without the Move button.
+- **History item highlight is dismissable.** Clicking a sketch history step
+  highlights its element; clicking the same step again now clears it.
+
+## [1.3.0-beta.4] — 2026-06-28 (pre-release)
+
+### Changed
+
+- **Touch — calmer pan, faster zoom by default.** The baseline (1.0×)
+  two-finger pan was twitchy and the pinch-zoom was painfully slow. The base
+  sensitivities are retuned (pan ×0.5, zoom ×2.5) so the out-of-the-box feel is
+  right; the Settings sliders still scale from there.
+
+### Fixed
+
+- **Sketch Select/Move no longer shows inference guides.** Snap markers and
+  labels only appear while you're actually drawing now — hovering with the
+  Select/Move tool (or with touch "Move" mode on) no longer clutters the view
+  with guides it can't act on.
+- **Selecting a sketch element no longer leaves it highlighted after you switch
+  tools.** Picking a line/point with Select/Move and then choosing a drawing
+  tool now clears the golden highlight instead of leaving it stuck on.
+- **Touch — scrolling a menu no longer selects the options it passes over.** A
+  drag-to-scroll over the Tools list released the press *on* the button it
+  started on, registering as a tap. The cursor is now parked off-screen before
+  the release so a scroll flick just scrolls.
+- **Touch — panels scroll with a natural finger drag.** Dragging inside the
+  Settings window (and other panels) moved the whole window instead of
+  scrolling. Windows are now movable from the title bar only, so body drags fall
+  through to drag-to-scroll.
+
+## [1.3.0-beta.3] — 2026-06-28 (pre-release)
+
+### Fixed
+
+- **Splash screen no longer hangs until you touch the window.** The post-launch
+  render grace only overrode the focus check, not the idle-skip — so at a fresh,
+  idle startup the first real UI frame stayed undrawn behind the loading screen
+  until a tap or mouse-move woke the loop. The grace now overrides the idle-skip
+  too, so the splash→UI handoff always completes on its own.
+
+## [1.3.0-beta.2] — 2026-06-28 (pre-release)
+
+### Fixed
+
+- **ViewCube — edges and corners stay selectable until a face is edge-on.** The
+  new edge-click feature culled edge spots and corner dots once a face tilted
+  past ~45°, even though the face itself stayed visible to 90°. Visibility is now
+  derived from face adjacency (a vertex/edge is live while a face bordering it
+  faces the camera), so they track the real silhouette.
+
+## [1.3.0-beta.1] — 2026-06-28 (pre-release)
+
+First build of the **beta channel**. Headline feature: sketch elements are now
+resizable after they're drawn.
+
+### Added
+
+- **Resize sketch geometry from the Properties panel.** Select an element while
+  editing a sketch and change its size directly:
+  - **Lines** — set the **Length**; the line grows symmetrically about its
+    midpoint, and anything sharing its endpoints (chained lines, rectangle
+    corners, arc ends) follows along.
+  - **Rectangles** — select any side to edit **Width × Height**; the centre
+    stays put. Detected automatically from one selected side.
+  - **Arcs** — **Radius** and **Chord** both scale the arc keeping its shape
+    (chord = the straight distance between the endpoints); **Sweep** changes the
+    included angle. Moving a point shared with an arc bends that arc to preserve
+    its swept angle.
+  - These edits are proper undoable history steps, and selecting an element
+    highlights its history step (and vice-versa).
+- **ViewCube edge clicks for two-face views.** The cube could snap to a single
+  face or a three-face corner; now hovering near a visible edge highlights that
+  seam, and clicking looks straight down it so both adjacent faces are seen at
+  once (12 edge spots — 4 vertical, 4 top, 4 bottom). Hover-revealed, no
+  persistent marker, so the cube stays uncluttered.
+- **Beta update channel.** A new *Settings → Include pre-release (beta) builds*
+  opt-in. With it on, the in-app update check also offers pre-releases (like
+  this one); left off, you stay on stable releases only. The two channels are
+  kept apart automatically — stable users are never shown betas.
+
+### Fixed
+
+- **ViewCube clicks no longer go dead.** A regression gated cube clicks on
+  `WantCaptureMouse`, which is true across the whole docked viewport — so faces,
+  corners, rotate arrows, roll arcs, Home, and drag-to-orbit all stopped
+  responding. Clicks are now gated on window hover instead, restoring every
+  cube interaction.
+
+## [1.2.8] — 2026-06-27
+
+macOS arrives, plus security hardening, correctness fixes, and sketch/history polish.
+
+### Added
+
+- **macOS (Apple Silicon) desktop build.** A native arm64 build, shipped as a
+  `.dmg` — the fourth platform alongside Linux, Windows, and Android. Retina /
+  HiDPI viewport, the system OpenGL backend, and a self-contained bundle.
+
+### Fixed
+
+- **Sketch — lines latch anywhere on an arc**, not just at its endpoints. Arcs
+  now snap like circles do, with the latch confined to the arc's actual span.
+- **Sketch — arcs (and splines) divide regions.** An interior arc that splits a
+  face (e.g. the band between two arcs) is now its own selectable, push/pullable
+  region instead of being swallowed by the surrounding area.
+- **History — disabling a step no longer deletes the whole body.** Toggling a
+  step rebuilds the model in place, so disabling a lone push/pull on a base body
+  reverts just that move and keeps the body; re-enabling restores it cleanly
+  instead of erroring. Disabled steps are also respected by undo/redo (no model
+  desync), and the threaded thread-cut worker no longer races the render thread.
+
+### Security
+
+- **Hardened the untrusted-file parsers and the update flow** following a code
+  audit: decompression-bomb caps on the project/recovery and SVG loaders,
+  bounded length-prefixes and count loops, try/catch around STEP / IGES /
+  project import (including OCCT kernel faults), a shell-free URL opener with
+  https-pinned update URLs, and a size-/redirect-capped update checker. No
+  behavior change for valid files.
+
+### Changed
+
+- **Docs now match reality:** de-advertised features that weren't actually
+  reachable (Sweep, the 2D Drawing workspace, Align, DXF / image export) and
+  relabeled SVG export as the real per-sketch path.
+
 ## [1.2.7] — 2026-06-26
 
 Bug fixes from the first round of community reports.

@@ -2,6 +2,10 @@
 
 #include "gl_common.h"
 #include <glm/glm.hpp>
+#include <cstdint>
+#include <map>
+#include <set>
+#include <unordered_map>
 #include <vector>
 
 namespace materializr {
@@ -25,6 +29,10 @@ public:
                 const glm::mat4& view, const glm::mat4& projection,
                 const SketchSolver* solver = nullptr);
 
+    // Drop every cached static-sketch GPU buffer (project load). Safe any
+    // time a GL context is current; caches rebuild lazily on next render.
+    void clearCache();
+
     // Highlight a single region of a sketch (outline only, in given color).
     void renderRegionBoundary(const Sketch* sketch, int regionIndex,
                               const glm::vec3& color, float lineWidth,
@@ -43,6 +51,16 @@ public:
     void renderSketchHighlight(const Sketch* sketch,
                                const glm::vec3& color, float lineWidth,
                                const glm::mat4& view, const glm::mat4& projection);
+
+    // Highlight only specific elements (by id) of a sketch — used to show which
+    // line / circle / arc a selected history step edits, even when that sketch
+    // isn't the one being actively drawn.
+    void renderElementsHighlight(const Sketch* sketch,
+                                 const std::set<int>& lineIds,
+                                 const std::set<int>& circleIds,
+                                 const std::set<int>& arcIds,
+                                 const glm::vec3& color, float lineWidth,
+                                 const glm::mat4& view, const glm::mat4& projection);
 
     // Draw a face-local measurement grid covering the active sketch face.
     // `faceExtent` is the half-width of the grid (in sketch units) around the sketch origin.
@@ -70,6 +88,58 @@ private:
 
     // Convert sketch 2D coordinate to 3D world position using the sketch's plane
     glm::vec3 toWorld(const Sketch* sketch, glm::vec2 pt2d) const;
+
+    // ── Static-sketch geometry cache ────────────────────────────────────
+    // Every VISIBLE sketch used to regenerate its full CPU vertex stream
+    // (64-segment circles, spline resampling, …) AND re-upload it through
+    // glBufferData every rendered frame — the dominant per-frame cost when
+    // sketches are on screen in a complex project. Sketches rendered with
+    // no tool/solver (everything except the one being actively edited) are
+    // pure functions of their geometry + plane, so their draw passes are
+    // captured ONCE into persistent GPU buffers and revalidated with a
+    // content signature: an FNV-1a hash of the plane, points, elements and
+    // pass inputs. Hash validation (instead of a mutation counter on
+    // Sketch) makes the cache immune to EVERY mutation route — ops, the
+    // solver, whole-object snapshot restores — at O(content bytes) per
+    // frame, orders of magnitude cheaper than retessellating. The ACTIVE
+    // sketch keeps the untouched live path (it legitimately changes every
+    // frame while drawing).
+    struct PassBuf {
+        unsigned int vao = 0;
+        unsigned int vbo = 0;
+        int count = 0;      // vertices
+        GLenum mode = GL_LINES;
+        glm::vec3 color{1.0f};
+        float width = 1.0f;
+    };
+    struct CapturedPass {
+        std::vector<float> verts;
+        GLenum mode;
+        glm::vec3 color;
+        float width;
+    };
+    struct SketchCacheEntry {
+        std::uint64_t sig = 0;
+        std::vector<PassBuf> passes;
+    };
+    static constexpr size_t kSketchCacheCap = 64;
+
+    void renderCachedStatic(const Sketch* sketch, const glm::mat4& vp);
+    void drawBuffer(const PassBuf& p, const glm::mat4& vp);
+    void freeEntry(SketchCacheEntry& e);
+    std::uint64_t contentSignature(const Sketch* sketch) const;
+
+    // Frame-local point lookup: Sketch::getPoint is a linear scan, and the
+    // draw passes called it 1-3× per element — O(elements × points) per
+    // sketch per frame. Built once per render() from getPoints(); pointers
+    // are valid for the duration of the call only.
+    void buildPointLut(const Sketch* sketch);
+    const struct SketchPoint* lutPoint(const Sketch* sketch, int id) const;
+
+    std::map<const void*, SketchCacheEntry> m_sketchCache;
+    std::vector<CapturedPass>* m_capture = nullptr; // uploadAndDraw redirect
+    std::unordered_map<int, const struct SketchPoint*> m_pointLut;
+    const void* m_lutSketch = nullptr; // sketch the LUT was built from
 
     unsigned int m_program = 0;
     unsigned int m_vao = 0;

@@ -7,6 +7,7 @@
 #include "../core/Document.h"
 #include "../core/History.h"
 #include "../core/SelectionManager.h"
+#include "../core/NumParse.h"
 #include "../modeling/PushPullOp.h"
 #include "../modeling/Sketch.h"
 #include <TopoDS.hxx>
@@ -36,7 +37,11 @@ public:
                 PushPullTarget t;
                 t.sketchId = e.sketchId;
                 t.regionIndex = e.subShapeIndex;
-                t.sourceBodyId = sketch->getSourceBody();
+                // Detached sketch = independent of its former host; don't
+                // fuse into the stale source body (see beginPushPull).
+                t.sourceBodyId = sketch->isDetachedFromBody()
+                                     ? -1
+                                     : sketch->getSourceBody();
                 t.profile = regions[e.subShapeIndex].face;
                 if (t.profile.IsNull()) continue;
                 m_targets.push_back(t);
@@ -114,14 +119,17 @@ public:
             m_inputFocus = false;
         }
 
+        // parseFinite: reject garbage / non-finite input ("1e999" -> inf
+        // used to flow straight into the extrude) — the previous value stays.
         if (ImGui::InputText("##dist", m_inputBuf, sizeof(m_inputBuf),
                              ImGuiInputTextFlags_EnterReturnsTrue)) {
-            m_distance = static_cast<float>(std::atof(m_inputBuf));
+            (void)materializr::parseFinite(m_inputBuf, m_distance);
             updatePreview(ctx);
             commit(ctx);
         } else {
-            float parsed = static_cast<float>(std::atof(m_inputBuf));
-            if (std::abs(parsed - m_distance) > 0.01f) {
+            float parsed = m_distance;
+            if (materializr::parseFinite(m_inputBuf, parsed) &&
+                std::abs(parsed - m_distance) > 0.01f) {
                 m_distance = parsed;
                 updatePreview(ctx);
             }

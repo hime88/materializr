@@ -87,10 +87,14 @@ void applyKv(const std::map<std::string, std::string>& kv, AppSettings& s) {
     readString(kv, "lastProjectPath",    s.lastProjectPath);
     readString(kv, "lastFileDir",        s.lastFileDir);
     readBool(kv, "checkForUpdatesOnLaunch", s.checkForUpdatesOnLaunch);
+    readBool(kv, "includePrereleases",   s.includePrereleases);
     readBool(kv, "snapToGrid",           s.snapToGrid);
+    readFloat(kv, "sketchGridStep",      s.sketchGridStep); // was written but never read back
     readInt (kv, "inferenceLevel",       s.inferenceLevel);
     readBool(kv, "showInferenceToolbarToggle", s.showInferenceToolbarToggle);
     readInt (kv, "angleSnapDeg",         s.angleSnapDeg);
+    readFloat(kv, "stlImportAccuracy",   s.stlImportAccuracy);
+    readBool(kv, "meshShowWireframe",    s.meshShowWireframe);
 
     // Recently opened/saved projects: contiguous indexed keys recentN_ref /
     // recentN_name (most-recent-first). Stop at the first missing/empty _ref.
@@ -275,12 +279,15 @@ bool SettingsIO::save(const std::string& path, const AppSettings& s) {
         ofs << "recent" << i << "_name = " << s.recentProjects[i].name << "\n";
     }
     ofs << "checkForUpdatesOnLaunch = " << (s.checkForUpdatesOnLaunch ? "true" : "false") << "\n";
+    ofs << "includePrereleases = "      << (s.includePrereleases ? "true" : "false") << "\n";
     ofs << "snapToGrid = "              << (s.snapToGrid ? "true" : "false") << "\n";
     ofs << "sketchGridStep = "          << s.sketchGridStep      << "\n";
     ofs << "inferenceLevel = "          << s.inferenceLevel      << "\n";
     ofs << "showInferenceToolbarToggle = "
         << (s.showInferenceToolbarToggle ? "true" : "false") << "\n";
     ofs << "angleSnapDeg = "             << s.angleSnapDeg        << "\n";
+    ofs << "stlImportAccuracy = "        << s.stlImportAccuracy   << "\n";
+    ofs << "meshShowWireframe = "        << (s.meshShowWireframe ? "true" : "false") << "\n";
 
     return ofs.good();
 }
@@ -319,15 +326,26 @@ bool SettingsIO::exportJson(const std::string& path, const AppSettings& s) {
     ofs << "  \"smallScreenWarned\": "       << s.smallScreenWarned     << ",\n";
     ofs << "  \"leftPanelHidden\": "         << s.leftPanelHidden       << ",\n";
     ofs << "  \"rightPanelHidden\": "        << s.rightPanelHidden      << ",\n";
+    ofs << "  \"showTools\": "                << b(s.showTools)          << ",\n";
+    ofs << "  \"showInteractions\": "         << b(s.showInteractions)   << ",\n";
+    ofs << "  \"showHistory\": "              << b(s.showHistory)        << ",\n";
+    ofs << "  \"showItems\": "                << b(s.showItems)          << ",\n";
+    ofs << "  \"showProperties\": "           << b(s.showProperties)     << ",\n";
+    ofs << "  \"touchOrbitSens\": "           << s.touchOrbitSens        << ",\n";
+    ofs << "  \"touchPanSens\": "             << s.touchPanSens          << ",\n";
+    ofs << "  \"touchZoomSens\": "            << s.touchZoomSens         << ",\n";
     ofs << "  \"showToolbarTooltips\": "     << b(s.showToolbarTooltips)<< ",\n";
     ofs << "  \"autoOpenLastProject\": "     << b(s.autoOpenLastProject)<< ",\n";
     ofs << "  \"checkForUpdatesOnLaunch\": " << b(s.checkForUpdatesOnLaunch) << ",\n";
+    ofs << "  \"includePrereleases\": " << b(s.includePrereleases) << ",\n";
     ofs << "  \"snapToGrid\": "              << b(s.snapToGrid)         << ",\n";
     ofs << "  \"sketchGridStep\": "          << s.sketchGridStep        << ",\n";
     ofs << "  \"inferenceLevel\": "          << s.inferenceLevel        << ",\n";
     ofs << "  \"showInferenceToolbarToggle\": "
         << b(s.showInferenceToolbarToggle) << ",\n";
-    ofs << "  \"angleSnapDeg\": "             << s.angleSnapDeg          << "\n";
+    ofs << "  \"angleSnapDeg\": "             << s.angleSnapDeg          << ",\n";
+    ofs << "  \"stlImportAccuracy\": "        << s.stlImportAccuracy     << ",\n";
+    ofs << "  \"meshShowWireframe\": "        << b(s.meshShowWireframe)  << "\n";
     ofs << "}\n";
 
     return ofs.good();

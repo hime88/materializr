@@ -11,6 +11,7 @@
 #include "../core/Events.h"
 #include "../core/EventBus.h"
 #include "../modeling/Sketch.h"
+#include "../core/NumParse.h"
 #include "../modeling/SketchTool.h"
 #include "../modeling/SketchSolver.h"
 #include "../modeling/SketchEditOp.h"
@@ -110,8 +111,8 @@ public:
                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
             if (ImGui::InputText("mm", m_dimBuf, sizeof(m_dimBuf),
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
-                float v = static_cast<float>(std::atof(m_dimBuf));
-                if (v > 0.0f) {
+                float v = 0.0f;
+                if (materializr::parseFinite(m_dimBuf, v) && v > 0.0f) {
                     recordMutation(ctx, [&]{ m_sketchTool->applyDimension(v); });
                 }
                 m_dimBuf[0] = '\0';

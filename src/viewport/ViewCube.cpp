@@ -106,10 +106,16 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag, bool lightMode)
     // Only act on clicks the viewport actually owns. The cube reads global mouse
     // state, so without this a click on a panel that OVERLAPS the cube's corner
     // (e.g. the Move Face Cancel button, which sits over the cube) registers as a
-    // cube-face press too — snapping the camera to that face. WantCaptureMouse is
-    // the app's signal for "an ImGui widget consumed this click" (see the
-    // viewport input gate); when set, the cube ignores clicks but still draws.
-    const bool uiBlocked = ImGui::GetIO().WantCaptureMouse;
+    // cube-face press too — snapping the camera to that face.
+    //
+    // NOTE: do NOT use io.WantCaptureMouse here. The Viewport is a normal docked
+    // window (not a passthrough central node), so WantCaptureMouse is true across
+    // the ENTIRE viewport — including the bare canvas and the cube itself — which
+    // killed all cube clicks. The cube draws inside the Viewport window's scope,
+    // so IsWindowHovered() is the right signal: true when the viewport (and not an
+    // overlay sitting on top of it) is the hovered window at the cursor. An
+    // overlapping panel/button is a separate window, so it flips this false.
+    const bool uiBlocked = !ImGui::IsWindowHovered();
     auto cubeClicked = [&]() {
         return !uiBlocked && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     };
@@ -133,15 +139,43 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag, bool lightMode)
     struct VisFace { int idx; float depth; };
     std::vector<VisFace> drawList;
     drawList.reserve(6);
+    bool faceFront[6] = { false, false, false, false, false, false };
     for (int i = 0; i < 6; ++i) {
         glm::vec4 ne = V * glm::vec4(kFaces[i].n, 0.0f);
         if (ne.z > 0.0f) {
+            faceFront[i] = true;
             glm::vec3 ctr3 = kFaces[i].n; // face center is the normal scaled to 1
             drawList.push_back({i, eyeZ(ctr3)});
         }
     }
     std::sort(drawList.begin(), drawList.end(),
               [](const VisFace& a, const VisFace& b){ return a.depth < b.depth; });
+
+    // A cube vertex / edge is part of the visible silhouette — and so clickable —
+    // whenever it borders a front-facing face. The earlier code culled on the
+    // corner's OWN eye-space Z (eyeZ(corner) < 0), which crosses zero at ~45° for
+    // the side corners of a face that is itself still visible (front-facing up to
+    // 90°). That made edges and corner dots vanish as soon as a face tilted past
+    // 45°. Keying off face-adjacency instead matches the real silhouette.
+    auto cornerVisible = [&](int ci) {
+        for (int f = 0; f < 6; ++f) {
+            if (!faceFront[f]) continue;
+            for (int k = 0; k < 4; ++k) if (kFaces[f].c[k] == ci) return true;
+        }
+        return false;
+    };
+    auto edgeVisible = [&](int a, int b) {
+        for (int f = 0; f < 6; ++f) {
+            if (!faceFront[f]) continue;
+            bool ha = false, hb = false;
+            for (int k = 0; k < 4; ++k) {
+                if (kFaces[f].c[k] == a) ha = true;
+                if (kFaces[f].c[k] == b) hb = true;
+            }
+            if (ha && hb) return true;
+        }
+        return false;
+    };
 
     for (auto& vf : drawList) {
         const Face& f = kFaces[vf.idx];
@@ -168,6 +202,46 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag, bool lightMode)
         }
     }
 
+    // --- Edge click-spots: clicking the seam between two visible faces snaps to
+    //     a two-face view (looking down that edge). Hover-revealed with no
+    //     persistent marker so the small cube stays uncluttered — hovering near a
+    //     cube edge highlights the whole segment. Tested after faces (an edge
+    //     wins over the face it lies on) but before corners (a corner still wins
+    //     at the very ends, since the hit zone is restricted to the mid-segment).
+    struct Edge { int a, b; ViewCubeAction act; };
+    static const Edge kEdges[12] = {
+        {6,7, ViewCubeAction::TopFront},    {2,3, ViewCubeAction::TopBack},
+        {3,7, ViewCubeAction::TopLeft},     {2,6, ViewCubeAction::TopRight},
+        {4,5, ViewCubeAction::BottomFront}, {0,1, ViewCubeAction::BottomBack},
+        {0,4, ViewCubeAction::BottomLeft},  {1,5, ViewCubeAction::BottomRight},
+        {4,7, ViewCubeAction::FrontLeft},   {5,6, ViewCubeAction::FrontRight},
+        {0,3, ViewCubeAction::BackLeft},    {1,2, ViewCubeAction::BackRight},
+    };
+    for (const auto& e : kEdges) {
+        // Visible while either face sharing this edge faces the camera.
+        if (!edgeVisible(e.a, e.b)) continue;
+        ImVec2 A = sc[e.a], B = sc[e.b];
+        ImVec2 ab(B.x - A.x, B.y - A.y);
+        float lenSq = ab.x * ab.x + ab.y * ab.y;
+        float t = ((mp.x - A.x) * ab.x + (mp.y - A.y) * ab.y) / std::max(lenSq, 1e-6f);
+        bool hover = false;
+        if (t > 0.2f && t < 0.8f) { // mid-segment only; ends belong to corners
+            ImVec2 p(A.x + ab.x * t, A.y + ab.y * t);
+            float d = std::sqrt((mp.x - p.x) * (mp.x - p.x) +
+                                (mp.y - p.y) * (mp.y - p.y));
+            hover = d < 6.0f * ts;
+        }
+        if (hover) {
+            // Highlight the whole seam so it's clear which two faces will show.
+            dl->AddLine(A, B, IM_COL32(255, 220, 80, 255), 3.0f * ts);
+            cubeHover = true;
+            if (cubeClicked()) {
+                m_pendingClick = e.act;
+                m_cubeDragging = false;
+            }
+        }
+    }
+
     // --- Corner click-spots: a small dot at each visible vertex snaps to the
     //     matching isometric view. We test corners after faces so a face hover
     //     wins when they overlap (corner spots sit inside the face polygons).
@@ -182,7 +256,7 @@ ViewCubeAction ViewCube::render(Camera& camera, bool invertDrag, bool lightMode)
         ViewCubeAction::FrontTopLeft       // 7: -X +Y +Z
     };
     for (int i = 0; i < 8; ++i) {
-        if (eyeZ(kCorners[i]) < 0.0f) continue; // back-of-cube vertex
+        if (!cornerVisible(i)) continue; // vertex with no front-facing face
         ImVec2 cp = sc[i];
         float dist = std::sqrt((mp.x - cp.x) * (mp.x - cp.x) +
                                (mp.y - cp.y) * (mp.y - cp.y));

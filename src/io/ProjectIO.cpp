@@ -364,6 +364,33 @@ ProjectSaveResult ProjectIO::save(const std::string& filePath, const Document& d
         ofs << "BODY_FOLDER " << bid << " " << fid << "\n";
     }
 
+    // Imported-mesh flag (STL). A separate optional section like BODY_FOLDER so
+    // old readers skip it and old files load with isMesh=false. The flag can't
+    // be re-derived from the shape (a sewn STL looks like any solid), so it must
+    // be persisted.
+    std::vector<int> meshBodies;
+    for (int bid : bodyIds)
+        if (doc.isBodyMesh(bid)) meshBodies.push_back(bid);
+    ofs << "BODY_MESH_COUNT " << static_cast<int>(meshBodies.size()) << "\n";
+    for (int bid : meshBodies) {
+        ofs << "BODY_MESH " << bid << "\n";
+    }
+
+    // Sheet-part metadata (fabrication / unfold). Optional section like BODY_MESH;
+    // old readers skip it, old files load with no sheet parts.
+    std::vector<int> sheetBodies;
+    for (int bid : bodyIds)
+        if (doc.isBodySheet(bid)) sheetBodies.push_back(bid);
+    ofs << "BODY_SHEET_COUNT " << static_cast<int>(sheetBodies.size()) << "\n";
+    for (int bid : sheetBodies) {
+        const materializr::SheetSpec s = doc.getBodySheet(bid);
+        // BODY_SHEET bodyId rigidity thickness kerf
+        ofs << "BODY_SHEET " << bid
+            << " " << static_cast<int>(s.rigidity)
+            << " " << s.thicknessMm
+            << " " << s.kerfMm << "\n";
+    }
+
     // --- Construction primitives (planes + axes) ---
     // Saved as document records (not history-derived) so they survive
     // reload even when their creating op isn't re-executed. Format is the
@@ -888,6 +915,38 @@ ProjectLoadResult ProjectIO::load(const std::string& filePath, Document& doc,
                 } else {
                     ifs.seekg(restore);
                 }
+            }
+        } else if (tok == "BODY_MESH_COUNT") {
+            // Imported-mesh flags (optional). Bodies are already loaded by now
+            // (BODY blocks precede this), so setBodyMesh resolves by saved id.
+            int n = 0; iss >> n;
+            for (int i = 0; i < n; ++i) {
+                std::string mline;
+                if (!std::getline(ifs, mline)) break;
+                std::istringstream ms(mline);
+                std::string mt; ms >> mt;
+                if (mt != "BODY_MESH") continue;
+                int bid = -1; ms >> bid;
+                if (bid >= 0) doc.setBodyMesh(bid, true);
+            }
+        } else if (tok == "BODY_SHEET_COUNT") {
+            int n = 0; iss >> n;
+            for (int i = 0; i < n; ++i) {
+                std::string sline;
+                if (!std::getline(ifs, sline)) break;
+                std::istringstream ss(sline);
+                std::string st; ss >> st;
+                if (st != "BODY_SHEET") continue;
+                int bid = -1, rig = 1;
+                double thick = 5.0, kerf = 0.0;
+                ss >> bid >> rig >> thick >> kerf;
+                if (bid < 0) continue;
+                materializr::SheetSpec s;
+                s.isSheet = true;
+                s.rigidity = static_cast<materializr::Rigidity>(rig);
+                s.thicknessMm = thick;
+                s.kerfMm = kerf;
+                doc.setBodySheet(bid, s);
             }
         } else if (tok == "CPLANE_COUNT") {
             // Construction plane block. We re-issue addPlane so the

@@ -2,7 +2,7 @@
 
 #include "gl_common.h"   // GLEW (Windows) must be included before other GL users
 #include "touch_mode.h"
-#include "android_files.h" // androidShow/HideTextInput (no-ops on desktop)
+#include "mobile_files.h" // mobileShow/HideTextInput (no-ops on desktop and iOS)
 #include <SDL.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_internal.h> // g.MovingWindow — let tab-drag (re-dock) beat drag-to-scroll
@@ -16,15 +16,31 @@
 
 namespace materializr {
 
+// Declared in gl_common.h; overwritten on iOS in the constructor below.
+unsigned int g_windowFramebuffer = 0;
+
 Window::Window(int width, int height, const std::string& title)
     : m_width(width), m_height(height) {
 
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     // Stop SDL from synthesizing mouse events from touch. On Android that
     // synthesis leaves ImGui's mouse button stuck "down" after a tap (so every
     // gesture reads as click-and-hold). We feed ImGui clean finger events
     // ourselves in pollEvents() instead.
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+#endif
+
+#if defined(_WIN32)
+    // Per-monitor-v2 DPI awareness (SDL 2.24+) so Windows renders us at NATIVE
+    // resolution instead of bitmap-upscaling a virtualised low-res desktop —
+    // the upscale is what made the whole UI blurry on a scaled (125–200%)
+    // laptop display. We deliberately do NOT set SDL_HINT_WINDOWS_DPI_SCALING:
+    // that makes SDL report the window in points and hand back a >1
+    // DisplayFramebufferScale, which would double-scale against our own
+    // uiScale(). Instead window + drawable stay in physical pixels (so the 3D
+    // viewport is crisp at native res) and uiScale() sizes the UI up by the
+    // display DPI so fonts/panels stay legible. Must precede SDL_Init.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
 #endif
 
     // NOTE: the port uses SDL2 on every platform, so upstream's GLFW-only X11/
@@ -35,7 +51,7 @@ Window::Window(int width, int height, const std::string& title)
 
     // Request the right GL context per platform. Desktop: GL 3.3 Core. Android:
     // GL ES 3.0 (same shader/feature subset Materializr uses).
-#if defined(__ANDROID__)
+#if defined(MZ_GLES)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
@@ -66,6 +82,55 @@ Window::Window(int width, int height, const std::string& title)
     // immersive system-UI flags instead — those hide the bars without that flag,
     // so in a desktop dock the app stays a normal window with the taskbar intact.
 
+#if defined(_WIN32)
+    // DPI-aware ⇒ the window is created in PHYSICAL pixels, so scale the default
+    // logical 1600×900 up by the display DPI — otherwise it would render smaller
+    // on a high-DPI panel than the pre-awareness (virtualised) window did (a
+    // 4K/150% screen used to get a 2400×1350 physical window; without this it'd
+    // drop to 1600×900). Matches uiScale() so the window holds the same amount of
+    // logical UI room at any scaling. The clamp below then caps it to the work
+    // area on genuinely small panels.
+    {
+        float ddpi = 96.0f, hh = 0.0f, vv = 0.0f;
+        if (SDL_GetDisplayDPI(0, &ddpi, &hh, &vv) == 0 && ddpi > 96.0f) {
+            float sc = ddpi / 96.0f;
+            if (sc > 3.0f) sc = 3.0f;
+            m_width  = static_cast<int>(m_width  * sc);
+            m_height = static_cast<int>(m_height * sc);
+        }
+    }
+#endif
+
+    // Clamp the fixed initial size to the display's usable area (the screen minus
+    // the taskbar) BEFORE creating the window. Now that the process is per-monitor
+    // DPI-aware (see the SDL_HINT_WINDOWS_DPI_AWARENESS above), both the create
+    // size and SDL_GetDisplayUsableBounds are in PHYSICAL pixels, so the two are
+    // in the same coordinate space and the clamp is apples-to-apples. On a small
+    // or low-res laptop panel the hardcoded 1600×900 can still exceed the work
+    // area (e.g. a 1366×768 screen), so we clamp + start maximized rather than
+    // spill past the taskbar / title bar / dock panels; roomier screens are
+    // untouched, and Android overrides the size below regardless. (Pre-DPI-aware
+    // this also fixed the *virtualised* small-desktop overflow at 125–150%
+    // scaling; the crisp-rendering fix removed the virtualisation, the clamp still
+    // guards genuinely small panels.) Leave a margin for the window's own borders.
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0) {
+        const int marginW = 16;  // left+right borders
+        const int marginH = 64;  // title bar + bottom border
+        const int maxW = usable.w - marginW;
+        const int maxH = usable.h - marginH;
+        bool clamped = false;
+        if (maxW > 0 && m_width  > maxW) { m_width  = maxW; clamped = true; }
+        if (maxH > 0 && m_height > maxH) { m_height = maxH; clamped = true; }
+#if !defined(MZ_MOBILE)
+        // On a screen too small for the default size, also start maximized so the
+        // app fills the work area immediately. The clamped values above become the
+        // window's *restore* size, so un-maximizing — or a minimize→restore — drops
+        // back to a size that still fits the screen instead of overrunning it again.
+        if (clamped) flags |= SDL_WINDOW_MAXIMIZED;
+#endif
+    }
+
     m_window = SDL_CreateWindow(title.c_str(),
                                 SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 m_width, m_height, flags);
@@ -87,6 +152,25 @@ Window::Window(int width, int height, const std::string& title)
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
         throw std::runtime_error("Failed to initialize GLEW (OpenGL loader)");
+    }
+#endif
+
+#if defined(MZ_IOS)
+    // On iOS the screen is NOT framebuffer 0 — SDL backs the window with a
+    // renderbuffer FBO and binding 0 draws into the void. Capture the real
+    // one (bound current by SDL_GL_CreateContext) so g_windowFramebuffer
+    // binds the screen everywhere the code would otherwise bind 0. The color
+    // renderbuffer matters too: SDL's swap presents whatever GL_RENDERBUFFER
+    // is bound at that moment, so swapBuffers() re-binds this before swapping
+    // (Viewport's own depth/MSAA renderbuffer setup leaves others bound).
+    {
+        GLint fbo = 0, rbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+        glGetIntegerv(GL_RENDERBUFFER_BINDING, &rbo);
+        g_windowFramebuffer = static_cast<unsigned int>(fbo);
+        m_windowRenderbuffer = static_cast<unsigned int>(rbo);
+        std::cout << "iOS window framebuffer=" << fbo
+                  << " renderbuffer=" << rbo << std::endl;
     }
 #endif
 
@@ -115,6 +199,11 @@ Window::~Window() {
 }
 
 void Window::swapBuffers() {
+#if defined(MZ_IOS)
+    // presentRenderbuffer presents the *currently bound* GL_RENDERBUFFER —
+    // restore SDL's color renderbuffer in case frame code bound another.
+    glBindRenderbuffer(GL_RENDERBUFFER, m_windowRenderbuffer);
+#endif
     SDL_GL_SwapWindow(m_window);
 }
 
@@ -167,7 +256,7 @@ int Window::pollEvents(int waitMs) {
                     break;
             }
         }
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
         // Touch gestures, handled directly (SDL's own touch->mouse synthesis is
         // off). One finger drives the left mouse (tap = select, drag = orbit in
         // trackpad mode); two fingers pan/pinch-zoom the camera.
@@ -192,7 +281,7 @@ int Window::pollEvents(int waitMs) {
                 break;
         }
     }
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     updateHoldSelect();          // arm the long-press (box-select on drag / menu on lift)
     pumpSyntheticRightClick();   // play back a queued long-press context-menu click
 #endif
@@ -200,7 +289,7 @@ int Window::pollEvents(int waitMs) {
     return result;
 }
 
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
 void Window::handleFingerEvent(unsigned type, std::int64_t id, float nx, float ny) {
     ImGuiIO& io = ImGui::GetIO();
     const float x = nx * io.DisplaySize.x;   // normalised [0,1] -> pixels
@@ -342,8 +431,14 @@ void Window::handleFingerEvent(unsigned type, std::int64_t id, float nx, float n
                 m_scrollArmed = true;
             } else if (wantScroll && m_scrollArmed) {
                 // Switch press -> scroll: release the left button so the row the
-                // finger started on isn't selected/activated by the flick.
+                // finger started on isn't selected/activated by the flick. Park
+                // the cursor off-screen BEFORE releasing — a release while still
+                // over the button/row reads as a click (ImGui buttons fire on
+                // mouse-up over the active item), which is exactly the "scrolling
+                // also selects tools" bug. The justLatched block below moves the
+                // cursor back onto the panel for the wheel target.
                 if (m_leftDown) {
+                    io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
                     io.AddMouseButtonEvent(0, false);
                     m_leftDown = false;
                     m_leftReleaseWasGesture = true;
@@ -489,17 +584,17 @@ bool Window::consumeDoubleTap() {
 }
 
 void Window::updateTextInput(bool wantTextInput) {
-#if defined(__ANDROID__)
+#if defined(MZ_MOBILE)
     if (wantTextInput && !m_textInputActive) {
         SDL_StartTextInput();              // enables SDL_TEXTINPUT events
         // SDL's own keyboard-raise is gated on SDL_GetFocusWindow() != NULL,
         // which is NULL in our immersive surface, so it no-ops. Raise the IME
         // ourselves via SDLActivity (text still routes through SDL → ImGui).
-        androidShowTextInput();
+        mobileShowTextInput();
         m_textInputActive = true;
     } else if (!wantTextInput && m_textInputActive) {
         SDL_StopTextInput();
-        androidHideTextInput();
+        mobileHideTextInput();
         m_textInputActive = false;
     }
 #else
@@ -512,17 +607,43 @@ void Window::framebufferSize(int& w, int& h) const {
 }
 
 float Window::uiScale() const {
-    // Only the touch UI scales up; in desktop mode the UI is already sized right
-    // (this is what lets a tablet with a mouse/keyboard run the desktop layout).
-    if (!materializr::touchMode()) return 1.0f;
-    // Scale the desktop-density UI up for a touch screen. Use the physical DPI
-    // against a 96-dpi desktop baseline (so a 240-dpi tablet -> 2.5x), clamped.
-    float ddpi = 240.0f, hdpi = 0.0f, vdpi = 0.0f;
-    if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) != 0 || ddpi <= 0.0f) ddpi = 240.0f;
-    float s = ddpi / 120.0f;    // 240-dpi tablet -> 2.0x (was 2.5x, a bit too big)
-    if (s < 1.4f) s = 1.4f;     // never smaller than 1.4x on a touch device
-    if (s > 2.5f) s = 2.5f;
+    if (materializr::touchMode()) {
+#if defined(MZ_IOS)
+        // iOS window coords are POINTS — the OS already normalizes density
+        // (the drawable is the 2-3x pixel surface underneath). SDL's reported
+        // display DPI is a synthetic 160·scale, not physical, so no formula:
+        // desktop density is the right size in point space.
+        return 1.0f;
+#else
+        // Scale the desktop-density UI up for a touch screen. Use the physical
+        // DPI against a 96-dpi baseline (so a 240-dpi tablet -> 2.5x), clamped.
+        float ddpi = 240.0f, hdpi = 0.0f, vdpi = 0.0f;
+        if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) != 0 || ddpi <= 0.0f) ddpi = 240.0f;
+        float s = ddpi / 120.0f;    // 240-dpi tablet -> 2.0x (was 2.5x, a bit too big)
+        if (s < 1.4f) s = 1.4f;     // never smaller than 1.4x on a touch device
+        if (s > 2.5f) s = 2.5f;
+        return s;
+#endif
+    }
+#if defined(_WIN32)
+    // Desktop Windows HiDPI: now that the process is per-monitor DPI-aware (see
+    // the SDL_HINT_WINDOWS_DPI_AWARENESS above) the framebuffer is NATIVE-res
+    // and crisp, but window coordinates are physical pixels — so a 15 px font
+    // would render tiny on a 150% display. Scale the UI up by the display's DPI
+    // (96 dpi = 100% = 1.0x, 144 = 150% = 1.5x, …) so it stays the same physical
+    // size the user set in Windows, now sharp instead of bitmap-upscaled. Fonts
+    // are rasterised at 15·scale (crisp) and ImGui sizes scale to match.
+    float ddpi = 96.0f, hdpi = 0.0f, vdpi = 0.0f;
+    if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) != 0 || ddpi <= 0.0f) ddpi = 96.0f;
+    float s = ddpi / 96.0f;
+    if (s < 1.0f) s = 1.0f;     // never shrink below 100%
+    if (s > 3.0f) s = 3.0f;     // 300% cap (Windows tops out ~250% on laptops)
     return s;
+#else
+    // Linux / macOS handle HiDPI through the drawable-size / DisplayFramebufferScale
+    // path (Retina, Wayland fractional scaling), so the UI is already right at 1.0.
+    return 1.0f;
+#endif
 }
 
 bool Window::isCtrlDown() {

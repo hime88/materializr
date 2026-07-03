@@ -47,9 +47,169 @@ void main() {
 SketchRenderer::SketchRenderer() {}
 
 SketchRenderer::~SketchRenderer() {
+    clearCache();
     if (m_program) glDeleteProgram(m_program);
     if (m_vao) glDeleteVertexArrays(1, &m_vao);
     if (m_vbo) glDeleteBuffers(1, &m_vbo);
+}
+
+void SketchRenderer::freeEntry(SketchCacheEntry& e) {
+    for (auto& p : e.passes) {
+        if (p.vao) glDeleteVertexArrays(1, &p.vao);
+        if (p.vbo) glDeleteBuffers(1, &p.vbo);
+    }
+    e.passes.clear();
+    e.sig = 0;
+}
+
+void SketchRenderer::clearCache() {
+    for (auto& [key, e] : m_sketchCache) freeEntry(e);
+    m_sketchCache.clear();
+}
+
+void SketchRenderer::buildPointLut(const Sketch* sketch) {
+    m_pointLut.clear();
+    m_lutSketch = sketch;
+    const auto& pts = sketch->getPoints();
+    m_pointLut.reserve(pts.size());
+    for (const auto& p : pts) m_pointLut.emplace(p.id, &p);
+}
+
+const SketchPoint* SketchRenderer::lutPoint(const Sketch* sketch, int id) const {
+    // Only trust the LUT for the sketch it was built from — the highlight /
+    // region entry points can arrive with a DIFFERENT sketch while the LUT
+    // still holds the last render()'s table, and sketch point ids are small
+    // ints that would false-hit across sketches. Everything else falls back
+    // to the authoritative linear lookup.
+    if (m_lutSketch == sketch) {
+        auto it = m_pointLut.find(id);
+        return it != m_pointLut.end() ? it->second : nullptr;
+    }
+    return lutPoint(sketch, id);
+}
+
+std::uint64_t SketchRenderer::contentSignature(const Sketch* sketch) const {
+    // FNV-1a over everything the standard passes read: plane basis, points,
+    // element tables, spline control ids, the source-face centroid (midpoint
+    // dots) and the line-width setting (pass widths). Any change — from ops,
+    // the solver, or a whole-object snapshot restore — changes the hash.
+    std::uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const void* data, size_t n) {
+        const unsigned char* b = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < n; ++i) {
+            h ^= b[i];
+            h *= 1099511628211ull;
+        }
+    };
+    auto mixD = [&](double v) { mix(&v, sizeof v); };
+    auto mixF = [&](float v)  { mix(&v, sizeof v); };
+    auto mixI = [&](int v)    { mix(&v, sizeof v); };
+
+    const gp_Ax3& ax = sketch->getPlane().Position();
+    mixD(ax.Location().X());   mixD(ax.Location().Y());   mixD(ax.Location().Z());
+    mixD(ax.XDirection().X()); mixD(ax.XDirection().Y()); mixD(ax.XDirection().Z());
+    mixD(ax.YDirection().X()); mixD(ax.YDirection().Y()); mixD(ax.YDirection().Z());
+    mixD(ax.Direction().X());  mixD(ax.Direction().Y());  mixD(ax.Direction().Z());
+    mixF(m_lineWidth);
+
+    glm::vec2 centroid;
+    const bool hasCentroid = sketch->getSourceFaceCentroid(centroid);
+    mixI(hasCentroid ? 1 : 0);
+    if (hasCentroid) { mixF(centroid.x); mixF(centroid.y); }
+
+    for (const auto& p : sketch->getPoints()) {
+        mixI(p.id); mixF(p.pos.x); mixF(p.pos.y);
+        mixI(p.fromText ? 1 : 0); mixI(p.isConstruction ? 1 : 0);
+    }
+    for (const auto& l : sketch->getLines()) {
+        mixI(l.id); mixI(l.startPointId); mixI(l.endPointId);
+        mixI(l.fromText ? 1 : 0);
+    }
+    for (const auto& c : sketch->getCircles()) {
+        mixI(c.id); mixI(c.centerPointId); mixD(c.radius);
+    }
+    for (const auto& a : sketch->getArcs()) {
+        mixI(a.id); mixI(a.centerPointId); mixI(a.startPointId);
+        mixI(a.endPointId); mixD(a.radius);
+    }
+    for (const auto& s : sketch->getSplines()) {
+        mixI(s.id);
+        for (int cp : s.controlPointIds) mixI(cp);
+    }
+    for (const auto& pg : sketch->getPolygons()) {
+        mixI(pg.id); mixI(pg.centerPointId);
+    }
+    return h;
+}
+
+void SketchRenderer::drawBuffer(const PassBuf& p, const glm::mat4& vp) {
+    if (!p.count || !p.vao) return;
+    // Mirrors uploadAndDraw's state setup, minus the CPU regen + upload.
+    glUseProgram(m_program);
+    glUniformMatrix4fv(m_locMVP, 1, GL_FALSE, glm::value_ptr(vp));
+    glUniform3fv(m_locColor, 1, glm::value_ptr(p.color));
+    glUniform1f(m_locAlpha, 1.0f);
+    glBindVertexArray(p.vao);
+    glLineWidth(p.width);
+    if (m_locPointSize >= 0)
+        glUniform1f(m_locPointSize, p.mode == GL_POINTS ? p.width : 1.0f);
+#if !defined(MZ_GLES)
+    if (p.mode == GL_POINTS) glPointSize(p.width);
+#endif
+    glDrawArrays(p.mode, 0, p.count);
+    glBindVertexArray(0);
+    glUseProgram(0);
+}
+
+void SketchRenderer::renderCachedStatic(const Sketch* sketch, const glm::mat4& vp) {
+    const void* key = sketch;
+    const std::uint64_t sig = contentSignature(sketch);
+    auto it = m_sketchCache.find(key);
+    if (it == m_sketchCache.end() || it->second.sig != sig) {
+        if (it == m_sketchCache.end() && m_sketchCache.size() >= kSketchCacheCap)
+            clearCache(); // flush; visible sketches rebuild lazily — cheap
+        SketchCacheEntry& e = m_sketchCache[key];
+        freeEntry(e);
+
+        // Re-run the standard passes with uploadAndDraw redirected into a
+        // capture list, then upload each captured pass into its own
+        // persistent buffer.
+        std::vector<CapturedPass> caps;
+        m_capture = &caps;
+        drawLines(sketch, vp);
+        drawCircles(sketch, vp);
+        drawArcs(sketch, vp);
+        drawSplines(sketch, vp);
+        drawPolygons(sketch, vp);
+        drawPoints(sketch, vp);
+        drawMidpointDots(sketch, vp);
+        m_capture = nullptr;
+
+        e.passes.reserve(caps.size());
+        for (const auto& c : caps) {
+            if (c.verts.empty()) continue;
+            PassBuf p;
+            p.mode = c.mode;
+            p.color = c.color;
+            p.width = c.width;
+            p.count = static_cast<int>(c.verts.size() / 3);
+            glGenVertexArrays(1, &p.vao);
+            glGenBuffers(1, &p.vbo);
+            glBindVertexArray(p.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, p.vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                         static_cast<GLsizeiptr>(c.verts.size() * sizeof(float)),
+                         c.verts.data(), GL_STATIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+                                  nullptr);
+            glEnableVertexAttribArray(0);
+            glBindVertexArray(0);
+            e.passes.push_back(p);
+        }
+        e.sig = sig;
+        it = m_sketchCache.find(key);
+    }
+    for (const auto& p : it->second.passes) drawBuffer(p, vp);
 }
 
 bool SketchRenderer::initialize() {
@@ -97,6 +257,13 @@ void SketchRenderer::uploadAndDraw(const std::vector<float>& verts, GLenum mode,
                                     float lineWidth) {
     if (verts.empty()) return;
 
+    // Static-sketch cache rebuild in progress: capture the pass instead of
+    // drawing — renderCachedStatic uploads it into a persistent buffer once.
+    if (m_capture) {
+        m_capture->push_back({verts, mode, color, lineWidth});
+        return;
+    }
+
     glUseProgram(m_program);
     glUniformMatrix4fv(m_locMVP, 1, GL_FALSE, glm::value_ptr(vp));
     glUniform3fv(m_locColor, 1, glm::value_ptr(color));
@@ -111,7 +278,7 @@ void SketchRenderer::uploadAndDraw(const std::vector<float>& verts, GLenum mode,
     // GL ES has no glPointSize, so the vertex shader sets gl_PointSize from this
     // uniform; desktop honours glPointSize directly.
     if (m_locPointSize >= 0) glUniform1f(m_locPointSize, mode == GL_POINTS ? lineWidth : 1.0f);
-#if !defined(__ANDROID__)
+#if !defined(MZ_GLES)
     if (mode == GL_POINTS) glPointSize(lineWidth);
 #endif
 
@@ -132,6 +299,24 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // Frame-local id→point lookup for the passes below (getPoint is a linear
+    // scan; per-element lookups made each pass O(elements × points)).
+    buildPointLut(sketch);
+
+    // A sketch rendered with no tool/solver is STATIC (not being edited):
+    // draw it from cached GPU buffers instead of regenerating + re-uploading
+    // its whole vertex stream every frame. The active sketch (tool/solver
+    // present) keeps the live path below — it changes every frame anyway,
+    // and its overlays depend on transient tool state.
+    if (!tool && !solver) {
+        renderCachedStatic(sketch, vp);
+        m_pointLut.clear();
+        m_lutSketch = nullptr;
+        glEnable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        return;
+    }
+
     drawLines(sketch, vp);
     drawCircles(sketch, vp);
     drawArcs(sketch, vp);
@@ -149,8 +334,8 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
             std::vector<float> lv;
             for (const auto& l : sketch->getLines()) {
                 if (!selLines.count(l.id)) continue;
-                const SketchPoint* a = sketch->getPoint(l.startPointId);
-                const SketchPoint* b = sketch->getPoint(l.endPointId);
+                const SketchPoint* a = lutPoint(sketch, l.startPointId);
+                const SketchPoint* b = lutPoint(sketch, l.endPointId);
                 if (!a || !b) continue;
                 glm::vec3 wa = toWorld(sketch, a->pos);
                 glm::vec3 wb = toWorld(sketch, b->pos);
@@ -166,7 +351,7 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
             std::vector<float> cv;
             for (const auto& c : sketch->getCircles()) {
                 if (!selCircles.count(c.id)) continue;
-                const SketchPoint* center = sketch->getPoint(c.centerPointId);
+                const SketchPoint* center = lutPoint(sketch, c.centerPointId);
                 if (!center) continue;
                 float r = static_cast<float>(c.radius);
                 for (int i = 0; i < segments; i++) {
@@ -189,9 +374,9 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
             std::vector<float> av;
             for (const auto& arc : sketch->getArcs()) {
                 if (!selArcs.count(arc.id)) continue;
-                const SketchPoint* center = sketch->getPoint(arc.centerPointId);
-                const SketchPoint* start = sketch->getPoint(arc.startPointId);
-                const SketchPoint* end = sketch->getPoint(arc.endPointId);
+                const SketchPoint* center = lutPoint(sketch, arc.centerPointId);
+                const SketchPoint* start = lutPoint(sketch, arc.startPointId);
+                const SketchPoint* end = lutPoint(sketch, arc.endPointId);
                 if (!center || !start || !end) continue;
                 float startAngle = std::atan2(start->pos.y - center->pos.y,
                                               start->pos.x - center->pos.x);
@@ -213,6 +398,22 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
             if (!av.empty())
                 uploadAndDraw(av, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
         }
+        const auto& selSplines = tool->getSelectedSplines();
+        if (!selSplines.empty()) {
+            std::vector<float> sv;
+            for (const auto& sp : sketch->getSplines()) {
+                if (!selSplines.count(sp.id)) continue;
+                std::vector<glm::vec2> pts = sketch->sampleSpline2D(sp, 12);
+                for (size_t i = 0; i + 1 < pts.size(); ++i) {
+                    glm::vec3 w1 = toWorld(sketch, pts[i]);
+                    glm::vec3 w2 = toWorld(sketch, pts[i + 1]);
+                    sv.push_back(w1.x); sv.push_back(w1.y); sv.push_back(w1.z);
+                    sv.push_back(w2.x); sv.push_back(w2.y); sv.push_back(w2.z);
+                }
+            }
+            if (!sv.empty())
+                uploadAndDraw(sv, GL_LINES, glm::vec3(1.0f, 0.85f, 0.1f), vp, 3.5f);
+        }
         if (!selPoints.empty()) {
             std::vector<float> pv;
             for (const auto& p : sketch->getPoints()) {
@@ -231,6 +432,12 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
         drawTrimHover(sketch, tool, vp);
         drawSvgGhost(sketch, tool, vp);
     }
+
+    // The LUT holds pointers into the sketch's point vector — valid only for
+    // this call. Clear AND un-own it so a later entry point can never
+    // dereference pointers a between-frames mutation invalidated.
+    m_pointLut.clear();
+    m_lutSketch = nullptr;
 
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
@@ -253,8 +460,8 @@ glm::vec3 SketchRenderer::toWorld(const Sketch* sketch, glm::vec2 pt2d) const {
 void SketchRenderer::drawLines(const Sketch* sketch, const glm::mat4& vp) {
     std::vector<float> verts;
     for (const auto& line : sketch->getLines()) {
-        const SketchPoint* p1 = sketch->getPoint(line.startPointId);
-        const SketchPoint* p2 = sketch->getPoint(line.endPointId);
+        const SketchPoint* p1 = lutPoint(sketch, line.startPointId);
+        const SketchPoint* p2 = lutPoint(sketch, line.endPointId);
         if (!p1 || !p2) continue;
 
         glm::vec3 w1 = toWorld(sketch, p1->pos);
@@ -274,7 +481,7 @@ void SketchRenderer::drawCircles(const Sketch* sketch, const glm::mat4& vp) {
     std::vector<float> verts;
 
     for (const auto& circle : sketch->getCircles()) {
-        const SketchPoint* center = sketch->getPoint(circle.centerPointId);
+        const SketchPoint* center = lutPoint(sketch, circle.centerPointId);
         if (!center) continue;
 
         for (int i = 0; i < segments; i++) {
@@ -300,9 +507,9 @@ void SketchRenderer::drawArcs(const Sketch* sketch, const glm::mat4& vp) {
     std::vector<float> verts;
 
     for (const auto& arc : sketch->getArcs()) {
-        const SketchPoint* center = sketch->getPoint(arc.centerPointId);
-        const SketchPoint* start = sketch->getPoint(arc.startPointId);
-        const SketchPoint* end = sketch->getPoint(arc.endPointId);
+        const SketchPoint* center = lutPoint(sketch, arc.centerPointId);
+        const SketchPoint* start = lutPoint(sketch, arc.startPointId);
+        const SketchPoint* end = lutPoint(sketch, arc.endPointId);
         if (!center || !start || !end) continue;
 
         float startAngle = std::atan2(start->pos.y - center->pos.y, start->pos.x - center->pos.x);
@@ -346,7 +553,7 @@ void SketchRenderer::drawSplines(const Sketch* sketch, const glm::mat4& vp) {
         }
     }
 
-    glm::vec3 color = glm::vec3(0.2f, 0.85f, 0.3f); // green to distinguish from regular lines
+    glm::vec3 color = glm::vec3(0.10f, 0.35f, 0.95f); // deep cobalt — match all sketch geometry
     uploadAndDraw(verts, GL_LINES, color, vp, m_lineWidth);
 }
 
@@ -356,7 +563,7 @@ void SketchRenderer::drawPolygons(const Sketch* sketch, const glm::mat4& vp) {
     std::vector<float> verts;
 
     for (const auto& polygon : sketch->getPolygons()) {
-        const SketchPoint* center = sketch->getPoint(polygon.centerPointId);
+        const SketchPoint* center = lutPoint(sketch, polygon.centerPointId);
         if (!center) continue;
 
         const float s = 0.1f;
@@ -421,16 +628,16 @@ void SketchRenderer::drawMidpointDots(const Sketch* sketch, const glm::mat4& vp)
     // Midpoint of each line. Glyph edges excluded — no dot confetti on text.
     for (const auto& line : sketch->getLines()) {
         if (line.fromText) continue;
-        const SketchPoint* p1 = sketch->getPoint(line.startPointId);
-        const SketchPoint* p2 = sketch->getPoint(line.endPointId);
+        const SketchPoint* p1 = lutPoint(sketch, line.startPointId);
+        const SketchPoint* p2 = lutPoint(sketch, line.endPointId);
         if (!p1 || !p2) continue;
         pushWorld(toWorld(sketch, 0.5f * (p1->pos + p2->pos)));
     }
     // Midpoint of each arc (angular midpoint between start and end going CCW).
     for (const auto& arc : sketch->getArcs()) {
-        const SketchPoint* c = sketch->getPoint(arc.centerPointId);
-        const SketchPoint* s = sketch->getPoint(arc.startPointId);
-        const SketchPoint* e = sketch->getPoint(arc.endPointId);
+        const SketchPoint* c = lutPoint(sketch, arc.centerPointId);
+        const SketchPoint* s = lutPoint(sketch, arc.startPointId);
+        const SketchPoint* e = lutPoint(sketch, arc.endPointId);
         if (!c || !s || !e) continue;
         float startA = std::atan2(s->pos.y - c->pos.y, s->pos.x - c->pos.x);
         float endA = std::atan2(e->pos.y - c->pos.y, e->pos.x - c->pos.x);
@@ -518,7 +725,7 @@ void SketchRenderer::drawPreview(const Sketch* sketch, const SketchTool* tool,
         // spline (and its extrudable geometry) will be.
         std::vector<glm::vec2> ctrl;
         for (int id : tool->splinePointsInProgress())
-            if (const SketchPoint* p = sketch->getPoint(id))
+            if (const SketchPoint* p = lutPoint(sketch, id))
                 ctrl.push_back(p->pos);
         ctrl.push_back(end);
         std::vector<glm::vec2> pts = Sketch::interpolate2D(ctrl, 12);
@@ -655,8 +862,8 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
             bool found = false;
             for (const auto& line : sketch->getLines()) {
                 if (line.id == c.entityA) {
-                    const SketchPoint* p1 = sketch->getPoint(line.startPointId);
-                    const SketchPoint* p2 = sketch->getPoint(line.endPointId);
+                    const SketchPoint* p1 = lutPoint(sketch, line.startPointId);
+                    const SketchPoint* p2 = lutPoint(sketch, line.endPointId);
                     if (p1 && p2) {
                         midpoint = (p1->pos + p2->pos) * 0.5f;
                         found = true;
@@ -699,7 +906,7 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
         } else if (c.type == ConstraintType::Coincident) {
             // Draw a larger yellow/green dot at the coincident point
             // entityA is one of the coincident points
-            const SketchPoint* pt = sketch->getPoint(c.entityA);
+            const SketchPoint* pt = lutPoint(sketch, c.entityA);
             if (!pt) continue;
 
             // Draw a small diamond shape around the point
@@ -724,8 +931,8 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
 
         } else if (c.type == ConstraintType::Distance) {
             // Draw dimension line between two points with perpendicular end caps
-            const SketchPoint* p1 = sketch->getPoint(c.entityA);
-            const SketchPoint* p2 = sketch->getPoint(c.entityB);
+            const SketchPoint* p1 = lutPoint(sketch, c.entityA);
+            const SketchPoint* p2 = lutPoint(sketch, c.entityB);
             if (!p1 || !p2) continue;
 
             glm::vec2 a = p1->pos;
@@ -771,7 +978,7 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
 
         } else if (c.type == ConstraintType::Fixed) {
             // Draw an X marker at the fixed point
-            const SketchPoint* pt = sketch->getPoint(c.entityA);
+            const SketchPoint* pt = lutPoint(sketch, c.entityA);
             if (!pt) continue;
 
             float s = markerSize * 0.6f;
@@ -795,7 +1002,7 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
             bool found = false;
             for (const auto& circle : sketch->getCircles()) {
                 if (circle.id == c.entityA) {
-                    const SketchPoint* cp = sketch->getPoint(circle.centerPointId);
+                    const SketchPoint* cp = lutPoint(sketch, circle.centerPointId);
                     if (cp) {
                         center = cp->pos;
                         found = true;
@@ -806,7 +1013,7 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
             if (!found) {
                 for (const auto& arc : sketch->getArcs()) {
                     if (arc.id == c.entityA) {
-                        const SketchPoint* cp = sketch->getPoint(arc.centerPointId);
+                        const SketchPoint* cp = lutPoint(sketch, arc.centerPointId);
                         if (cp) {
                             center = cp->pos;
                             found = true;
@@ -842,8 +1049,8 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
             }
             if (!lA || !lB) continue;
             auto drawTicks = [&](const SketchLine* l) {
-                const SketchPoint* p1 = sketch->getPoint(l->startPointId);
-                const SketchPoint* p2 = sketch->getPoint(l->endPointId);
+                const SketchPoint* p1 = lutPoint(sketch, l->startPointId);
+                const SketchPoint* p2 = lutPoint(sketch, l->endPointId);
                 if (!p1 || !p2) return;
                 glm::vec2 mid = (p1->pos + p2->pos) * 0.5f;
                 glm::vec2 dir = p2->pos - p1->pos;
@@ -870,8 +1077,8 @@ void SketchRenderer::drawConstraints(const Sketch* sketch, const SketchSolver* s
             bool found = false;
             for (const auto& line : sketch->getLines()) {
                 if (line.id == c.entityA) {
-                    const SketchPoint* p1 = sketch->getPoint(line.startPointId);
-                    const SketchPoint* p2 = sketch->getPoint(line.endPointId);
+                    const SketchPoint* p1 = lutPoint(sketch, line.startPointId);
+                    const SketchPoint* p2 = lutPoint(sketch, line.endPointId);
                     if (p1 && p2) {
                         midpoint = (p1->pos + p2->pos) * 0.5f;
                         found = true;
@@ -1057,15 +1264,15 @@ void SketchRenderer::renderSketchHighlight(const Sketch* sketch,
     };
 
     for (const auto& ln : sketch->getLines()) {
-        const SketchPoint* p1 = sketch->getPoint(ln.startPointId);
-        const SketchPoint* p2 = sketch->getPoint(ln.endPointId);
+        const SketchPoint* p1 = lutPoint(sketch, ln.startPointId);
+        const SketchPoint* p2 = lutPoint(sketch, ln.endPointId);
         if (!p1 || !p2) continue;
         push(toWorld(sketch, p1->pos), toWorld(sketch, p2->pos));
     }
 
     const int circSegs = 64;
     for (const auto& c : sketch->getCircles()) {
-        const SketchPoint* ctr = sketch->getPoint(c.centerPointId);
+        const SketchPoint* ctr = lutPoint(sketch, c.centerPointId);
         if (!ctr) continue;
         float r = static_cast<float>(c.radius);
         for (int i = 0; i < circSegs; ++i) {
@@ -1079,9 +1286,9 @@ void SketchRenderer::renderSketchHighlight(const Sketch* sketch,
 
     const int arcSegs = 32;
     for (const auto& a : sketch->getArcs()) {
-        const SketchPoint* ctr = sketch->getPoint(a.centerPointId);
-        const SketchPoint* s   = sketch->getPoint(a.startPointId);
-        const SketchPoint* e   = sketch->getPoint(a.endPointId);
+        const SketchPoint* ctr = lutPoint(sketch, a.centerPointId);
+        const SketchPoint* s   = lutPoint(sketch, a.startPointId);
+        const SketchPoint* e   = lutPoint(sketch, a.endPointId);
         if (!ctr || !s || !e) continue;
         float a0 = std::atan2(s->pos.y - ctr->pos.y, s->pos.x - ctr->pos.x);
         float a1 = std::atan2(e->pos.y - ctr->pos.y, e->pos.x - ctr->pos.x);
@@ -1100,10 +1307,80 @@ void SketchRenderer::renderSketchHighlight(const Sketch* sketch,
 
     for (const auto& sp : sketch->getSplines()) {
         for (size_t i = 0; i + 1 < sp.controlPointIds.size(); ++i) {
-            const SketchPoint* p1 = sketch->getPoint(sp.controlPointIds[i]);
-            const SketchPoint* p2 = sketch->getPoint(sp.controlPointIds[i + 1]);
+            const SketchPoint* p1 = lutPoint(sketch, sp.controlPointIds[i]);
+            const SketchPoint* p2 = lutPoint(sketch, sp.controlPointIds[i + 1]);
             if (!p1 || !p2) continue;
             push(toWorld(sketch, p1->pos), toWorld(sketch, p2->pos));
+        }
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    uploadAndDraw(verts, GL_LINES, color, vp, lineWidth);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+}
+
+void SketchRenderer::renderElementsHighlight(const Sketch* sketch,
+                                             const std::set<int>& lineIds,
+                                             const std::set<int>& circleIds,
+                                             const std::set<int>& arcIds,
+                                             const glm::vec3& color, float lineWidth,
+                                             const glm::mat4& view,
+                                             const glm::mat4& projection) {
+    if (!sketch || !m_program) return;
+    if (lineIds.empty() && circleIds.empty() && arcIds.empty()) return;
+    glm::mat4 vp = projection * view;
+
+    std::vector<float> verts;
+    auto push = [&](glm::vec3 a, glm::vec3 b) {
+        verts.push_back(a.x); verts.push_back(a.y); verts.push_back(a.z);
+        verts.push_back(b.x); verts.push_back(b.y); verts.push_back(b.z);
+    };
+
+    for (const auto& ln : sketch->getLines()) {
+        if (!lineIds.count(ln.id)) continue;
+        const SketchPoint* p1 = lutPoint(sketch, ln.startPointId);
+        const SketchPoint* p2 = lutPoint(sketch, ln.endPointId);
+        if (!p1 || !p2) continue;
+        push(toWorld(sketch, p1->pos), toWorld(sketch, p2->pos));
+    }
+
+    const int circSegs = 64;
+    for (const auto& c : sketch->getCircles()) {
+        if (!circleIds.count(c.id)) continue;
+        const SketchPoint* ctr = lutPoint(sketch, c.centerPointId);
+        if (!ctr) continue;
+        float r = static_cast<float>(c.radius);
+        for (int i = 0; i < circSegs; ++i) {
+            float a1 = 2.0f * static_cast<float>(M_PI) * i / circSegs;
+            float a2 = 2.0f * static_cast<float>(M_PI) * (i + 1) / circSegs;
+            glm::vec2 s1(ctr->pos.x + r * std::cos(a1), ctr->pos.y + r * std::sin(a1));
+            glm::vec2 s2(ctr->pos.x + r * std::cos(a2), ctr->pos.y + r * std::sin(a2));
+            push(toWorld(sketch, s1), toWorld(sketch, s2));
+        }
+    }
+
+    const int arcSegs = 32;
+    for (const auto& a : sketch->getArcs()) {
+        if (!arcIds.count(a.id)) continue;
+        const SketchPoint* ctr = lutPoint(sketch, a.centerPointId);
+        const SketchPoint* s   = lutPoint(sketch, a.startPointId);
+        const SketchPoint* e   = lutPoint(sketch, a.endPointId);
+        if (!ctr || !s || !e) continue;
+        float a0 = std::atan2(s->pos.y - ctr->pos.y, s->pos.x - ctr->pos.x);
+        float a1 = std::atan2(e->pos.y - ctr->pos.y, e->pos.x - ctr->pos.x);
+        if (a1 < a0) a1 += 2.0f * static_cast<float>(M_PI);
+        float r = static_cast<float>(a.radius);
+        for (int i = 0; i < arcSegs; ++i) {
+            float t1 = static_cast<float>(i) / arcSegs;
+            float t2 = static_cast<float>(i + 1) / arcSegs;
+            float ang1 = a0 + t1 * (a1 - a0);
+            float ang2 = a0 + t2 * (a1 - a0);
+            glm::vec2 q1(ctr->pos.x + r * std::cos(ang1), ctr->pos.y + r * std::sin(ang1));
+            glm::vec2 q2(ctr->pos.x + r * std::cos(ang2), ctr->pos.y + r * std::sin(ang2));
+            push(toWorld(sketch, q1), toWorld(sketch, q2));
         }
     }
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <unordered_map>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -33,6 +34,9 @@ void SketchTool::setMode(SketchToolMode mode) {
         onCancel();
     }
     m_mode = mode;
+    // Leaving select/move: drop element highlights so they don't linger as
+    // golden geometry once the user goes back to drawing.
+    if (mode != SketchToolMode::Select) clearElementSelection();
     m_clickCount = 0;
     m_isPlacing = false;
     m_lastPointId = -1;
@@ -45,6 +49,7 @@ void SketchTool::setMode(SketchToolMode mode) {
     m_activeInferences.clear();
     m_rectDimStage = 0;
     m_rectDimH = 0.0f;
+    m_mirrorActive = false; // switching tools aborts any in-progress mirror
 }
 
 SketchToolMode SketchTool::getMode() const {
@@ -121,6 +126,10 @@ void SketchTool::onMouseMove(glm::vec2 pos) {
     // Trim uses the raw cursor for picking; snapping would pull the click toward
     // unrelated nearby targets and pick the wrong element.
     glm::vec2 newPos = (m_mode == SketchToolMode::Trim) ? pos : snap(pos);
+    // Select/move only manipulates existing geometry — inference guides are
+    // visual noise here. Keep the snapped position (handy when dragging an
+    // element onto a grid point/endpoint) but drop the guide markers.
+    if (m_mode == SketchToolMode::Select) m_activeInferences.clear();
     glm::vec2 delta  = newPos - m_currentPos;
     m_currentPos = newPos;
 
@@ -649,8 +658,12 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
 
     // Inference-level gates (sketch toolbar Full/Reduced/Off):
     //   Reduced == the classic inference set (everything below). Full adds the
-    //   hover-charged references on top. Off keeps only endpoint + grid.
-    //   allowSnaps       — midpoint / on-line snaps.
+    //   hover-charged references on top. Off keeps ONLY grid snap — every point
+    //   snap (endpoints, incl. loop closure onto the chain start, plus face-
+    //   reference vertices) is now gated too, so "inferences off" means the
+    //   cursor never jumps to geometry (Steve: closing a triangle still snapped
+    //   the last vertex to the start with inferences off — that IS an inference).
+    //   allowSnaps       — endpoint / midpoint / on-line / face-ref snaps.
     //   allowDirectional — perp/parallel-to-prev, angle, on-line-extension,
     //                      tangent, axis-from-point. ON for both Full & Reduced.
     //   allowCharge      — hover-to-charge references (Full only).
@@ -659,14 +672,21 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     const bool allowCharge      = (m_inferenceLevel == InferenceLevel::Full ||
                                    m_inferenceLevel == InferenceLevel::Max);
 
-    // Point snap radius scales with grid step so it remains useful at 10 mm grids
-    // and isn't overaggressive at 0.1 mm grids. (Steve: closing splines onto
-    // existing line/polygon endpoints was awkward — the old 0.4× / 0.15 mm
-    // floor was too tight to reliably grab the corner when you're drawing
-    // freehand toward it. Bumped to 0.6× / 0.25 mm.)
+    // Point snap radius. When grid snap is ACTIVE the band is tied PURELY to
+    // the grid step (0.6× < one increment), so it can never reach past a
+    // neighbouring grid intersection. The old absolute 0.25 mm floor meant a
+    // fine grid was swamped by it: at a 0.1 mm grid a second point placed one
+    // or two steps (0.1–0.2 mm) from the first snapped straight back onto it —
+    // so nothing shorter than ~0.3 mm could be drawn, and an endpoint snap
+    // hijacked the cursor within 0.3 mm of any point (Steve's report). Coarse
+    // grids are unaffected (gridStep·0.6 already dominated the floor above
+    // ~0.42 mm). Grid OFF: the cursor is freehand, so keep an absolute band to
+    // grab endpoints reliably.
     // Master snap band — endpoints, midpoints, face centres, on-line and
     // extension guides all derive from it, so the touch widening flows to all.
-    float pointSnapThreshold = std::max(0.25f, m_gridStep * 0.6f) * snapScale();
+    const bool gridSnapOnForBand = m_snapToGridEnabled && m_gridStep > 0.0f;
+    float pointSnapThreshold =
+        (gridSnapOnForBand ? m_gridStep * 0.6f : 0.25f) * snapScale();
     float curveSnapThreshold = pointSnapThreshold; // same band for circle/arc perimeters
 
     // Without a sketch only grid snap can apply.
@@ -695,11 +715,26 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     // Points are unambiguous: there's a specific target to land on, nothing
     // to combine with. Endpoint → circle/arc perimeter → midpoint → face
     // centroid, in priority order.
+    // Point snaps (endpoints) are an INFERENCE: gated OFF entirely when the
+    // inference level is Off, so nothing captures the cursor — including loop
+    // closure onto the chain start (Steve: closing a triangle still snapped
+    // the last vertex to the start with inferences off). Grid snap at the end
+    // of this function is independent and still applies when enabled.
     const auto& points = m_sketch->getPoints();
-    for (const auto& pt : points) {
+    if (allowSnaps) for (const auto& pt : points) {
         // During a drag, skip the points being moved — they'd snap to
         // their own starting position and lock the drag in place.
         if (m_snapExcludePoints.count(pt.id)) continue;
+        // Don't SELF-WELD the active segment: while positioning the next
+        // vertex, the point just placed (m_lastPointId — the segment's start /
+        // previous chain vertex) must not capture the cursor, or the endpoint
+        // band welds the new point straight back onto it and you can't draw a
+        // segment shorter than the band. This is grid-INDEPENDENT (the band is
+        // 0.25 mm even with snap off), which is why Steve couldn't make a line
+        // under ~0.25 mm with grid AND inferences both off. Loop closure welds
+        // to the CHAIN start (m_chainStartPointId — a different id after the
+        // first segment), so auto-close is unaffected.
+        if (m_isPlacing && m_lastPointId >= 0 && pt.id == m_lastPointId) continue;
         // Glyph vertices are never snap targets — a word is hundreds of
         // points and drawing near text was impossible.
         if (pt.fromText) continue;
@@ -710,8 +745,9 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     }
     // Face-reference points (vertices and curve samples from the host face).
     // Same endpoint inference, just sourced from the 3D geometry the sketch
-    // was started on. refId of -1 since these aren't sketch points.
-    for (const auto& fp : m_sketch->getFaceReferences().points) {
+    // was started on. refId of -1 since these aren't sketch points. Gated with
+    // the sketch-point snaps above (inferences Off → no capture).
+    if (allowSnaps) for (const auto& fp : m_sketch->getFaceReferences().points) {
         if (glm::length(pos - fp) < pointSnapThreshold) {
             m_activeInferences.push_back({InferenceGuide::Endpoint, fp, fp, -1});
             return fp;
@@ -747,22 +783,71 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     const auto& arcs = m_sketch->getArcs();
     for (const auto& a : arcs) {
         const SketchPoint* center = m_sketch->getPoint(a.centerPointId);
-        if (!center) continue;
+        const SketchPoint* spt   = m_sketch->getPoint(a.startPointId);
+        const SketchPoint* ept   = m_sketch->getPoint(a.endPointId);
+        if (!center || !spt || !ept) continue;
         glm::vec2 v = pos - center->pos;
         float dist = glm::length(v);
         if (dist < 1e-6f) continue;
         float r = static_cast<float>(a.radius);
         if (std::abs(dist - r) < curveSnapThreshold) {
             if (m_inferenceLevel == InferenceLevel::Off) continue;
+
+            // Compute arc span so perimeter snaps are limited to the actual arc,
+            // not the extended full circle. Same convention as the midpoint calc.
+            const float TWO_PI = 2.0f * static_cast<float>(M_PI);
+            float startA = std::atan2(spt->pos.y - center->pos.y,
+                                      spt->pos.x - center->pos.x);
+            float sweep  = std::atan2(ept->pos.y - center->pos.y,
+                                      ept->pos.x - center->pos.x) - startA;
+            while (sweep < 0.0f)    sweep += TWO_PI;
+            while (sweep >= TWO_PI) sweep -= TWO_PI;
+            // Skip if cursor is not within the arc's angular span.
+            float cursorA = std::atan2(v.y, v.x) - startA;
+            while (cursorA < 0.0f)    cursorA += TWO_PI;
+            while (cursorA >= TWO_PI) cursorA -= TWO_PI;
+            if (cursorA > sweep) continue;
+
             if ((m_inferenceLevel == InferenceLevel::Full ||
                  m_inferenceLevel == InferenceLevel::Max) && gridActive) {
                 glm::vec2 gc;
                 if (snapCurveToGrid(center->pos, r, pos, m_gridStep,
-                                    std::max(curveSnapThreshold, m_gridStep * 0.6f), gc))
-                    return gc;
+                                    std::max(curveSnapThreshold, m_gridStep * 0.6f), gc)) {
+                    // Accept grid crossing only when it lies on the arc.
+                    float gcA = std::atan2(gc.y - center->pos.y,
+                                           gc.x - center->pos.x) - startA;
+                    while (gcA < 0.0f)    gcA += TWO_PI;
+                    while (gcA >= TWO_PI) gcA -= TWO_PI;
+                    if (gcA <= sweep) return gc;
+                }
+                // No grid crossing on the arc — fall through to the plain
+                // perimeter point so arcs behave like circles (any on-arc point
+                // is reachable even when no grid line crosses the arc span).
+                return center->pos + (v / dist) * r;
             }
             if (gridActive && std::abs(dist - r) >= gridDist) continue;
             return center->pos + (v / dist) * r;
+        }
+    }
+    // Face-reference circular / arc edges — continuous perimeter snapping for
+    // in-plane host/neighbour circles (hole rims, fillet arcs). Mirrors the
+    // sketch-circle behaviour: grid wins ties; never fires when inference is Off.
+    if (m_inferenceLevel != InferenceLevel::Off) {
+        const float TWO_PI = 2.0f * static_cast<float>(M_PI);
+        for (const auto& fc : m_sketch->getFaceReferences().circles) {
+            glm::vec2 v = pos - fc.center;
+            float dist = glm::length(v);
+            if (dist < 1e-6f) continue;
+            if (std::abs(dist - fc.radius) >= curveSnapThreshold) continue;
+            // Honour the arc's angular span (full circles have sweep == 2*PI).
+            if (fc.sweep < TWO_PI - 1e-3f) {
+                float a = std::atan2(v.y, v.x) - fc.startAngle;
+                while (a < 0.0f)    a += TWO_PI;
+                while (a >= TWO_PI) a -= TWO_PI;
+                if (a > fc.sweep) continue;
+            }
+            if (gridActive && std::abs(dist - fc.radius) >= gridDist) continue;
+            return fc.center + (v / dist) * fc.radius;
         }
     }
     // Line midpoints (matches the green dots drawn by the renderer).
@@ -908,20 +993,37 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
     };
     std::vector<LineCand> cands;
 
-    const float axisThresh   = std::max(0.2f, m_gridStep * 0.3f);
+    // Axis-from-point guide band — same grid-relative treatment as the point
+    // snap above: with grid snap on, an absolute 0.2 mm floor would fire a
+    // horizontal/vertical guide off a point within 0.2 mm on a fine grid,
+    // hijacking the cursor within one increment. Tie it to the grid instead.
+    const float axisThresh   = (gridActive ? m_gridStep * 0.3f : 0.2f);
     const float onLineThresh = pointSnapThreshold * 0.7f;
     const float extThresh    = pointSnapThreshold * 0.6f;
     // POSITIONAL cap on directional / charged inferences: fires-checks are
     // ANGULAR for those, so capture distance grows with segment length (3°
     // at 100 mm = 5 mm of cursor theft). An inference may only pull the
-    // cursor a couple of millimetres from where the user actually is.
-    const float posCap       = std::max(1.5f, m_gridStep * 1.5f);
+    // cursor a short distance from where the user actually is. Grid-relative
+    // when snap is on (same reasoning as the point/axis bands): the old
+    // absolute 1.5 mm floor let a directional guide yank the cursor ~1.5 mm —
+    // 15 increments at a 0.1 mm grid — so once the (now tight) endpoint band
+    // stopped grabbing, these took over and the preview wouldn't start until
+    // ~1.3 mm out. Tie the pull to the grid so it can't reach past ~1.5
+    // increments; coarse grids and grid-off keep the absolute cap.
+    const float posCap       = (gridActive ? m_gridStep * 1.5f : 1.5f);
 
     // On-line: cursor's perpendicular projection lands within an existing
     // sketch segment.
     if (allowSnaps) {
         for (const auto& ln : lines) {
-            if (ln.fromText) continue;
+            // fromText (SVG-import / Text-tool) segments ARE valid on-edge
+            // targets: landing a point on an imported outline is how you anchor
+            // new geometry to it and close an extrudable region against it
+            // (Sketch::buildWires then splits the segment at the contact point,
+            // so the loop-walker can route the new loop through it). They stay
+            // excluded from endpoint/midpoint/symmetry snaps and every
+            // directional guide, so a dense outline never spams inference — only
+            // this perpendicular on-edge landing, cheap and unambiguous, fires.
             if (m_snapExcludePoints.count(ln.startPointId) ||
                 m_snapExcludePoints.count(ln.endPointId)) continue;
             const SketchPoint* p1 = m_sketch->getPoint(ln.startPointId);
@@ -953,6 +1055,35 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
             if (d < onLineThresh) {
                 cands.push_back({fl.first, dir, InferenceGuide::OnLine, -1,
                                  proj, true, len, proj, d, true});
+            }
+        }
+        // On-spline: cursor's projection lands anywhere along a spline curve.
+        // Splines were invisible to snapping, so you couldn't anchor a line onto
+        // an imported cursive stroke. Project onto the sampled curve and register
+        // the hit with the LOCAL tangent so it resolves like an on-edge landing;
+        // a line drawn across the region then divides it via the region splitter.
+        for (const auto& sp : m_sketch->getSplines()) {
+            if (sp.isConstruction || sp.controlPointIds.size() < 2) continue;
+            bool excluded = false;
+            for (int cpid : sp.controlPointIds)
+                if (m_snapExcludePoints.count(cpid)) { excluded = true; break; }
+            if (excluded) continue;
+            std::vector<glm::vec2> samp = m_sketch->sampleSpline2D(sp, 24); // match buildWires
+            float bestD = onLineThresh; glm::vec2 bestProj(0.0f), bestDir(1.0f, 0.0f);
+            bool found = false;
+            for (size_t k = 0; k + 1 < samp.size(); ++k) {
+                glm::vec2 a = samp[k], b = samp[k + 1], ab = b - a;
+                float len = glm::length(ab);
+                if (len < 1e-6f) continue;
+                glm::vec2 dir = ab / len;
+                float t = glm::clamp(glm::dot(pos - a, dir), 0.0f, len);
+                glm::vec2 proj = a + dir * t;
+                float d = glm::distance(pos, proj);
+                if (d < bestD) { bestD = d; bestProj = proj; bestDir = dir; found = true; }
+            }
+            if (found) {
+                cands.push_back({bestProj, bestDir, InferenceGuide::OnLine, -1,
+                                 bestProj, true, onLineThresh * 4.0f, bestProj, bestD, true});
             }
         }
     }
@@ -1419,15 +1550,23 @@ int SketchTool::findCoincidentPoint(glm::vec2 pos, int excludeId) const {
     if (!m_sketch) return -1;
 
     const float threshold = 0.3f * snapScale(); // point snap (wider on touch)
+    // Return the NEAREST point within the radius, not the first one found. On
+    // dense or small-scale geometry (e.g. an SVG imported small, whose spline
+    // control points sit within the weld radius of each other) "first in range"
+    // can weld an arc/line endpoint onto the wrong neighbour — the arc then
+    // renders rotated off its latched endpoints with the wrong bulge. Scaling
+    // the artwork up spread the points past the radius, which is why that made
+    // the same operation behave; nearest makes it scale-independent.
+    int best = -1;
+    float bestD = threshold;
     const auto& points = m_sketch->getPoints();
     for (const auto& pt : points) {
         if (pt.id == excludeId) continue;
         if (pt.fromText) continue; // never weld user geometry onto glyphs
-        if (glm::length(pos - pt.pos) < threshold) {
-            return pt.id;
-        }
+        float d = glm::length(pos - pt.pos);
+        if (d < bestD) { bestD = d; best = pt.id; }
     }
-    return -1;
+    return best;
 }
 
 void SketchTool::selectAll() {
@@ -2612,6 +2751,188 @@ void SketchTool::commitStamp() {
     // button; desktop stamps directly on click via onMouseDown.
     if (m_mode == SketchToolMode::Text)     handleTextTool(m_currentPos);
     else if (m_mode == SketchToolMode::Svg) handleSvgTool(m_currentPos);
+}
+
+// --- Interactive Mirror ----------------------------------------------------
+
+bool SketchTool::beginMirror() {
+    if (!m_sketch) return false;
+    m_mirrorPoints.clear();  m_mirrorLines.clear(); m_mirrorCircles.clear();
+    m_mirrorArcs.clear();    m_mirrorSplines.clear();
+
+    if (hasElementSelection()) {
+        m_mirrorPoints  = m_selectedPoints;
+        m_mirrorLines   = m_selectedLines;
+        m_mirrorCircles = m_selectedCircles;
+        m_mirrorArcs    = m_selectedArcs;
+        m_mirrorSplines = m_selectedSplines;
+    } else {
+        for (const auto& p : m_sketch->getPoints())  m_mirrorPoints.insert(p.id);
+        for (const auto& l : m_sketch->getLines())   m_mirrorLines.insert(l.id);
+        for (const auto& c : m_sketch->getCircles()) m_mirrorCircles.insert(c.id);
+        for (const auto& a : m_sketch->getArcs())    m_mirrorArcs.insert(a.id);
+        for (const auto& s : m_sketch->getSplines()) m_mirrorSplines.insert(s.id);
+    }
+    if (m_mirrorPoints.empty() && m_mirrorLines.empty() && m_mirrorCircles.empty() &&
+        m_mirrorArcs.empty() && m_mirrorSplines.empty())
+        return false;
+
+    // Seed the line at the centroid of every involved vertex.
+    glm::vec2 c{0.0f}; int n = 0;
+    auto addPt = [&](int id) { if (auto* p = m_sketch->getPoint(id)) { c += p->pos; ++n; } };
+    for (int id : m_mirrorPoints) addPt(id);
+    for (int id : m_mirrorLines)
+        for (const auto& l : m_sketch->getLines()) if (l.id == id) { addPt(l.startPointId); addPt(l.endPointId); break; }
+    for (int id : m_mirrorCircles)
+        for (const auto& cc : m_sketch->getCircles()) if (cc.id == id) { addPt(cc.centerPointId); break; }
+    for (int id : m_mirrorArcs)
+        for (const auto& aa : m_sketch->getArcs()) if (aa.id == id) { addPt(aa.startPointId); addPt(aa.endPointId); break; }
+    for (int id : m_mirrorSplines)
+        for (const auto& sp : m_sketch->getSplines()) if (sp.id == id) { for (int cp : sp.controlPointIds) addPt(cp); break; }
+    glm::vec2 anchor = (n > 0) ? c / static_cast<float>(n) : glm::vec2(0.0f);
+
+    setMode(SketchToolMode::Mirror); // clears the live selection; sources captured above
+    m_mirrorAnchor = anchor;
+    m_mirrorAngleRad = static_cast<float>(M_PI) * 0.5f; // vertical line
+    m_mirrorActive = true;
+    return true;
+}
+
+void SketchTool::cancelMirror() {
+    m_mirrorActive = false;
+    m_mirrorPoints.clear(); m_mirrorLines.clear(); m_mirrorCircles.clear();
+    m_mirrorArcs.clear();   m_mirrorSplines.clear();
+}
+
+glm::vec2 SketchTool::mirrorReflect(glm::vec2 p) const {
+    glm::vec2 d(std::cos(m_mirrorAngleRad), std::sin(m_mirrorAngleRad)); // line dir
+    glm::vec2 nrm(-d.y, d.x);                                            // line normal
+    glm::vec2 to = p - m_mirrorAnchor;
+    return m_mirrorAnchor + d * glm::dot(to, d) - nrm * glm::dot(to, nrm);
+}
+
+void SketchTool::getMirrorPreview(std::vector<std::vector<glm::vec2>>& polylines,
+                                  std::vector<glm::vec2>& points) const {
+    polylines.clear();
+    points.clear();
+    if (!m_sketch || !m_mirrorActive) return;
+    auto R = [&](glm::vec2 p) { return mirrorReflect(p); };
+
+    // Track which vertices are consumed by a curve so lone points stay sparse.
+    std::set<int> referenced;
+    for (int id : m_mirrorLines)
+        for (const auto& l : m_sketch->getLines()) if (l.id == id) {
+            const SketchPoint* a = m_sketch->getPoint(l.startPointId);
+            const SketchPoint* b = m_sketch->getPoint(l.endPointId);
+            if (a && b) polylines.push_back({R(a->pos), R(b->pos)});
+            referenced.insert(l.startPointId); referenced.insert(l.endPointId);
+            break;
+        }
+    for (int id : m_mirrorCircles)
+        for (const auto& c : m_sketch->getCircles()) if (c.id == id) {
+            const SketchPoint* ctr = m_sketch->getPoint(c.centerPointId);
+            if (ctr) {
+                std::vector<glm::vec2> loop;
+                const int N = 48;
+                for (int i = 0; i <= N; ++i) {
+                    float t = 2.0f * static_cast<float>(M_PI) * i / N;
+                    loop.push_back(R(ctr->pos + glm::vec2(std::cos(t), std::sin(t)) *
+                                              static_cast<float>(c.radius)));
+                }
+                polylines.push_back(std::move(loop));
+            }
+            referenced.insert(c.centerPointId);
+            break;
+        }
+    for (int id : m_mirrorArcs)
+        for (const auto& a : m_sketch->getArcs()) if (a.id == id) {
+            const SketchPoint* ctr = m_sketch->getPoint(a.centerPointId);
+            const SketchPoint* sp  = m_sketch->getPoint(a.startPointId);
+            const SketchPoint* ep  = m_sketch->getPoint(a.endPointId);
+            if (ctr && sp && ep) {
+                float a0 = std::atan2(sp->pos.y - ctr->pos.y, sp->pos.x - ctr->pos.x);
+                float a1 = std::atan2(ep->pos.y - ctr->pos.y, ep->pos.x - ctr->pos.x);
+                // Sweep CCW from a0 to a1 (the minor arc convention addArc uses).
+                while (a1 < a0) a1 += 2.0f * static_cast<float>(M_PI);
+                std::vector<glm::vec2> poly;
+                const int N = 32;
+                for (int i = 0; i <= N; ++i) {
+                    float t = a0 + (a1 - a0) * i / N;
+                    poly.push_back(R(ctr->pos + glm::vec2(std::cos(t), std::sin(t)) *
+                                             static_cast<float>(a.radius)));
+                }
+                polylines.push_back(std::move(poly));
+            }
+            referenced.insert(a.startPointId); referenced.insert(a.endPointId);
+            referenced.insert(a.centerPointId);
+            break;
+        }
+    for (int id : m_mirrorSplines)
+        for (const auto& sp : m_sketch->getSplines()) if (sp.id == id) {
+            std::vector<glm::vec2> poly;
+            for (glm::vec2 q : m_sketch->sampleSpline2D(sp, 16)) poly.push_back(R(q));
+            if (poly.size() >= 2) polylines.push_back(std::move(poly));
+            for (int cp : sp.controlPointIds) referenced.insert(cp);
+            break;
+        }
+    // Lone vertices (not part of any mirrored curve).
+    for (int id : m_mirrorPoints)
+        if (!referenced.count(id))
+            if (const SketchPoint* p = m_sketch->getPoint(id)) points.push_back(R(p->pos));
+}
+
+void SketchTool::commitMirror(std::set<int>& outPoints, std::set<int>& outLines) {
+    if (!m_sketch || !m_mirrorActive) return;
+    std::unordered_map<int, int> remap;
+    auto remapPt = [&](int oldId) -> int {
+        auto it = remap.find(oldId);
+        if (it != remap.end()) return it->second;
+        const SketchPoint* p = m_sketch->getPoint(oldId);
+        if (!p) return -1;
+        glm::vec2 np = mirrorReflect(p->pos);
+        // Weld a reflected vertex onto an existing coincident one (a point on
+        // the mirror line maps to itself) — same as the one-shot mirror did.
+        int existing = findCoincidentPoint(np, -1);
+        int nid = (existing >= 0) ? existing : m_sketch->addPoint(np);
+        remap[oldId] = nid;
+        return nid;
+    };
+    for (int id : m_mirrorPoints) { int nid = remapPt(id); if (nid >= 0) outPoints.insert(nid); }
+    for (int lid : m_mirrorLines)
+        for (const auto& l : m_sketch->getLines()) if (l.id == lid) {
+            int s = remapPt(l.startPointId), e = remapPt(l.endPointId);
+            if (s >= 0 && e >= 0 && s != e) {
+                int nl = m_sketch->addLine(s, e);
+                outLines.insert(nl); outPoints.insert(s); outPoints.insert(e);
+            }
+            break;
+        }
+    for (int cid : m_mirrorCircles)
+        for (const auto& c : m_sketch->getCircles()) if (c.id == cid) {
+            int ctr = remapPt(c.centerPointId);
+            if (ctr >= 0) { m_sketch->addCircle(ctr, c.radius); outPoints.insert(ctr); }
+            break;
+        }
+    for (int aid : m_mirrorArcs)
+        for (const auto& a : m_sketch->getArcs()) if (a.id == aid) {
+            int ctr = remapPt(a.centerPointId);
+            int s = remapPt(a.startPointId), e = remapPt(a.endPointId);
+            // Reflection reverses winding — swap start/end so the rebuilt arc
+            // keeps the same swept (minor) span on the mirrored side.
+            if (ctr >= 0 && s >= 0 && e >= 0) {
+                m_sketch->addArc(ctr, e, s, a.radius);
+                outPoints.insert(s); outPoints.insert(e); outPoints.insert(ctr);
+            }
+            break;
+        }
+    for (int sid : m_mirrorSplines)
+        for (const auto& sp : m_sketch->getSplines()) if (sp.id == sid) {
+            std::vector<int> cps;
+            for (int cp : sp.controlPointIds) { int n2 = remapPt(cp); if (n2 >= 0) cps.push_back(n2); }
+            if (cps.size() >= 2) m_sketch->addSpline(cps);
+            for (int n2 : cps) outPoints.insert(n2);
+            break;
+        }
 }
 
 void SketchTool::undoLastStamp() {

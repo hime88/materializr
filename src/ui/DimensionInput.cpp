@@ -1,4 +1,5 @@
 #include "DimensionInput.h"
+#include "../core/NumParse.h"
 #include <imgui.h>
 #include <cstdio>
 #include <cstdlib>
@@ -80,9 +81,11 @@ bool DimensionInput::render() {
     }
 
     if (valueEntered) {
-        m_value = std::strtod(m_valueBuffer, nullptr);
+        // parseFinite: garbage / non-finite entry leaves the previous value
+        // (NaN/inf here flowed into sketch geometry).
+        (void)materializr::parseFinite(m_valueBuffer, m_value);
         if (m_showAngle) {
-            m_angle = std::strtod(m_angleBuffer, nullptr);
+            (void)materializr::parseFinite(m_angleBuffer, m_angle);
         }
         m_confirmed = true;
         m_visible = false;

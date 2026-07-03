@@ -4,6 +4,7 @@
 #include "Sketch.h"
 #include <memory>
 #include <map>
+#include <set>
 
 namespace materializr {
 
@@ -40,6 +41,14 @@ public:
     // deserialize is a free function in ProjectIO since it needs to
     // bind m_target to the loaded sketch by id.
     std::string serializeWithDocument(const Document& doc) const;
+
+    // Elements this step introduced (present in the after-snapshot but not the
+    // before-snapshot) — i.e. the line(s)/circle(s)/arc(s) the step draws or
+    // resizes. Used to highlight "what's being edited" in the viewport when the
+    // step is selected in the history panel. Falls back to nothing if there's
+    // no before-snapshot.
+    void getEditedElements(std::set<int>& lines, std::set<int>& circles,
+                           std::set<int>& arcs) const;
 
     // Accessors for the ProjectIO factory.
     std::shared_ptr<Sketch> getBeforeSnapshot() const { return m_before; }

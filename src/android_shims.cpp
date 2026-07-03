@@ -1,8 +1,9 @@
-// Android implementation of the libcurl update checker (UpdateChecker), which
+// Mobile (Android + iOS) stub for the libcurl update checker (UpdateChecker), which
 // is excluded from the Android build. FileDialogs is now built directly (its
 // in-app ImGui browser works on Android), so it is no longer stubbed here.
 // Entirely compiled out on desktop.
-#if defined(__ANDROID__)
+#include "platform_defs.h"
+#if defined(MZ_MOBILE)
 
 #include "ui/UpdateChecker.h"
 
@@ -14,11 +15,12 @@ namespace materializr {
 
 // ── UpdateChecker (no network check on mobile; keep version compare) ──────────
 UpdateChecker::Result UpdateChecker::check(const std::string& /*owner*/,
-                                           const std::string& /*repo*/) {
+                                           const std::string& /*repo*/,
+                                           bool /*includePrereleases*/) {
     Result r;
     r.ok = false;
     r.current = MATERIALIZR_VERSION;
-    r.errorMessage = "Update checks are disabled on Android.";
+    r.errorMessage = "Update checks are disabled on this platform.";
     return r;
 }
 
@@ -47,4 +49,4 @@ int UpdateChecker::compareVersions(const std::string& a, const std::string& b) {
 
 } // namespace materializr
 
-#endif // __ANDROID__
+#endif // MZ_MOBILE

@@ -2,7 +2,7 @@
 #
 # Reproduce the native prerequisites for the Materializr Android build:
 #   * SDL2 source placed at android/app/jni/SDL
-#   * FreeType (static) + OpenCASCADE 7.8.1 (shared) cross-compiled for
+#   * FreeType (static) + OpenCASCADE 7.9.3 (shared) cross-compiled for
 #     arm64-v8a into $PREFIX
 #   * the OCCT .so set copied into the APK's jniLibs
 #
@@ -17,7 +17,7 @@ API=24
 JOBS="${JOBS:-4}"                       # keep low on RAM-constrained machines
 SDL_VER="2.30.9"
 FT_VER="2.13.3"
-OCCT_TAG="V7_8_1"
+OCCT_TAG="V7_9_3"
 
 ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
 # NDK location — accept the various env vars different setups use (F-Droid sets
@@ -46,7 +46,7 @@ echo "REPO:   $REPO"
 # also what F-Droid wants for a reproducible build from source).
 SDL2_SHA256="24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d6beba4"
 FT_SHA256="5c3a8e78f7b24c20b25b54ee575d6daa40007a5f4eea2845861c3409b3021747"
-OCCT_SHA256="7321af48c34dc253bf8aae3f0430e8cb10976961d534d8509e72516978aa82f5"
+OCCT_SHA256="5ecf094ec6b12d5413dfb851d8c3590c354058aee556e32e408bdfbf8c357d57"
 
 fetch() { # url dest sha256
     [ -f "$2" ] || curl -L --fail --retry 3 -o "$2" "$1"
@@ -80,9 +80,21 @@ fetch "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/$OCCT_TAG.tar.
 OCCT_DIR="$SRC/OCCT-${OCCT_TAG#V}"
 [ -d "$OCCT_DIR" ] || tar -xzf "$DL/occt.tar.gz" -C "$SRC"
 
-# Patch: clang on arm64 rejects char*/unsigned char* aliasing in BRepFont.
-sed -i 's#const char\* aTags      = &anOutline->tags\[aStartIndex\];#const char* aTags      = (const char* )\&anOutline->tags[aStartIndex];#' \
-    "$OCCT_DIR/src/StdPrs/StdPrs_BRepFont.cxx" || true
+# (No BRepFont patch needed on 7.9.3: upstream switched the offending line to
+# `const auto* aTags = &anOutline->tags[...]`, so the char*/unsigned char*
+# aliasing clang rejected on arm64 is gone. Re-add a patch here only if a future
+# arm64 clang build surfaces a new aliasing/type error.)
+#
+# NOTE: do NOT bump this to OCCT 8.0.x for the Android (shared, cross-compiled)
+# build. 8.0 made several TKernel foundation methods header-inline WITHOUT an
+# out-of-line definition (e.g. Standard_Failure::GetMessageString, several
+# TCollection_AsciiString / TopLoc_Location / NCollection_* members). On Windows
+# `Standard_EXPORT` = __declspec(dllexport) forces those inlines to be emitted +
+# exported, but on Android `Standard_EXPORT` is empty, so at -O2 every TU inlines
+# them away and NO .so emits them — yet OCCT's own toolkits (e.g. libTKDEGLTF)
+# still reference them out-of-line, so the app dies at load with an SDL
+# "dlopen failed: cannot locate symbol _ZNK16Standard_Failure16GetMessageStringEv"
+# error. Windows (vcpkg) stays on 8.0; Android/desktop stay on 7.9.x.
 
 rm -rf "$BUILD/occt-$ABI"
 "$CMAKE_BIN" -S "$OCCT_DIR" -B "$BUILD/occt-$ABI" \

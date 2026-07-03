@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Operation.h"
 #include "../core/Document.h"
+#include "EdgeAnchor.h"
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Edge.hxx>
 #include <vector>
@@ -15,6 +16,14 @@ public:
     void setBody(int bodyId);
     void setEdges(const std::vector<TopoDS_Edge>& edges);
     void setRadius(double radius);
+
+    // Generative edge tracking (experiment/generative-edges): remember which
+    // SKETCH generated this body so a filleted CORNER edge can be re-found by
+    // the sketch VERTEX it sits over — surviving a dimension edit that
+    // relocates the corner, where ordinal/carrier matching fails. -1 = unknown
+    // (falls back to today's behaviour).
+    void setSourceSketch(int sketchId) { m_sourceSketchId = sketchId; }
+    int  getSourceSketch() const { return m_sourceSketchId; }
 
     // Getters
     int getBodyId() const { return m_bodyId; }
@@ -59,4 +68,26 @@ private:
     // resolved against the before/after shapes in rehydrateFromReload.
     std::vector<int> m_edgeIndices;
     std::vector<int> m_genFaceIndices;
+
+    // Generative anchors: one per m_edges entry, tagging the sketch feature
+    // (corner vertex / rim line) each edge came from (see EdgeAnchor.h).
+    int m_sourceSketchId = -1;
+    std::vector<EdgeAnchor::Anchor> m_edgeAnchors;
+
+public:
+    // Capture anchors NOW if they're missing — used to retrofit fillets loaded
+    // from a project made before anchoring existed, while their edges are
+    // still valid (before any edit breaks the rebind). Anchoring consults
+    // every sketch in the document, so no source-sketch setup is needed.
+    void ensureAnchors(Document& doc) {
+        if (m_edgeAnchors.empty() && !m_edges.empty())
+            computeAnchors(doc);
+    }
+
+private:
+    // Capture anchors from the current m_edges + source sketch (first execute).
+    void computeAnchors(Document& doc);
+    // Replace m_edges by re-finding each anchor at the sketch feature's CURRENT
+    // position in `base`. Returns false unless EVERY edge resolves.
+    bool resolveAnchors(Document& doc, const TopoDS_Shape& base);
 };

@@ -2,6 +2,7 @@
 #include "UserAxes.h"
 #include "../core/Document.h"
 #include "../core/SelectionManager.h"
+#include "../core/NumParse.h"
 #include "../modeling/ShellOp.h"
 #include "../modeling/TaperOp.h"
 #include "../modeling/ScaleFaceOp.h"
@@ -54,7 +55,7 @@ std::unique_ptr<Operation> ShellController::buildOp(const IopContext&) {
     return op;
 }
 
-void ShellController::panelBody(const IopContext&, bool& changed) {
+void ShellController::panelBody(const IopContext& ctx, bool& changed) {
     ImGui::TextDisabled("Hollows the body, opening a face.");
 
     if (m_inputFocus) {
@@ -62,14 +63,17 @@ void ShellController::panelBody(const IopContext&, bool& changed) {
         m_inputFocus = false;
     }
     ImGui::SetNextItemWidth(140);
+    // parseFinite: non-finite input keeps the previous thickness rather
+    // than feeding inf into MakeThickSolid.
     if (ImGui::InputText("##shellThickness", m_inputBuf, sizeof(m_inputBuf),
                          ImGuiInputTextFlags_EnterReturnsTrue |
                          ImGuiInputTextFlags_CharsDecimal)) {
-        m_thickness = static_cast<float>(std::atof(m_inputBuf));
+        (void)materializr::parseFinite(m_inputBuf, m_thickness);
         requestCommit();
     } else {
-        float parsed = static_cast<float>(std::atof(m_inputBuf));
-        if (std::abs(parsed - m_thickness) > 0.001f) {
+        float parsed = m_thickness;
+        if (materializr::parseFinite(m_inputBuf, parsed) &&
+            std::abs(parsed - m_thickness) > 0.001f) {
             m_thickness = parsed;
             changed = true;
         }
@@ -87,13 +91,42 @@ void ShellController::panelBody(const IopContext&, bool& changed) {
     }
 
     if (!previewOk()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
-                           "Shell failed - try a thinner wall, or\n"
-                           "this body's faces can't be shelled.");
+        const ImVec4 warn(1.0f, 0.6f, 0.3f, 1.0f);
+        // If the wall lands near one of the body's rounded-edge radii, THAT'S
+        // the cause: a fillet offset inward by ~its own radius collapses to a
+        // zero-radius edge (singular for any join type), so the shell can't be
+        // built there — but a clearly thinner or thicker wall works. Name it.
+        // roundedFaceRadii is a full-face scan and panelBody runs every frame,
+        // so cache it keyed on the body shape (recompute only when it changes).
+        const TopoDS_Shape& body = ctx.doc.getBody(bodyId());
+        if (m_radiiCacheShape.IsNull() || !m_radiiCacheShape.IsEqual(body)) {
+            m_radiiCache = ShellOp::roundedFaceRadii(body);
+            m_radiiCacheShape = body;
+        }
+        double nearR = -1.0, bestD = 1e18;
+        for (double r : m_radiiCache) {
+            double d = std::abs(r - static_cast<double>(m_thickness));
+            if (d < bestD) { bestD = d; nearR = r; }
+        }
+        if (nearR > 0.0 && bestD < 0.5) {
+            ImGui::TextColored(warn,
+                "Shell failed: %.2f mm is too close to this body's %.2f mm\n"
+                "rounded edge - a wall near a fillet radius can't be offset.\n"
+                "Try a wall clearly thinner or thicker than %.2f mm.",
+                static_cast<double>(m_thickness), nearR, nearR);
+        } else {
+            ImGui::TextColored(warn,
+                "Shell failed - try a thinner wall, or\n"
+                "this body's faces can't be shelled.");
+        }
     }
 }
 
-void ShellController::onCleanup() { m_face.Nullify(); }
+void ShellController::onCleanup() {
+    m_face.Nullify();
+    m_radiiCache.clear();
+    m_radiiCacheShape.Nullify();
+}
 
 // ─── Taper ───────────────────────────────────────────────────────────────────
 

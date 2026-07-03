@@ -1,6 +1,7 @@
 #pragma once
 #include "InteractiveOpController.h"
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Shape.hxx>
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -22,6 +23,11 @@ private:
     float m_thickness = 1.0f;
     char m_inputBuf[32] = "1.0";
     bool m_inputFocus = true;
+    // Cache for the failure-message fillet-radius scan (roundedFaceRadii is an
+    // all-faces scan; panelBody runs every frame while the preview is failed).
+    // Keyed on the body shape so it recomputes only when the body changes.
+    std::vector<double> m_radiiCache;
+    TopoDS_Shape m_radiiCacheShape;
 };
 
 // ─── Taper ───────────────────────────────────────────────────────────────────

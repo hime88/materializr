@@ -2,7 +2,11 @@
 
 #include <glm/glm.hpp>
 #include <TopoDS_Shape.hxx>
+#include <TopoDS_Face.hxx>
+#include <array>
 #include <optional>
+#include <unordered_map>
+#include <vector>
 
 class Document;
 class SelectionManager;
@@ -67,6 +71,24 @@ private:
     int findNearestFace(const glm::vec3& origin, const glm::vec3& dir,
                         const TopoDS_Shape& shape, float& bestDist,
                         glm::vec3& hitPt, TopoDS_Shape& hitFace);
+
+    // Face-resolving ray test for imported tessellated meshes. These can carry
+    // thousands of faces, so the per-face findNearestFace path (which re-meshes
+    // and explores every face + every edge each hover frame) is ruinous. Instead
+    // we flatten the body ONCE into a cached list of world-space triangles, each
+    // tagged with its owning face, and ray-test that. Returns the face index
+    // (exploration order) and sets hitFace to the actual TopoDS_Face — so face
+    // selection and sketch-on-face keep working — or -1 on a miss.
+    int pickMeshBody(const glm::vec3& origin, const glm::vec3& dir,
+                     const TopoDS_Shape& shape, float& bestDist,
+                     glm::vec3& hitPt, TopoDS_Shape& hitFace);
+
+    struct MeshTri { glm::vec3 v[3]; TopoDS_Face face; int faceIdx; };
+    struct MeshCacheEntry {
+        TopoDS_Shape shape;            // IsEqual() detects a pose change → rebuild
+        std::vector<MeshTri> tris;
+    };
+    std::unordered_map<const void*, MeshCacheEntry> m_meshCache;
 
     // Find the nearest edge to a world-space point, return screen distance.
     // `facePlaneNormal` is the outward (camera-facing) normal of the picked

@@ -23,7 +23,9 @@
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 
 #include <cmath>
+#include <iterator>
 #include <limits>
+#include <unordered_set>
 
 namespace materializr {
 
@@ -216,6 +218,60 @@ int Picker::findNearestFace(const glm::vec3& origin, const glm::vec3& dir,
     return faceIndex;
 }
 
+int Picker::pickMeshBody(const glm::vec3& origin, const glm::vec3& dir,
+                         const TopoDS_Shape& shape, float& bestDist,
+                         glm::vec3& hitPt, TopoDS_Shape& hitFace)
+{
+    const void* key = shape.TShape().get();
+    auto it = m_meshCache.find(key);
+    if (it == m_meshCache.end() || !it->second.shape.IsEqual(shape)) {
+        // Build (or rebuild after a pose change) the flat world-space triangle
+        // list, each tagged with its owning face. Coarse deflection — this is
+        // only for hit-testing, and a mesh body's facets are already the limit.
+        MeshCacheEntry entry;
+        entry.shape = shape;
+        BRepMesh_IncrementalMesh meshGen(shape, 0.5);
+        meshGen.Perform();
+        int faceIdx = 0;
+        for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next(), ++faceIdx) {
+            TopoDS_Face face = TopoDS::Face(ex.Current());
+            TopLoc_Location loc;
+            Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+            if (tri.IsNull()) continue;
+            const gp_Trsf& trsf = loc.Transformation();
+            const bool hasX = !loc.IsIdentity();
+            for (int i = 1; i <= tri->NbTriangles(); ++i) {
+                int a, b, c;
+                tri->Triangle(i).Get(a, b, c);
+                gp_Pnt p1 = tri->Node(a), p2 = tri->Node(b), p3 = tri->Node(c);
+                if (hasX) { p1.Transform(trsf); p2.Transform(trsf); p3.Transform(trsf); }
+                MeshTri mt;
+                mt.v[0] = glm::vec3(p1.X(), p1.Y(), p1.Z());
+                mt.v[1] = glm::vec3(p2.X(), p2.Y(), p2.Z());
+                mt.v[2] = glm::vec3(p3.X(), p3.Y(), p3.Z());
+                mt.face = face;
+                mt.faceIdx = faceIdx;
+                entry.tris.push_back(mt);
+            }
+        }
+        it = m_meshCache.insert_or_assign(key, std::move(entry)).first;
+    }
+
+    int hitFaceIdx = -1;
+    float best = std::numeric_limits<float>::max();
+    for (const MeshTri& mt : it->second.tris) {
+        float t;
+        if (rayTriangleIntersect(origin, dir, mt.v[0], mt.v[1], mt.v[2], t) && t < best) {
+            best = t;
+            hitFaceIdx = mt.faceIdx;
+            hitFace = mt.face;
+            hitPt = origin + dir * t;
+        }
+    }
+    if (hitFaceIdx >= 0) bestDist = best;
+    return hitFaceIdx;
+}
+
 void Picker::findNearestEdge(const TopoDS_Shape& shape, const glm::vec3& hitPt,
                              const glm::vec3& facePlaneNormal,
                              float screenX, float screenY, float vpW, float vpH,
@@ -298,6 +354,22 @@ PickResult Picker::pick(float screenX, float screenY,
     float nearestDist = std::numeric_limits<float>::max();
 
     std::vector<int> bodyIds = doc.getAllBodyIds();
+
+    // Drop mesh-pick cache entries whose body is gone or was rebuilt with a new
+    // TShape (delete, transform-copy, decimate, boolean). Without this the cache
+    // would pin every imported/edited mesh's shape + triangle list alive for the
+    // whole session. Cheap: there are only ever a handful of mesh bodies.
+    if (!m_meshCache.empty()) {
+        std::unordered_set<const void*> live;
+        for (int id : bodyIds) {
+            if (!doc.isBodyMesh(id)) continue;
+            const TopoDS_Shape& s = doc.getBody(id);
+            if (!s.IsNull()) live.insert(s.TShape().get());
+        }
+        for (auto it = m_meshCache.begin(); it != m_meshCache.end();)
+            it = live.count(it->first) ? std::next(it) : m_meshCache.erase(it);
+    }
+
     for (int bodyId : bodyIds) {
         if (!doc.isBodyVisible(bodyId)) {
             if (s_verbose)
@@ -322,6 +394,32 @@ PickResult Picker::pick(float screenX, float screenY,
                 std::fprintf(stderr,
                     "  [Pick] body %d: bbox MISS (%.1f,%.1f,%.1f..%.1f,%.1f,%.1f)\n",
                     bodyId, x0, y0, z0, x1, y1, z1);
+            }
+            continue;
+        }
+
+        // Imported meshes: cached, face-resolving ray test — no per-frame
+        // re-mesh, no O(edges) edge/vertex refinement. Still returns a real
+        // TopoDS_Face so face selection + "Sketch on Face" work; we just skip
+        // edge/corner promotion (meaningless on a faceted mesh anyway).
+        if (doc.isBodyMesh(bodyId)) {
+            float meshDist = 0.0f;
+            glm::vec3 meshHitPt(0.0f);
+            TopoDS_Shape meshFace;
+            int meshFaceIdx =
+                pickMeshBody(rayOrigin, rayDir, shape, meshDist, meshHitPt, meshFace);
+            if (meshFaceIdx >= 0 && meshDist < nearestDist) {
+                nearestDist = meshDist;
+                result.hit = true;
+                result.bodyId = bodyId;
+                result.faceIndex = meshFaceIdx;
+                result.pickedShape = meshFace;
+                result.hitPoint = meshHitPt;
+                result.distance = meshDist;
+                result.nearestEdge = TopoDS_Shape();
+                result.nearestVertex = TopoDS_Shape();
+                result.edgeScreenDist = 1e6f;
+                result.vertexScreenDist = 1e6f;
             }
             continue;
         }

@@ -8,6 +8,7 @@
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
+#include "SheetSpec.h"
 
 namespace materializr { class Sketch; class EventBus; }
 
@@ -19,6 +20,15 @@ struct BodyEntry {
     glm::vec3 color = glm::vec3(0.80f, 0.80f, 0.82f); // default: light grey
     // -1 = at the root (not in any folder). >0 = a FolderEntry::id.
     int folderId = -1;
+    // An imported tessellated mesh (e.g. STL): the shape is a sewn solid built
+    // from many small facets, not analytic CAD geometry. The viewport uses this
+    // to take a mesh-aware path (cached picking, optional wireframe). Serialized
+    // to project files since it can't be re-derived from the shape — see ProjectIO.
+    bool isMesh = false;
+    // Set once the user marks this body as a fabrication sheet part (foam board,
+    // sheet metal, plywood, …). Drives the unfold/flatten engine. Serialized to
+    // project files (can't be re-derived from the shape) — see ProjectIO.
+    materializr::SheetSpec sheet;
 };
 
 // Bodies can be grouped under a folder for organisation in the Items panel.
@@ -91,6 +101,13 @@ public:
     void setBodyName(int id, const std::string& name);
     void setBodyVisible(int id, bool visible);
     bool isBodyVisible(int id) const;
+    void setBodyMesh(int id, bool isMesh);
+    bool isBodyMesh(int id) const;
+    // Fabrication sheet-part metadata (foam board / sheet metal / …). getBodySheet
+    // returns a default (isSheet=false) spec for a non-sheet or unknown body.
+    void setBodySheet(int id, const materializr::SheetSpec& spec);
+    materializr::SheetSpec getBodySheet(int id) const;
+    bool isBodySheet(int id) const;
     glm::vec3 getBodyColor(int id) const;
     void setBodyColor(int id, const glm::vec3& color);
     std::vector<int> getAllBodyIds() const;
@@ -135,6 +152,23 @@ public:
     // SketchEditOp::serializeWithDocument uses this to stamp the live id
     // into the serialized snapshot.
     int findSketchId(const materializr::Sketch* sk) const;
+
+    // Cascade sketch override — the EDITED sketch's final state, pinned for
+    // the duration of a history replay. During History::editStep the replayed
+    // SketchEditOp snapshots roll the LIVE sketch back through its history, so
+    // an op that re-finds geometry from "the sketch the user just edited"
+    // (fillet/chamfer generative anchors, see EdgeAnchor.h) would read a STALE
+    // state mid-replay while the extrude below it was rebuilt from the final
+    // one. cascadeFromSketchEdit pins a copy here around the replay; anchor
+    // resolution prefers it over the live sketch.
+    void setCascadeSketchOverride(int id, std::shared_ptr<materializr::Sketch> snap) {
+        m_cascadeSketchOverrides[id] = std::move(snap);
+    }
+    void clearCascadeSketchOverrides() { m_cascadeSketchOverrides.clear(); }
+    std::shared_ptr<materializr::Sketch> cascadeSketchOverride(int id) const {
+        auto it = m_cascadeSketchOverrides.find(id);
+        return it == m_cascadeSketchOverrides.end() ? nullptr : it->second;
+    }
 
     // Construction planes — first-class document objects parallel to sketches.
     // PlaneAddedEvent / PlaneRemovedEvent let the renderer + Items panel
@@ -194,6 +228,9 @@ private:
     std::vector<PlaneEntry> m_planes;
     std::vector<AxisEntry> m_axes;
     std::vector<SketchEntry> m_sketches;
+    // See setCascadeSketchOverride — pinned final sketch states during a
+    // cascade history replay. Empty outside cascadeFromSketchEdit.
+    std::map<int, std::shared_ptr<materializr::Sketch>> m_cascadeSketchOverrides;
     std::vector<FolderEntry> m_folders;
     // Tombstones: when a body is removed, its non-geometry metadata (folderId,
     // colour, visibility, name) is stashed here keyed by id. When putBody is

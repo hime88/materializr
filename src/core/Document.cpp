@@ -138,6 +138,31 @@ bool Document::isBodyVisible(int id) const {
     return m_bodies[idx].visible;
 }
 
+void Document::setBodyMesh(int id, bool isMesh) {
+    int idx = findBodyIndex(id);
+    if (idx >= 0) m_bodies[idx].isMesh = isMesh;
+}
+
+bool Document::isBodyMesh(int id) const {
+    int idx = findBodyIndex(id);
+    return idx >= 0 && m_bodies[idx].isMesh;
+}
+
+void Document::setBodySheet(int id, const materializr::SheetSpec& spec) {
+    int idx = findBodyIndex(id);
+    if (idx >= 0) m_bodies[idx].sheet = spec;
+}
+
+materializr::SheetSpec Document::getBodySheet(int id) const {
+    int idx = findBodyIndex(id);
+    return idx >= 0 ? m_bodies[idx].sheet : materializr::SheetSpec{};
+}
+
+bool Document::isBodySheet(int id) const {
+    int idx = findBodyIndex(id);
+    return idx >= 0 && m_bodies[idx].sheet.isSheet;
+}
+
 glm::vec3 Document::getBodyColor(int id) const {
     int idx = findBodyIndex(id);
     if (idx < 0) {
