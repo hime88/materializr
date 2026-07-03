@@ -170,6 +170,8 @@ std::vector<Toolbar::RailTool> Toolbar::railTools() const {
             "Tilt the face — or twist it with the ring about its normal.");
         add(MZ_ICON_SCALE,  "Scale",  ToolAction::Scale, false,
             "Scale the face about its centre (uniform or per-axis).");
+        add(MZ_ICON_UNFOLD, "Unfold", ToolAction::Unfold, false,
+            "Flatten the selected faces into a 2D cut pattern (SVG / tiled PDF).");
     } else if (m_selection->hasSelectedBodies()) {
         add(MZ_ICON_MOVE,   "Move",   ToolAction::Move, false,
             "Show the translate gizmo: drag axes or planes to move.");
