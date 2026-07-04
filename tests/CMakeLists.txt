@@ -231,3 +231,20 @@ add_test(NAME test_topo_chamfer_gen COMMAND test_topo_chamfer_gen)
 add_executable(test_topo_pushpull test_topo_pushpull.cpp)
 target_link_libraries(test_topo_pushpull PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_topo_pushpull COMMAND test_topo_pushpull)
+
+# test_topo_shell — ShellOp opened faces via topo::Ref through a REAL history
+# replay (stale-sketch rollback + cascade override) on an L-body where the
+# geometric fallback mis-picks
+add_executable(test_topo_shell test_topo_shell.cpp)
+target_link_libraries(test_topo_shell PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_topo_shell COMMAND test_topo_shell)
+
+# probe_moveface_shell — diagnostic: does MoveFaceOp keep a shelled body's cavity?
+add_executable(probe_moveface_shell probe_moveface_shell.cpp)
+target_link_libraries(probe_moveface_shell PRIVATE materializr_core)
+
+# test_moveface_hollow — MoveFace on a shelled body refuses cleanly instead of
+# inverting the shell / silently filling the cavity (Steve's in-app corruption)
+add_executable(test_moveface_hollow test_moveface_hollow.cpp)
+target_link_libraries(test_moveface_hollow PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_moveface_hollow COMMAND test_moveface_hollow)

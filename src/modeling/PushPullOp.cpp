@@ -181,6 +181,7 @@ void PushPullOp::refreshFaceTargets(Document& doc) {
         if (!live && !m_targetRefs[i].empty()) {
             materializr::topo::Context rc;
             rc.doc = &doc; rc.shape = src; rc.type = TopAbs_FACE;
+            rc.crossRebuild = true;   // source body was rebuilt upstream
             TopoDS_Shape f;
             if (materializr::topo::resolve(m_targetRefs[i], rc, f) &&
                 !f.IsNull() && f.ShapeType() == TopAbs_FACE)

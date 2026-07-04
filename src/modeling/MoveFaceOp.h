@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Operation.h"
 #include "../core/Document.h"
+#include "TopoName.h"
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Vec.hxx>
@@ -117,4 +118,9 @@ private:
     // Ordinal index of m_face within the pre-op body shape, for reload
     // (SubShapeIndex.h). Empty/unresolved → the step replays as a ReplayOp.
     std::vector<int> m_faceIndices;
+    // Topological name of the target face — minted on the first execute, then
+    // re-resolved whenever m_face has gone stale (an upstream edit rebuilt the
+    // body and MOVED the face). Sketch-anchored, so it follows the move.
+    // Serialized additively as `faceref=`; absent in old files.
+    materializr::topo::Ref m_faceRef;
 };

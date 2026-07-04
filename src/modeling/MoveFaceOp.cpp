@@ -122,6 +122,51 @@ bool MoveFaceOp::execute(Document& doc) {
         m_previousShape = doc.getBody(m_bodyId);
         if (m_previousShape.IsNull()) return false;
 
+        // Name the target face on the first run (while m_face is still valid),
+        // then re-resolve it whenever it's no longer a live sub-shape of the
+        // (possibly rebuilt) body — an upstream sketch edit that MOVED the face
+        // leaves m_face pointing at the old body. Sketch-anchored, so it
+        // follows; falls back to the stale handle if unnameable.
+        if (m_faceRef.empty()) {
+            materializr::topo::Context mc;
+            mc.doc = &doc; mc.shape = m_previousShape; mc.type = TopAbs_FACE;
+            m_faceRef = materializr::topo::mint(m_face, mc);
+        }
+        if (!m_faceRef.empty()) {
+            bool live = false;
+            for (TopExp_Explorer ex(m_previousShape, TopAbs_FACE); ex.More(); ex.Next())
+                if (ex.Current().IsSame(m_face)) { live = true; break; }
+            if (!live) {
+                materializr::topo::Context rc;
+                rc.doc = &doc; rc.shape = m_previousShape; rc.type = TopAbs_FACE;
+                rc.crossRebuild = true;   // body was rebuilt upstream
+                TopoDS_Shape f;
+                if (materializr::topo::resolve(m_faceRef, rc, f) &&
+                    !f.IsNull() && f.ShapeType() == TopAbs_FACE) {
+                    // SANITY GUARD: only adopt the resolved face if it points
+                    // the same way as the stale one. The stale face's geometry
+                    // is still readable (its TShape lives on), and it's what
+                    // the pre-topo code would have used — so a resolution that
+                    // flips orientation is a MIS-resolve (this is what made a
+                    // body "slump": a taper re-applied about a wrong plane).
+                    // Reject it and keep the old behaviour instead.
+                    auto normalOf = [](const TopoDS_Face& fc, gp_Vec& n) -> bool {
+                        try {
+                            BRepGProp_Face p(fc);
+                            double u1, u2, v1, v2; p.Bounds(u1, u2, v1, v2);
+                            gp_Pnt c; p.Normal((u1+u2)*0.5, (v1+v2)*0.5, c, n);
+                            return n.Magnitude() > 1e-9;
+                        } catch (...) { return false; }
+                    };
+                    gp_Vec nOld, nNew;
+                    if (normalOf(m_face, nOld) &&
+                        normalOf(TopoDS::Face(f), nNew) &&
+                        nOld.Normalized().Dot(nNew.Normalized()) > 0.7)
+                        m_face = TopoDS::Face(f);
+                }
+            }
+        }
+
         // Outward face normal N and a point P0 on the face (BRepGProp_Face's
         // Normal is orientation-corrected, so it points out of the body).
         BRepGProp_Face prop(m_face);
@@ -426,6 +471,46 @@ bool MoveFaceOp::execute(Document& doc) {
         for (TopExp_Explorer sx(result, TopAbs_SOLID); sx.More(); sx.Next()) ++nsolids;
         if (nsolids < 1) return false;
 
+        // Sanity guards BRepCheck can't provide — a shelled (hollow) body run
+        // through the loft/shear rebuild can come out topologically "valid" yet
+        // WRONG: an inside-out solid (negative volume) or a re-solidified body
+        // whose cavity was silently discarded. Refuse cleanly instead of
+        // corrupting the model.
+        {
+            GProp_GProps gIn, gOut;
+            BRepGProp::VolumeProperties(m_previousShape, gIn);
+            BRepGProp::VolumeProperties(result, gOut);
+            const double vIn = gIn.Mass(), vOut = gOut.Mass();
+            if (!(vOut > 1e-9)) {
+                std::fprintf(stderr, "[MoveFace] result volume %.3f — inside-out/"
+                             "degenerate, refusing\n", vOut);
+                return false;
+            }
+            // A closed internal cavity must survive (shell count preserved).
+            int shIn = 0, shOut = 0;
+            for (TopExp_Explorer e(m_previousShape, TopAbs_SHELL); e.More(); e.Next()) ++shIn;
+            for (TopExp_Explorer e(result, TopAbs_SHELL); e.More(); e.Next()) ++shOut;
+            if (shOut < shIn) {
+                std::fprintf(stderr, "[MoveFace] would destroy the internal "
+                             "cavity (%d -> %d shells) — refusing\n", shIn, shOut);
+                return false;
+            }
+            // A slide is a volume-preserving shear and a tilt is bounded; a
+            // large jump means the rebuild filled in a hollow interior (an
+            // open-shell body has one shell, so the count can't catch it).
+            const double ratio = vIn > 1e-9 ? vOut / vIn : 1.0;
+            const bool volumeSane =
+                (m_kind == Kind::Translate) ? (ratio > 0.75 && ratio < 1.33)
+              : (m_kind == Kind::Rotate)    ? (ratio > 0.40 && ratio < 1.60)
+              : true;   // Scale legitimately rescales volume; Twist self-checks
+            if (!volumeSane) {
+                std::fprintf(stderr, "[MoveFace] volume %.1f -> %.1f — the "
+                             "rebuild lost the hollow interior, refusing\n",
+                             vIn, vOut);
+                return false;
+            }
+        }
+
         m_resultShape = result;
         doc.updateBody(m_bodyId, result);
 
@@ -523,6 +608,12 @@ std::string MoveFaceOp::serializeParams() const {
         std::string idx = SubShapeIndex::serialize(m_previousShape, faces, TopAbs_FACE);
         if (!idx.empty()) blob += ";face=" + idx;
     }
+    // Topological face name (additive, robust to a moving edit); written last as
+    // a single length-prefixed blob. Absent in old files.
+    if (!m_faceRef.empty()) {
+        std::string b = m_faceRef.serialize();
+        blob += ";faceref=" + std::to_string(b.size()) + ":" + b;
+    }
     return blob;
 }
 
@@ -535,6 +626,18 @@ bool MoveFaceOp::deserializeParams(const std::string& blob) {
         size_t end = blob.find(';', eq);
         if (end == std::string::npos) end = blob.size();
         std::string key = blob.substr(pos, eq - pos);
+        // faceref is a length-prefixed opaque blob written last — read to end.
+        if (key == "faceref") {
+            std::string rest = blob.substr(eq + 1);
+            size_t c = rest.find(':');
+            if (c != std::string::npos) {
+                size_t n = static_cast<size_t>(std::atoll(rest.substr(0, c).c_str()));
+                if (c + 1 + n <= rest.size())
+                    m_faceRef = materializr::topo::Ref::parse(rest.substr(c + 1, n));
+            }
+            any = true;
+            break;
+        }
         std::string val = blob.substr(eq + 1, end - eq - 1);
         if      (key == "body") { m_bodyId = std::atoi(val.c_str()); any = true; }
         else if (key == "k")    { int k = std::atoi(val.c_str());

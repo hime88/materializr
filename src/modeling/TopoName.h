@@ -76,6 +76,15 @@ struct Context {
     // strategy mints/resolves through this. Null for ops that don't (yet)
     // publish their derivation; those fall back to the geometric schemes.
     const GenerationLedger* gen = nullptr;
+    // TRUE when resolving against a shape that may have been REBUILT since the
+    // ref was minted (an op re-finding its targets after an upstream edit).
+    // Strategies that are only meaningful on the IDENTICAL shape — ordinal,
+    // whose index "succeeds" on any same-count shape and silently lands the
+    // WRONG sub-shape when the structure shifted — are skipped, so a resolve
+    // failure surfaces to the op's own geometric fallback instead of a
+    // confident wrong answer preempting it. Leave false for save/load, where
+    // the shape is bit-identical and ordinal is exact.
+    bool crossRebuild = false;
 };
 
 // A naming scheme. `mint` returns an empty string when it cannot name `sub`;
@@ -89,6 +98,9 @@ struct Context {
 struct Strategy {
     std::string scheme;
     int         priority = 0;   // higher = more robust; minted + tried first
+    // FALSE for schemes whose payload is only meaningful against the identical
+    // shape (ordinal). Such schemes are skipped when ctx.crossRebuild is set.
+    bool        rebuildSafe = true;
     std::function<std::string(const TopoDS_Shape& sub, const Context&)> mint;
     std::function<TopoDS_Shape(const std::string& payload, const Context&)> resolve;
     std::function<bool(const std::vector<std::string>& payloads, const Context&,

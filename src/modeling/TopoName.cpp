@@ -190,6 +190,8 @@ Strategy ordinalStrategy() {
     Strategy s;
     s.scheme = "ordinal";
     s.priority = 10;
+    s.rebuildSafe = false;  // an index into a REBUILT shape lands the wrong
+                            // sub-shape whenever the structure shifted
     s.mint = [](const TopoDS_Shape& sub, const Context& ctx) -> std::string {
         if (ctx.shape.IsNull() || sub.IsNull()) return "";
         TopTools_IndexedMapOfShape map;
@@ -295,6 +297,7 @@ bool resolve(const Ref& ref, const Context& ctx, TopoDS_Shape& out) {
     for (const auto& nm : ref.names) {
         const Strategy* s = Registry::instance().forScheme(nm.scheme);
         if (!s || !s->resolve) continue;   // unknown scheme (newer file) — skip
+        if (ctx.crossRebuild && !s->rebuildSafe) continue;
         TopoDS_Shape found = s->resolve(nm.payload, ctx);
         if (!found.IsNull()) { out = found; return true; }
     }
@@ -321,6 +324,7 @@ bool resolveSet(const std::vector<Ref>& refs, const Context& ctx,
     // batch resolver claims distinct sub-shapes for all of them.
     for (const auto& s : Registry::instance().strategies()) {
         if (!s.resolveBatch) continue;
+        if (ctx.crossRebuild && !s.rebuildSafe) continue;
         std::vector<std::string> payloads;
         payloads.reserve(refs.size());
         bool allHave = true;

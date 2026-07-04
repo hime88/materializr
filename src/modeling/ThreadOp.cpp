@@ -809,6 +809,7 @@ bool ThreadOp::execute(Document& doc) {
             ctx.doc = &doc;
             ctx.shape = m_previousShape;
             ctx.type = TopAbs_FACE;
+            ctx.crossRebuild = true;   // body may have been rebuilt upstream
             TopoDS_Shape f;
             if (materializr::topo::resolve(m_faceRef, ctx, f) &&
                 !f.IsNull() && f.ShapeType() == TopAbs_FACE) {
