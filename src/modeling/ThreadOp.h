@@ -6,6 +6,7 @@
 #include <gp_Ax2.hxx>
 #include <string>
 #include <memory>
+#include <functional>
 
 // Cuts a helical V-groove screw thread into a cylindrical face — external
 // (boss/bolt: groove cut inward from the surface) or internal (hole/nut:
@@ -22,6 +23,7 @@ public:
     // its direction pointing along the cylinder (same convention as the
     // cylindrical-face detector); `length` extends from there.
     void setBody(int id) { m_bodyId = id; }
+    int  getBodyId() const { return m_bodyId; }
     void setAxis(const gp_Ax2& axis);
     void setRadius(double r) { m_radius = r; }
     void setLength(double l) { m_length = l; }
@@ -38,6 +40,17 @@ public:
     // behaviour. Additive: an old file has no ref and just keeps its params.
     void setTargetFaceRef(const materializr::topo::Ref& r) { m_faceRef = r; }
     const materializr::topo::Ref& targetFaceRef() const { return m_faceRef; }
+
+    // Deferred re-cut hook, installed once by the app. When set, execute() on
+    // the RECOMPUTE path (editStep / cascade replay — no worker-precomputed
+    // result) hands the multi-second helix re-cut to this callback instead of
+    // blocking the caller ("app goes not responding" when an upstream sketch
+    // edit cascades through a Thread step). The callback returns true when it
+    // took ownership: execute() then returns success with the body left at
+    // its PRE-thread state, and the hook re-cuts on a worker thread and
+    // updates the body when the result lands. Returning false (or no hook —
+    // headless tests / CLI) keeps the synchronous path.
+    static void setAsyncRecutHook(std::function<bool(ThreadOp&, Document&)> h);
 
     // The heavy geometry (helix sweep + boolean cut), as a pure function of
     // the input body — no Document access, so the popup can run it on a

@@ -109,6 +109,10 @@ public:
     // sits above the current index). -1 = none. The UI uses this to explain
     // what happened instead of leaving steps silently missing.
     int lastReplayFailure() const { return m_failedReplayAt; }
+    // Mark a step as failed-to-recompute AFTER the replay returned — used by
+    // the async thread re-cut when the worker's result lands null (the new
+    // geometry can't take the thread). Shows the same explainer banner.
+    void suspendStep(int idx) { m_failedReplayAt = idx; }
 
     // Remove a step entirely (delete that operation), rebuilding the model in
     // place. Returns false and leaves the model unchanged if removing the step

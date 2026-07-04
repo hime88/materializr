@@ -3642,4 +3642,82 @@ void Application::cancelRotatePlaneAboutAxis() {
     m_rotPlaneHingeLabels.clear();
 }
 
+// ─── Async thread re-cut (cascade/editStep recompute path) ──────────────────
+// A sketch edit cascading through a Thread step used to re-run the multi-
+// second helix sweep + boolean synchronously on the UI thread ("not
+// responding"). ThreadOp::execute now hands the recompute here: the body is
+// left at its pre-thread state (visually unthreaded for a moment) and the
+// re-cut runs on a worker; pollThreadRecuts applies the result when it lands.
+
+void Application::installThreadRecutHook() {
+    ThreadOp::setAsyncRecutHook([this](ThreadOp& op, Document& doc) -> bool {
+        // Only the live document (headless/temp docs keep the sync path).
+        if (!m_document || &doc != m_document.get()) return false;
+        TopoDS_Shape live;
+        try { live = doc.getBody(op.getBodyId()); } catch (...) {}
+        if (live.IsNull()) return false;
+        // Single-flight per op: a request while one is pending is redundant —
+        // the pending result will be discarded as stale on landing if the
+        // body moved again, and the newer execute re-queues.
+        for (auto& p : m_threadRecuts)
+            if (p.op == &op) return true;
+        // DEEP-COPY for the worker (same reasoning as commitThread: the live
+        // TShape's lazy caches are touched by the render thread every frame).
+        TopoDS_Shape body = BRepBuilderAPI_Copy(live).Shape();
+        if (body.IsNull()) return false;
+        auto worker = std::make_shared<ThreadOp>(op); // params copy; buildResult is const
+        PendingThreadRecut p;
+        p.op = &op;
+        p.bodyId = op.getBodyId();
+        p.launchedFrom = live;
+        p.fut = std::async(std::launch::async,
+                           [worker, body]() { return worker->buildResult(body); });
+        m_threadRecuts.push_back(std::move(p));
+        showToast("Re-cutting thread in the background\xE2\x80\xA6");
+        return true;
+    });
+}
+
+void Application::pollThreadRecuts() {
+    for (size_t i = 0; i < m_threadRecuts.size();) {
+        auto& p = m_threadRecuts[i];
+        if (p.fut.wait_for(std::chrono::milliseconds(0)) !=
+            std::future_status::ready) { ++i; continue; }
+        TopoDS_Shape result = p.fut.get();
+
+        // The op must still be an applied history step, and the body untouched
+        // since launch — otherwise the result is stale (user undid / edited
+        // again mid-flight; the newer execute re-queued its own recut).
+        int stepIdx = -1;
+        for (int k = 0; k <= m_history->currentStep(); ++k)
+            if (m_history->getStep(k) == p.op) { stepIdx = k; break; }
+        TopoDS_Shape cur;
+        try { cur = m_document->getBody(p.bodyId); } catch (...) {}
+        const bool fresh = stepIdx >= 0 && !cur.IsNull() &&
+                           cur.IsSame(p.launchedFrom);
+        if (fresh) {
+            if (result.IsNull()) {
+                // New geometry can't take the thread — suspend the step with
+                // the standard explainer banner instead of silently no-opping.
+                m_history->suspendStep(stepIdx);
+                showToast("Thread couldn't re-cut on the new geometry \xE2\x80\x94 "
+                          "check the Thread step.");
+            } else {
+                m_document->updateBody(p.bodyId, result);
+                m_meshesDirty = true;
+            }
+        }
+        m_threadRecuts.erase(m_threadRecuts.begin() + i);
+    }
+}
+
+void Application::flushThreadRecuts() {
+    // Save path: a snapshot taken mid-recut would bake the unthreaded body
+    // under a Thread step. Block the (rare, few-second) remainder instead.
+    while (!m_threadRecuts.empty()) {
+        m_threadRecuts.front().fut.wait();
+        pollThreadRecuts();
+    }
+}
+
 } // namespace materializr

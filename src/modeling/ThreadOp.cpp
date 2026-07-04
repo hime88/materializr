@@ -793,6 +793,14 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
     }
 }
 
+namespace {
+std::function<bool(ThreadOp&, Document&)> s_asyncRecut;
+} // namespace
+
+void ThreadOp::setAsyncRecutHook(std::function<bool(ThreadOp&, Document&)> h) {
+    s_asyncRecut = std::move(h);
+}
+
 bool ThreadOp::execute(Document& doc) {
     if (m_bodyId < 0) return false;
     try {
@@ -820,6 +828,12 @@ bool ThreadOp::execute(Document& doc) {
                 }
             }
         }
+
+        // Recompute path with the app hook installed: hand the multi-second
+        // re-cut to the worker (body stays at its pre-thread state until the
+        // result lands) so a cascade replay never freezes the UI.
+        if (m_precomputed.IsNull() && s_asyncRecut && s_asyncRecut(*this, doc))
+            return true;
 
         // The popup's worker thread may have already computed the result —
         // consume it; redo / editStep recompute synchronously as usual.

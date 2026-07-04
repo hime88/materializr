@@ -136,3 +136,30 @@ TEST(TopoThread, WithoutRefMissesMovedCylinder) {
         << "without a ref the helix stays at the origin and cuts no grooves "
            "from the cylinder now at (30,0)";
 }
+
+// With the app's async hook installed, a RECOMPUTE-path execute defers: it
+// returns success immediately with the body left unthreaded (the hook owns
+// the re-cut). The initial precomputed path and hook-less headless runs stay
+// synchronous.
+TEST(TopoThread, AsyncHookDefersRecompute) {
+    Document doc;
+    auto sk = std::make_shared<Sketch>();
+    sk->setPlane(gp_Pln(gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0))));
+    int c = sk->addPoint({0.0f, 0.0f});
+    sk->addCircle(c, 8.0);
+    ExtrudeOp ext;
+    int body = makeCylinder(doc, sk, ext, 6.0);
+    const double plain = volumeOf(doc.getBody(body));
+
+    ThreadOp thr;
+    configThread(thr, body, 8.0, 6.0);
+
+    int calls = 0;
+    ThreadOp::setAsyncRecutHook(
+        [&](ThreadOp& op, Document&) { ++calls; EXPECT_EQ(&op, &thr); return true; });
+    ASSERT_TRUE(thr.execute(doc)) << "deferred execute reports success";
+    EXPECT_EQ(calls, 1);
+    EXPECT_NEAR(volumeOf(doc.getBody(body)), plain, 1e-6)
+        << "body untouched — the hook owns the re-cut";
+    ThreadOp::setAsyncRecutHook(nullptr);   // restore sync for other tests
+}

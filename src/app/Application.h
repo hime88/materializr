@@ -1132,6 +1132,21 @@ private:
     // thread polls it each frame and pushes the op when ready.
     std::future<TopoDS_Shape> m_threadFuture;
     bool   m_threadComputing = false;
+    // Async thread RE-CUT (cascade/editStep recompute path — distinct from the
+    // popup's initial Apply worker above). ThreadOp::execute hands the heavy
+    // re-cut here via the hook installed in the constructor; the body stays at
+    // its pre-thread state until the worker's result lands (pollThreadRecuts,
+    // once per frame). See ThreadOp::setAsyncRecutHook.
+    struct PendingThreadRecut {
+        ThreadOp* op = nullptr;      // history-owned; re-validated on landing
+        int bodyId = -1;
+        TopoDS_Shape launchedFrom;   // doc body at launch — stale-guard
+        std::future<TopoDS_Shape> fut;
+    };
+    std::vector<PendingThreadRecut> m_threadRecuts;
+    void installThreadRecutHook();
+    void pollThreadRecuts();   // per-frame: apply/discard landed results
+    void flushThreadRecuts();  // block until drained (save path)
 
     // Section View — render-only clipping of the scene by a plane so the
     // user can inspect interiors (thread profiles, wall thickness) without

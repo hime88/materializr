@@ -262,6 +262,7 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
         materializr::setUiScale(m_window->uiScale());
     }
     m_history->setThreadsLastDeclineCallback([this]{ showThreadsLastToast(); });
+    installThreadRecutHook();
     m_historyPanel->setHistory(m_history.get());
     m_historyPanel->setDocument(m_document.get());
     m_historyPanel->setEventBus(m_eventBus.get());
@@ -2723,6 +2724,9 @@ void Application::saveProjectQuick() {
 }
 
 ProjectHistory Application::captureProjectHistory(bool cancelPreviews) {
+    // A snapshot taken while an async thread re-cut is in flight would bake
+    // the UNTHREADED body under a Thread step. Drain first (rare, seconds).
+    flushThreadRecuts();
     // A live preview writes the previewed geometry straight into the document
     // body every frame. Since we seed the snapshot from the current body
     // (below), an uncommitted preview would leak into the last committed step's
@@ -4836,6 +4840,9 @@ void Application::run() {
     const uint32_t runStartMs = SDL_GetTicks();
 
     while (true) {
+        // Apply/discard any landed async thread re-cuts before this frame.
+        pollThreadRecuts();
+
         // True while any interactive tool or animation is in flight and needs
         // continuous rendering even with no user input.
         auto hasActiveWork = [&]() -> bool {
@@ -4845,6 +4852,7 @@ void Application::run() {
             // extension tool that may animate on its own.
             if (m_deferredHeavyTask || m_showUpdatePopup || !m_toastText.empty())
                 return true;
+            if (!m_threadRecuts.empty()) return true; // async re-cut in flight
             if (PluginRegistry::instance().activeTool()) return true;
             // Interactive manipulation states (sketch + every live preview/op)
             // are INPUT-driven: they only need continuous frames while the user
