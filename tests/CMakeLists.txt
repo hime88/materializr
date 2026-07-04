@@ -234,3 +234,8 @@ add_test(NAME test_topo_chamfer_gen COMMAND test_topo_chamfer_gen)
 add_executable(test_topo_moveface test_topo_moveface.cpp)
 target_link_libraries(test_topo_moveface PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_topo_moveface COMMAND test_topo_moveface)
+
+# test_topo_pushpull — PushPullOp face-driven target via topo::Ref survives a resize
+add_executable(test_topo_pushpull test_topo_pushpull.cpp)
+target_link_libraries(test_topo_pushpull PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_topo_pushpull COMMAND test_topo_pushpull)
