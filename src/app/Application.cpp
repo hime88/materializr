@@ -4896,14 +4896,30 @@ void Application::run() {
         const bool foreground = m_window->isForeground() || launchGrace;
 #endif
 
-        // When idle (or backgrounded), block up to 500 ms for the next event.
-        // 500 ms is enough for autosave / update-check polling; anything
-        // interactive wakes us immediately via SDL events. Force the wait when
-        // backgrounded so an active preview can't busy-spin pollEvents(0). During
-        // the launch grace we never block — keep frames flowing for the handoff.
-        int waitMs = (!launchGrace &&
-                      (!foreground || (m_wakeFrames == 0 && !hasActiveWork()))) ? 500 : 0;
+        // Frame pacing. Active (recent input / live work): no wait — render at
+        // vsync rate. Idle in the FOREGROUND: render at a low FLOOR rate
+        // instead of stopping. The old hard 0 fps idle made every first tap
+        // pay a wake-up round trip and left system-side effects (the iOS
+        // soft-keyboard raise, whose request we can only issue at the end of
+        // a rendered frame) stranded between bursts — on the tablet the
+        // keyboard prompt felt seconds late no matter what counted as "active
+        // work". A ~15 fps floor keeps the first tap, the keyboard, and every
+        // overlay live at a quarter of the full-rate GPU cost; the wait still
+        // returns EARLY on any event, so activity ramps to full rate with no
+        // added latency. Backgrounded (desktop) still parks completely in
+        // 500 ms waits. During the launch grace we never block — keep frames
+        // flowing for the splash→UI handoff.
+        constexpr int kIdleFloorMs = 66;   // idle frame interval ≈ 15 fps
+        int waitMs = 0;
+        if (!launchGrace && !foreground)
+            waitMs = 500;
+        else if (!launchGrace && m_wakeFrames == 0 && !hasActiveWork())
+            waitMs = kIdleFloorMs;
         int eventLevel = m_window->pollEvents(waitMs);
+        // Start of this iteration's frame budget — read by the frame-rate cap
+        // at the bottom of the loop (measured after the event wait so the
+        // idle floor's own sleep doesn't count against the budget).
+        const Uint32 frameLoopStartMs = SDL_GetTicks();
         // Significant events (click, key, scroll, resize, focus): 5 frames.
         // Trivial events (mouse motion, expose): 25 frames — at 60 fps that is
         // ~416 ms, enough for ImGui's default 300 ms hover-tooltip delay to fire
@@ -4937,9 +4953,9 @@ void Application::run() {
 
         // Any input refreshes the interactive-state render grace (see
         // hasActiveWork): keep rendering for kGraceSec after the last event,
-        // then idle. 1s comfortably covers the ~0.3s sketch hover-dwell charge;
-        // rendering resumes instantly on the next event, so it feels snappy while
-        // keeping idle previews (sketch, push/pull, …) at ~0fps.
+        // then drop to the idle floor rate. 1s comfortably covers the ~0.3s
+        // sketch hover-dwell charge; rendering ramps back to full rate
+        // instantly on the next event.
         if (eventLevel > 0) {
             constexpr double kGraceSec = 1.0;
             m_interactiveGraceUntil = SDL_GetTicks() / 1000.0 + kGraceSec;
@@ -5040,11 +5056,10 @@ void Application::run() {
             m_lastAutosaveTime = SDL_GetTicks() / 1000.0;
         }
 
-        // Skip rendering entirely when nothing has changed — saves ~30 % idle
-        // GPU on a static viewport. hasActiveWork() is re-evaluated after the
-        // deferred task and close checks above may have changed state. The launch
-        // grace overrides the skip so the first real UI frame draws on its own.
-        if (!launchGrace && (!foreground || (m_wakeFrames == 0 && !hasActiveWork()))) continue;
+        // Only a BACKGROUNDED window skips rendering now — foreground idle
+        // renders at the floor rate above (see kIdleFloorMs; the old idle
+        // skip is what made first-taps and the mobile keyboard feel dead).
+        if (!launchGrace && !foreground) continue;
         if (m_wakeFrames > 0) m_wakeFrames--;
         ++perfRendered;   // passed the idle skip → this iteration renders a frame
 
@@ -5462,6 +5477,21 @@ void Application::run() {
         endFrame();
 
         m_window->swapBuffers();
+
+        // Hard frame-rate cap. Desktop GL blocks in swapBuffers on vsync, but
+        // iOS's presentRenderbuffer returns immediately (no CADisplayLink in
+        // this loop) — so any continuously-"active" state (a focused text
+        // field, a live preview) spun this loop at uncapped rate, starving
+        // the UIKit main runloop that keyboard raise, keyboard animation and
+        // touch delivery all run on: focusing ANY field froze the app.
+        // Sleeping out the remainder of a 60 Hz budget yields the main
+        // thread to the OS every frame; where vsync already paces us the
+        // remainder is ~0 and this is a no-op.
+        {
+            constexpr Uint32 kMinFrameMs = 16;
+            const Uint32 spent = SDL_GetTicks() - frameLoopStartMs;
+            if (spent < kMinFrameMs) SDL_Delay(kMinFrameMs - spent);
+        }
     }
 
     // Persist preferences on a clean exit (in addition to saving on each change).
