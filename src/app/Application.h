@@ -24,6 +24,7 @@
 #include "modeling/ExtrudeOp.h" // for ExtrudeMode
 #include "modeling/SketchConstraints.h" // for ConstraintType (applySketchConstraint)
 #include "modeling/Unfold.h" // for FlatPattern (m_unfoldPattern)
+#include "modeling/TopoName.h" // for topo::Ref (m_threadFaceRef)
 #include "core/SheetSpec.h" // for SheetMaterial (m_unfoldMaterial)
 #include "io/Settings.h" // for AppSettings::RecentProject (m_recentProjects)
 
@@ -162,6 +163,9 @@ private:
     // Undo/redo with the sketch-edit cascade (shared by the Edit menu, the
     // touch shell's top bar, and nothing else — the Ctrl+Z shortcut has its
     // own copy in handleShortcuts pending a merge).
+    // Sketch id mutated by a history step (SketchTransformOp/SketchEditOp),
+    // or -1 — so undo/redo outside sketch mode can re-cascade the driven body.
+    int sketchIdEditedBy(const Operation* op) const;
     void undoWithCascade();
     void redoWithCascade();
     // Sketch-aware undo for the touch shell's top-bar Undo button: in sketch
@@ -1116,6 +1120,9 @@ private:
     bool   m_threadActive = false;
     int    m_threadBodyId = -1;
     bool   m_threadIsHole = false;
+    // Topological name of the picked cylinder face, minted at beginThread so
+    // the committed ThreadOp follows an upstream edit (see ThreadOp::setter).
+    materializr::topo::Ref m_threadFaceRef;
     double m_threadAxis[9] = {0, 0, 0, 0, 0, 1, 1, 0, 0}; // loc, dir, xdir
     double m_threadRadius = 5.0;
     double m_threadLength = 10.0;
@@ -1130,6 +1137,24 @@ private:
     // thread polls it each frame and pushes the op when ready.
     std::future<TopoDS_Shape> m_threadFuture;
     bool   m_threadComputing = false;
+    // Async thread RE-CUT (cascade/editStep recompute path — distinct from the
+    // popup's initial Apply worker above). ThreadOp::execute hands the heavy
+    // re-cut here via the hook installed in the constructor; the body stays at
+    // its pre-thread state until the worker's result lands (pollThreadRecuts,
+    // once per frame). See ThreadOp::setAsyncRecutHook.
+    struct PendingThreadRecut {
+        ThreadOp* op = nullptr;      // history-owned; re-validated on landing
+        int bodyId = -1;
+        TopoDS_Shape launchedFrom;   // doc body at launch — stale-guard
+        std::future<TopoDS_Shape> fut;
+        int attempts = 1;            // relaunch-on-stale counter (cap 3)
+    };
+    std::vector<PendingThreadRecut> m_threadRecuts;
+    void installThreadRecutHook();
+    // Launch (or relaunch) the worker for this op against the CURRENT body.
+    bool launchThreadRecut(ThreadOp& op, int attempts);
+    void pollThreadRecuts();   // per-frame: apply/relaunch/discard results
+    void flushThreadRecuts();  // block until drained (save path)
 
     // Section View — render-only clipping of the scene by a plane so the
     // user can inspect interiors (thread profiles, wall thickness) without

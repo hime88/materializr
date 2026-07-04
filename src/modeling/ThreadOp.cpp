@@ -7,7 +7,18 @@
 #include <algorithm>
 #include <vector>
 #include <Geom_CylindricalSurface.hxx>
+#include <BRep_Tool.hxx>
+#include <BRepTools.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <gp_Cylinder.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Vec.hxx>
 #include <Geom2d_Line.hxx>
+#include <Geom_Plane.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepLib.hxx>
@@ -38,6 +49,124 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// ─── Swept-rod fast path ("the twist idea") ─────────────────────────────────
+// For the most common case — an EXTERNAL thread covering a PLAIN full
+// cylinder (sketch circle → extrude → thread) — don't cut grooves with a
+// boolean at all. Build the threaded rod NATIVELY: sweep the notched
+// cross-section along the axis while an auxiliary helix spine twists it
+// (BRepOffsetAPI_MakePipeShell curvilinear equivalence). One solid, ~6 smooth
+// helicoid faces, validity by construction, and ~200ms where the boolean
+// compound/per-turn path took MINUTES on a 35-turn rod (Steve's 14x70).
+// Anything else (holes, bolts with heads, partial spans, interrupted
+// cylinders) returns null here and takes the proven boolean paths below.
+//
+// Cross-section (notch centred at phi=0, radius band [R-depth .. R]):
+//   root flat  arc  phi in [-45, +45]  at R-depth   (0.25 of the period)
+//   flank      arc  rising to the crest edge        (0.25)
+//   crest flat arc  phi in [135, 225]  at R         (0.25)
+//   flank      arc  falling back to the root        (0.25)
+// Flanks are 3-point arcs staying in the band — a straight chord across 90°
+// of arc sags to ~0.7R and gouges the rod (probe-proven).
+static TopoDS_Shape sweptRodThread(const gp_Ax3& ax3, double R, double len,
+                                   double pitch, double depth,
+                                   bool rightHanded) {
+    try {
+        OCC_CATCH_SIGNALS
+        const double rr = R - depth;
+        auto polar = [&](double r, double phiDeg) {
+            double a = phiDeg * M_PI / 180.0;
+            return gp_Pnt(r * std::cos(a), r * std::sin(a), 0.0);
+        };
+        gp_Pnt rootA = polar(rr, -45), rootM = polar(rr, 0), rootB = polar(rr, 45);
+        gp_Pnt crestA = polar(R, 135), crestM = polar(R, 180), crestB = polar(R, 225);
+        TopoDS_Edge eRoot = BRepBuilderAPI_MakeEdge(
+            GC_MakeArcOfCircle(rootA, rootM, rootB).Value()).Edge();
+        TopoDS_Edge eUp = BRepBuilderAPI_MakeEdge(
+            GC_MakeArcOfCircle(rootB, polar(0.5 * (rr + R), 90), crestA).Value()).Edge();
+        TopoDS_Edge eCrest = BRepBuilderAPI_MakeEdge(
+            GC_MakeArcOfCircle(crestA, crestM, crestB).Value()).Edge();
+        TopoDS_Edge eDown = BRepBuilderAPI_MakeEdge(
+            GC_MakeArcOfCircle(crestB, polar(0.5 * (rr + R), 270), rootA).Value()).Edge();
+        BRepBuilderAPI_MakeWire mkProfile(eRoot, eUp, eCrest, eDown);
+        if (!mkProfile.IsDone()) return {};
+
+        TopoDS_Edge eSpine =
+            BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, len)).Edge();
+        TopoDS_Wire spine = BRepBuilderAPI_MakeWire(eSpine).Wire();
+
+        // Helix on the crest cylinder (2D line in UV space → 3D curve).
+        Handle(Geom_CylindricalSurface) cylSurf = new Geom_CylindricalSurface(
+            gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), R);
+        const double uSign = rightHanded ? 1.0 : -1.0;
+        Handle(Geom2d_Line) l2d = new Geom2d_Line(
+            gp_Pnt2d(0.0, 0.0), gp_Dir2d(uSign * 2.0 * M_PI, pitch));
+        const double turns = len / pitch;
+        const double segLen =
+            std::sqrt(4.0 * M_PI * M_PI + pitch * pitch) * turns;
+        TopoDS_Edge eHelix =
+            BRepBuilderAPI_MakeEdge(l2d, cylSurf, 0.0, segLen).Edge();
+        BRepLib::BuildCurves3d(eHelix);
+        TopoDS_Wire helix = BRepBuilderAPI_MakeWire(eHelix).Wire();
+
+        BRepOffsetAPI_MakePipeShell pipe(spine);
+        pipe.SetMode(helix, Standard_True);  // twist follows the helix
+        pipe.Add(mkProfile.Wire());
+        pipe.Build();
+        if (!pipe.IsDone() || !pipe.MakeSolid()) return {};
+        TopoDS_Shape rod = pipe.Shape();
+
+        // Move the canonical (origin, +Z) rod onto the op's axis frame.
+        gp_Trsf tr;
+        tr.SetDisplacement(gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1),
+                                  gp_Dir(1, 0, 0)), ax3);
+        rod = BRepBuilderAPI_Transform(rod, tr, Standard_True).Shape();
+
+        // Guards: valid solid, volume matching the intended profile within
+        // 6% (integrated analytically: quarter root flat + quarter crest +
+        // two ~linear ramps). Any miss → boolean fallback.
+        if (rod.IsNull() || !BRepCheck_Analyzer(rod).IsValid()) return {};
+        double A = 0.0;
+        const int NI = 720;
+        for (int i = 0; i < NI; ++i) {
+            double phi = 360.0 * i / NI;
+            double r;
+            if (phi >= 315 || phi < 45) r = rr;
+            else if (phi < 135) r = rr + depth * (phi - 45) / 90.0;
+            else if (phi < 225) r = R;
+            else r = R - depth * (phi - 225) / 90.0;
+            A += 0.5 * r * r * (2.0 * M_PI / NI);
+        }
+        GProp_GProps g;
+        BRepGProp::VolumeProperties(rod, g);
+        if (std::abs(g.Mass() - A * len) > 0.06 * A * len) return {};
+        return rod;
+    } catch (...) {
+        return {};
+    }
+}
+
+// Extract the thread frame from a cylindrical face: axis at the face's V_min
+// end (origin = surface location + v0·axis, direction along the cylinder), and
+// the radius. Length is deliberately NOT taken from the face — the user's
+// chosen thread span is kept; only the cylinder's position and diameter follow
+// an edit. Returns false if the face isn't a plain cylinder.
+static bool cylFaceToThread(const TopoDS_Face& face, gp_Ax2& ax2, double& radius) {
+    Handle(Geom_Surface) gs = BRep_Tool::Surface(face);
+    Handle(Geom_CylindricalSurface) cs =
+        Handle(Geom_CylindricalSurface)::DownCast(gs);
+    if (cs.IsNull()) return false;
+    const gp_Cylinder cyl = cs->Cylinder();
+    radius = cyl.Radius();
+    Standard_Real u0, u1, v0, v1;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    const gp_Ax3 pos = cyl.Position();
+    const gp_Dir axisDir = pos.Direction();
+    const gp_Pnt origin =
+        pos.Location().Translated(gp_Vec(axisDir) * std::min(v0, v1));
+    ax2 = gp_Ax2(origin, axisDir, pos.XDirection());
+    return true;
+}
 
 ThreadOp::ThreadOp() = default;
 
@@ -124,6 +253,65 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
         gp_Dir zd(m_axDX, m_axDY, m_axDZ);
         gp_Dir xd(m_axXX, m_axXY, m_axXZ);
         gp_Ax3 ax3(loc, zd, xd);
+
+        // ---- Swept-rod fast path: an EXTERNAL thread covering a PLAIN
+        // full-cylinder body end to end builds natively (no boolean, ~200ms
+        // vs minutes; see sweptRodThread). Detection is strict — exactly one
+        // matching full-2pi cylinder + two planar caps perpendicular to the
+        // axis, and the thread span covering the body's whole axial extent.
+        // Anything else falls through to the proven boolean paths.
+        if (!m_isHole && fullCylinder) {
+            int nFaces = 0;
+            bool shapeOk = true;
+            for (TopExp_Explorer fx(body, TopAbs_FACE); fx.More(); fx.Next()) {
+                ++nFaces;
+                TopoDS_Face f = TopoDS::Face(fx.Current());
+                Handle(Geom_Surface) gs = BRep_Tool::Surface(f);
+                Handle(Geom_CylindricalSurface) cs =
+                    Handle(Geom_CylindricalSurface)::DownCast(gs);
+                Handle(Geom_Plane) pl = Handle(Geom_Plane)::DownCast(gs);
+                if (!cs.IsNull()) {
+                    if (std::abs(cs->Cylinder().Radius() - m_radius) > 1e-4 ||
+                        std::abs(cs->Cylinder().Position().Direction()
+                                     .Dot(zd)) < 0.9999)
+                        shapeOk = false;
+                } else if (!pl.IsNull()) {
+                    if (std::abs(pl->Pln().Axis().Direction().Dot(zd)) < 0.9999)
+                        shapeOk = false;
+                } else {
+                    shapeOk = false;
+                }
+            }
+            // Axial extent from the body's vertices.
+            double hMin = 1e300, hMax = -1e300;
+            for (TopExp_Explorer vx(body, TopAbs_VERTEX); vx.More(); vx.Next()) {
+                gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vx.Current()));
+                double h = gp_Vec(loc, p).Dot(gp_Vec(zd));
+                hMin = std::min(hMin, h);
+                hMax = std::max(hMax, h);
+            }
+            const bool fullSpan = hMin > -0.55 * m_pitch &&
+                                  std::abs(hMax - m_length) < 0.55 * m_pitch;
+            // MakePipeShell is exact through ~40 turns and degrades beyond
+            // (probe: 40 OK, 50 fails to build, 60+ builds garbage the
+            // volume guard rejects). Gate rather than waste the attempt.
+            const bool turnsOk = (hMax - hMin) / m_pitch <= 40.0;
+            if (nFaces == 3 && shapeOk && fullSpan && turnsOk && hMax > hMin) {
+                gp_Ax3 base(gp_Pnt(loc.X() + zd.X() * hMin,
+                                   loc.Y() + zd.Y() * hMin,
+                                   loc.Z() + zd.Z() * hMin), zd, xd);
+                TopoDS_Shape rod = sweptRodThread(base, m_radius, hMax - hMin,
+                                                  m_pitch, depth,
+                                                  m_rightHanded);
+                if (!rod.IsNull()) {
+                    if (materializr::isVerbose())
+                        std::fprintf(stderr, "[Thread] swept-rod fast path\n");
+                    return rod;
+                }
+                std::fprintf(stderr, "[Thread] swept-rod declined — falling "
+                                     "back to boolean cut\n");
+            }
+        }
 
         auto pt = [&](double rad, double dz) {
             return gp_Pnt(loc.X() + zd.X() * dz + xd.X() * rad,
@@ -764,11 +952,47 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
     }
 }
 
+namespace {
+std::function<bool(ThreadOp&, Document&)> s_asyncRecut;
+} // namespace
+
+void ThreadOp::setAsyncRecutHook(std::function<bool(ThreadOp&, Document&)> h) {
+    s_asyncRecut = std::move(h);
+}
+
 bool ThreadOp::execute(Document& doc) {
     if (m_bodyId < 0) return false;
     try {
         m_previousShape = doc.getBody(m_bodyId);
         if (m_previousShape.IsNull()) return false;
+
+        // Follow an upstream edit: on the recompute path (editStep / redo, i.e.
+        // no worker-precomputed result), re-resolve the target cylinder face
+        // against the current body and adopt its new axis + radius. The stored
+        // absolute params are the fallback when there's no ref or it can't
+        // resolve — today's behaviour, so nothing regresses for old files.
+        if (m_precomputed.IsNull() && !m_faceRef.empty()) {
+            materializr::topo::Context ctx;
+            ctx.doc = &doc;
+            ctx.shape = m_previousShape;
+            ctx.type = TopAbs_FACE;
+            ctx.crossRebuild = true;   // body may have been rebuilt upstream
+            TopoDS_Shape f;
+            if (materializr::topo::resolve(m_faceRef, ctx, f) &&
+                !f.IsNull() && f.ShapeType() == TopAbs_FACE) {
+                gp_Ax2 ax2; double r = 0.0;
+                if (cylFaceToThread(TopoDS::Face(f), ax2, r) && r > 1e-6) {
+                    setAxis(ax2);   // updates m_axis + serialized components
+                    m_radius = r;
+                }
+            }
+        }
+
+        // Recompute path with the app hook installed: hand the multi-second
+        // re-cut to the worker (body stays at its pre-thread state until the
+        // result lands) so a cascade replay never freezes the UI.
+        if (m_precomputed.IsNull() && s_asyncRecut && s_asyncRecut(*this, doc))
+            return true;
 
         // The popup's worker thread may have already computed the result —
         // consume it; redo / editStep recompute synchronously as usual.
@@ -840,7 +1064,11 @@ std::string ThreadOp::serializeParams() const {
         m_isHole ? 1 : 0, m_rightHanded ? 1 : 0,
         m_axOX, m_axOY, m_axOZ, m_axDX, m_axDY, m_axDZ,
         m_axXX, m_axXY, m_axXZ);
-    return buf;
+    std::string s = buf;
+    // Target-face name LAST so its (delimiter-free) blob runs to end-of-string;
+    // absent in old files, which just keep their absolute axis/radius.
+    if (!m_faceRef.empty()) s += ";faceref=" + m_faceRef.serialize();
+    return s;
 }
 
 bool ThreadOp::deserializeParams(const std::string& blob) {
@@ -852,6 +1080,13 @@ bool ThreadOp::deserializeParams(const std::string& blob) {
         size_t end = blob.find(';', eq);
         if (end == std::string::npos) end = blob.size();
         std::string key = blob.substr(pos, eq - pos);
+        // faceref carries an opaque length-prefixed blob and is written last,
+        // so read it to end-of-string (not to the next ';').
+        if (key == "faceref") {
+            m_faceRef = materializr::topo::Ref::parse(blob.substr(eq + 1));
+            any = true;
+            break;
+        }
         std::string val = blob.substr(eq + 1, end - eq - 1);
         double d = std::atof(val.c_str());
         int    i = std::atoi(val.c_str());

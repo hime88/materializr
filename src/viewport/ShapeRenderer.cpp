@@ -204,18 +204,38 @@ bool ShapeRenderer::initialize()
 int ShapeRenderer::tessellate(const TopoDS_Shape& shape, float deflection,
                               float angularDeflection)
 {
-    // Drop any cached triangulation first. BRepMesh_IncrementalMesh only ever
-    // refines an existing mesh, so without this a previously finer tessellation
-    // would be kept when the user *lowers* the quality. Cleaning forces the mesh
-    // to be rebuilt at exactly the requested deflection in either direction.
-    BRepTools::Clean(shape);
+    // A worker thread may have PRE-MESHED this shape at the current quality
+    // (heavy results like a swept thread — meshing its 35-turn helicoid faces
+    // on the main thread froze the app for ~10s). Reuse that cache only when
+    // every face carries a triangulation at EXACTLY the requested linear
+    // deflection — any other value re-meshes below, so the quality slider
+    // still takes effect in BOTH directions (a finer-than-requested cache
+    // must NOT survive a quality lowering; that was a real bug once).
+    bool preMeshed = true;
+    for (TopExp_Explorer fx(shape, TopAbs_FACE); fx.More() && preMeshed;
+         fx.Next()) {
+        TopLoc_Location l;
+        Handle(Poly_Triangulation) t =
+            BRep_Tool::Triangulation(TopoDS::Face(fx.Current()), l);
+        if (t.IsNull() || std::abs(t->Deflection() - deflection) > 1e-4)
+            preMeshed = false;
+    }
+    if (!preMeshed) {
+        // Drop any cached triangulation first. BRepMesh_IncrementalMesh only
+        // ever refines an existing mesh, so without this a previously finer
+        // tessellation would be kept when the user *lowers* the quality.
+        // Cleaning forces the mesh to be rebuilt at exactly the requested
+        // deflection in either direction.
+        BRepTools::Clean(shape);
 
-    // Perform tessellation. The angular deflection subdivides curved surfaces by
-    // normal angle, so rounded edges/holes get more facets (smoother) while flat
-    // faces stay cheap. Run in parallel to absorb the extra triangles.
-    BRepMesh_IncrementalMesh meshGen(shape, deflection, Standard_False,
-                                     angularDeflection, Standard_True);
-    meshGen.Perform();
+        // Perform tessellation. The angular deflection subdivides curved
+        // surfaces by normal angle, so rounded edges/holes get more facets
+        // (smoother) while flat faces stay cheap. Run in parallel to absorb
+        // the extra triangles.
+        BRepMesh_IncrementalMesh meshGen(shape, deflection, Standard_False,
+                                         angularDeflection, Standard_True);
+        meshGen.Perform();
+    }
 
     // Collect all triangle vertices (position + normal)
     std::vector<float> vertices;

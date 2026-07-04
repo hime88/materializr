@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Operation.h"
 #include "../core/Document.h"
+#include "TopoName.h"
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -67,4 +68,14 @@ private:
     // `shape` by re-finding the best-matching face (normal + nearest plane).
     // Returns false only if an anchor can't be matched at all.
     bool rebindFaces(const TopoDS_Shape& shape);
+
+    // Topological names of the opened faces — the robust path tried before the
+    // geometric normal+point rebind. Sketch-anchored, so an opened face SURVIVES
+    // a dimension edit that MOVES it (which normal+point can't follow). Captured
+    // on the first valid execute; serialized additively as `facerefs=`.
+    std::vector<materializr::topo::Ref> m_faceRefs;
+    void captureFaceRefs(const Document& doc, const TopoDS_Shape& shape);
+    // Resolve m_faceRefs against `shape`; on full success sets m_facesToRemove
+    // and returns true. False -> caller falls back to rebindFaces.
+    bool resolveFacesTopo(const Document& doc, const TopoDS_Shape& shape);
 };

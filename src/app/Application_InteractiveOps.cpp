@@ -30,6 +30,7 @@
 #include "app/UserAxes.h"
 #include "modeling/ResizeCylindricalOp.h"
 #include "modeling/ThreadOp.h"
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <future>
 #include "modeling/PatternOp.h"
 #include "modeling/LoftOp.h"
@@ -777,6 +778,29 @@ void Application::beginThread() {
     m_threadRightHanded = true;
     std::snprintf(m_threadPitchBuf, sizeof(m_threadPitchBuf), "%.2f", m_threadPitch);
     std::snprintf(m_threadDepthBuf, sizeof(m_threadDepthBuf), "%.2f", m_threadDepth);
+
+    // Name the picked cylinder face topologically so the committed thread
+    // FOLLOWS an upstream edit (the cylinder moving or its diameter changing)
+    // instead of floating at its original absolute axis. Best-effort — an
+    // unnameable face (imported/primitive cylinder with no sketch) leaves the
+    // ref empty and the thread keeps today's absolute-param behaviour.
+    m_threadFaceRef = materializr::topo::Ref{};
+    if (m_selection && m_document) {
+        for (const auto& e : m_selection->getSelection()) {
+            if (e.type != SelectionType::Face || e.shape.IsNull() ||
+                e.shape.ShapeType() != TopAbs_FACE)
+                continue;
+            try {
+                materializr::topo::Context ctx;
+                ctx.doc = m_document.get();
+                ctx.shape = m_document->getBody(m_threadBodyId);
+                ctx.type = TopAbs_FACE;
+                m_threadFaceRef = materializr::topo::mint(TopoDS::Face(e.shape), ctx);
+            } catch (...) {}
+            break;
+        }
+    }
+
     m_threadActive = true;
 }
 
@@ -794,6 +818,7 @@ std::unique_ptr<ThreadOp> Application::makeThreadOpFromState() const {
     op->setDepth(static_cast<double>(m_threadDepth));
     op->setIsHole(m_threadIsHole);
     op->setRightHanded(m_threadRightHanded);
+    op->setTargetFaceRef(m_threadFaceRef);
     return op;
 }
 
@@ -827,8 +852,26 @@ void Application::commitThread() {
         auto cfg = makeThreadOpFromState();
         *worker = *cfg; // same params; worker only calls const buildResult()
     }
+    // Pre-mesh on the worker at the CURRENT quality so the renderer's
+    // tessellate() reuses the cache — meshing the swept rod's helicoid faces
+    // on the main thread froze the app ~10s after the popup closed. Finer
+    // angular pass (helicoids show 0.3 rad facets); linear must match the
+    // app's exactly for the cache check.
+    float mdefl, mang;
+    meshQualityParams(mdefl, mang);
+    const float meshAng = std::min(mang, 0.15f);
     m_threadFuture = std::async(std::launch::async,
-        [worker, body]() { return worker->buildResult(body); });
+        [worker, body, mdefl, meshAng]() {
+            TopoDS_Shape r = worker->buildResult(body);
+            if (!r.IsNull()) {
+                try {
+                    BRepMesh_IncrementalMesh mesh(r, mdefl, Standard_False,
+                                                  meshAng, Standard_True);
+                    mesh.Perform();
+                } catch (...) {}
+            }
+            return r;
+        });
     m_threadComputing = true;
     // Popup stays up (disabled) so the modal has an anchor; state is cleared
     // when the future resolves.
@@ -3616,6 +3659,122 @@ void Application::cancelRotatePlaneAboutAxis() {
     m_rotPlaneId = -1;
     m_rotPlaneHinges.clear();
     m_rotPlaneHingeLabels.clear();
+}
+
+// ─── Async thread re-cut (cascade/editStep recompute path) ──────────────────
+// A sketch edit cascading through a Thread step used to re-run the multi-
+// second helix sweep + boolean synchronously on the UI thread ("not
+// responding"). ThreadOp::execute now hands the recompute here: the body is
+// left at its pre-thread state (visually unthreaded for a moment) and the
+// re-cut runs on a worker; pollThreadRecuts applies the result when it lands.
+
+bool Application::launchThreadRecut(ThreadOp& op, int attempts) {
+    if (!m_document) return false;
+    TopoDS_Shape live;
+    try { live = m_document->getBody(op.getBodyId()); } catch (...) {}
+    if (live.IsNull()) return false;
+    // DEEP-COPY for the worker (same reasoning as commitThread: the live
+    // TShape's lazy caches are touched by the render thread every frame).
+    TopoDS_Shape body = BRepBuilderAPI_Copy(live).Shape();
+    if (body.IsNull()) return false;
+    auto worker = std::make_shared<ThreadOp>(op); // params copy; buildResult const
+    PendingThreadRecut p;
+    p.op = &op;
+    p.bodyId = op.getBodyId();
+    p.launchedFrom = live;
+    p.attempts = attempts;
+    // Pre-mesh at the CURRENT quality so the renderer reuses the cache
+    // instead of freezing the main thread on the helicoid faces; finer
+    // angular pass (0.3 rad shows facets on threads).
+    float rdefl, rang;
+    meshQualityParams(rdefl, rang);
+    const float recutAng = std::min(rang, 0.15f);
+    p.fut = std::async(std::launch::async,
+                       [worker, body, rdefl, recutAng]() {
+                           TopoDS_Shape r = worker->buildResult(body);
+                           if (!r.IsNull()) {
+                               try {
+                                   BRepMesh_IncrementalMesh mesh(
+                                       r, rdefl, Standard_False,
+                                       recutAng, Standard_True);
+                                   mesh.Perform();
+                               } catch (...) {}
+                           }
+                           return r;
+                       });
+    m_threadRecuts.push_back(std::move(p));
+    return true;
+}
+
+void Application::installThreadRecutHook() {
+    ThreadOp::setAsyncRecutHook([this](ThreadOp& op, Document& doc) -> bool {
+        // Only the live document (headless/temp docs keep the sync path).
+        if (!m_document || &doc != m_document.get()) return false;
+        // Single-flight per op: a request while one is pending stays pending —
+        // the landing check sees the body changed since launch and RELAUNCHES
+        // against the current state, so the newest edit always wins.
+        for (auto& p : m_threadRecuts)
+            if (p.op == &op) { p.attempts = 1; return true; } // re-arm budget
+        if (!launchThreadRecut(op, 1)) return false;
+        showToast("Re-cutting thread in the background\xE2\x80\xA6");
+        return true;
+    });
+}
+
+void Application::pollThreadRecuts() {
+    for (size_t i = 0; i < m_threadRecuts.size();) {
+        auto& p = m_threadRecuts[i];
+        if (p.fut.wait_for(std::chrono::milliseconds(0)) !=
+            std::future_status::ready) { ++i; continue; }
+        TopoDS_Shape result = p.fut.get();
+
+        // The op must still be an applied history step.
+        int stepIdx = -1;
+        for (int k = 0; k <= m_history->currentStep(); ++k)
+            if (m_history->getStep(k) == p.op) { stepIdx = k; break; }
+        TopoDS_Shape cur;
+        try { cur = m_document->getBody(p.bodyId); } catch (...) {}
+
+        if (stepIdx < 0 || cur.IsNull()) {
+            // Step deleted / body gone — drop.
+            m_threadRecuts.erase(m_threadRecuts.begin() + i);
+            continue;
+        }
+        if (!cur.IsSame(p.launchedFrom)) {
+            // The body changed while the worker ran (a second cascade re-ran
+            // the chain and committed a NEW TShape — e.g. the sketch edit
+            // fired two cascades). This result is stale: RELAUNCH against the
+            // current body instead of silently dropping it, or the thread
+            // never lands ("it said background but nothing happened").
+            ThreadOp* op = p.op;
+            int attempts = p.attempts;
+            m_threadRecuts.erase(m_threadRecuts.begin() + i);
+            if (attempts < 3) launchThreadRecut(*op, attempts + 1);
+            else std::fprintf(stderr, "[Thread] recut gave up after %d stale "
+                                      "attempts\n", attempts);
+            continue;
+        }
+        if (result.IsNull()) {
+            // New geometry can't take the thread — suspend the step with the
+            // standard explainer banner instead of silently no-opping.
+            m_history->suspendStep(stepIdx);
+            showToast("Thread couldn't re-cut on the new geometry \xE2\x80\x94 "
+                      "check the Thread step.");
+        } else {
+            m_document->updateBody(p.bodyId, result);
+            m_meshesDirty = true;
+        }
+        m_threadRecuts.erase(m_threadRecuts.begin() + i);
+    }
+}
+
+void Application::flushThreadRecuts() {
+    // Save path: a snapshot taken mid-recut would bake the unthreaded body
+    // under a Thread step. Block the (rare, few-second) remainder instead.
+    while (!m_threadRecuts.empty()) {
+        m_threadRecuts.front().fut.wait();
+        pollThreadRecuts();
+    }
 }
 
 } // namespace materializr

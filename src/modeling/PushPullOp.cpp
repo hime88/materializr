@@ -157,6 +157,39 @@ bool PushPullOp::rebuildProfileFromSketch(Document& doc, int sketchId) {
     return any;
 }
 
+void PushPullOp::refreshFaceTargets(Document& doc) {
+    if (m_targetRefs.size() != m_targets.size())
+        m_targetRefs.resize(m_targets.size());
+    for (size_t i = 0; i < m_targets.size(); ++i) {
+        Target& t = m_targets[i];
+        if (t.sourceBodyId < 0) continue;            // sketch / free-floating
+        TopoDS_Shape src;
+        try { src = doc.getBody(t.sourceBodyId); } catch (...) { continue; }
+        if (src.IsNull()) continue;
+        // Mint once while the profile is still a valid face of the source body.
+        if (m_targetRefs[i].empty() && !t.profile.IsNull()) {
+            materializr::topo::Context mc;
+            mc.doc = &doc; mc.shape = src; mc.type = TopAbs_FACE;
+            m_targetRefs[i] = materializr::topo::mint(t.profile, mc);
+        }
+        // Re-resolve if the stored handle is no longer live on the source body
+        // (an upstream edit rebuilt it and MOVED the face).
+        bool live = false;
+        if (!t.profile.IsNull())
+            for (TopExp_Explorer ex(src, TopAbs_FACE); ex.More(); ex.Next())
+                if (ex.Current().IsSame(t.profile)) { live = true; break; }
+        if (!live && !m_targetRefs[i].empty()) {
+            materializr::topo::Context rc;
+            rc.doc = &doc; rc.shape = src; rc.type = TopAbs_FACE;
+            rc.crossRebuild = true;   // source body was rebuilt upstream
+            TopoDS_Shape f;
+            if (materializr::topo::resolve(m_targetRefs[i], rc, f) &&
+                !f.IsNull() && f.ShapeType() == TopAbs_FACE)
+                t.profile = TopoDS::Face(f);
+        }
+    }
+}
+
 bool PushPullOp::execute(Document& doc) {
     // Direct re-execute support (e.g. cascade after a sketch constraint
     // edit): fold the previously-created body ids back into the reuse pool
@@ -170,6 +203,11 @@ bool PushPullOp::execute(Document& doc) {
     m_createdBodyIds.clear();
     m_reuseIdx = 0; // walks m_reuseBodyIds as each free-floating output is emitted
     if (m_targets.empty() || std::abs(m_distance) < 1e-6) return false;
+
+    // Follow upstream edits: re-resolve any face-driven target whose profile
+    // handle has gone stale on a rebuilt source body (sketch targets rebuild
+    // separately via rebuildProfilesFromSketch).
+    refreshFaceTargets(doc);
 
     std::unordered_set<int> savedBodies;
 
@@ -462,6 +500,12 @@ std::string PushPullOp::serializeParams() const {
                 break;
             }
         }
+        // Topological name of the profile face (additive, robust to a moving
+        // edit). The ref blob is delimiter-free (no ';' or '='), so it round-
+        // trips through the per-target key parser.
+        if (i < m_targetRefs.size() && !m_targetRefs[i].empty()) {
+            blob += ";tr" + std::to_string(i) + "=" + m_targetRefs[i].serialize();
+        }
     }
     return blob;
 }
@@ -490,6 +534,7 @@ bool PushPullOp::deserializeParams(const std::string& blob) {
     m_sketchSourceIds.assign(count, -1);
     m_sketchSourceRegions.assign(count, -1);
     m_faceIndices.assign(count, 0);
+    m_targetRefs.assign(count, materializr::topo::Ref{});
     pos = 0;
     while (pos < blob.size()) {
         size_t eq = blob.find('=', pos);
@@ -498,7 +543,13 @@ bool PushPullOp::deserializeParams(const std::string& blob) {
         if (end == std::string::npos) end = blob.size();
         std::string key = blob.substr(pos, eq - pos);
         std::string val = blob.substr(eq + 1, end - eq - 1);
-        if (key.size() >= 2 && (key[0] == 's' || key[0] == 'r' ||
+        if (key.size() >= 3 && key[0] == 't' && key[1] == 'r') {
+            int idx = std::atoi(key.c_str() + 2);
+            if (idx >= 0 && idx < count)
+                m_targetRefs[idx] = materializr::topo::Ref::parse(val);
+            any = true;
+        }
+        else if (key.size() >= 2 && (key[0] == 's' || key[0] == 'r' ||
                                 key[0] == 'b' || key[0] == 'f')) {
             int idx = std::atoi(key.c_str() + 1);
             int v   = std::atoi(val.c_str());

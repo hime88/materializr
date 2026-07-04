@@ -38,6 +38,22 @@ bool History::pushOperation(std::unique_ptr<Operation> op, Document& doc) {
         }
     }
 
+    // SHELLS auto-reflow (unlike threads no refusal — a shell re-execute is
+    // sub-second): a face transform on a shelled body applies to the
+    // PRE-SHELL solid and the shell re-runs on the moved body, giving the
+    // result the user means ("the order flipped"). If the reflow can't land
+    // (rolled back + restored inside insertStepAndReplay), fail cleanly —
+    // the direct path would only hit the hollow-body corruption guards.
+    {
+        int at = shellReflowIndex(*op);
+        if (at >= 0) {
+            std::fprintf(stderr, "[History] reflowing '%s' beneath the Shell "
+                                 "at step %d (face ops apply pre-shell)\n",
+                         op->name().c_str(), at);
+            return insertStepAndReplay(at, std::move(op), doc);
+        }
+    }
+
     // Execute the operation
     if (!op->execute(doc)) {
         return false;
@@ -598,6 +614,37 @@ int History::reflowInsertionIndex(const Operation& op) const {
     return insertAt;
 }
 
+int History::shellReflowIndex(const Operation& op) const {
+    if (op.typeId() != "moveface") return -1;
+    std::vector<int> planned = op.plannedBodyIds();
+    if (planned.empty()) return -1;
+
+    int limit = m_currentIndex;
+    if (m_breakpoint >= 0 && m_breakpoint < limit) limit = m_breakpoint;
+
+    auto touchesPlanned = [&](const Operation* s) {
+        OperationDiff d = s->captureDiff();
+        for (const auto& [id, shp] : d.modifiedBefore)
+            for (int p : planned) if (p == id) return true;
+        for (int id : d.created)
+            for (int p : planned) if (p == id) return true;
+        for (const auto& [id, shp] : d.deletedBefore)
+            for (int p : planned) if (p == id) return true;
+        return false;
+    };
+
+    // Reflow beneath the DEEPEST shell that touched a planned body, so the
+    // face transform applies to the pre-shell solid and every shell above it
+    // re-hollows the moved geometry.
+    int insertAt = -1;
+    for (int i = limit; i >= 0; --i) {
+        const Operation* s = m_operations[i].get();
+        if (!s->isEnabled()) continue;
+        if (s->typeId() == "shell" && touchesPlanned(s)) insertAt = i;
+    }
+    return insertAt;
+}
+
 bool History::insertStepAndReplay(int index, std::unique_ptr<Operation> op,
                                   Document& doc) {
     ++m_revision;
@@ -654,9 +701,16 @@ bool History::insertStepAndReplay(int index, std::unique_ptr<Operation> op,
                          std::move(m_operations[touched[k]]));
         m_operations.erase(m_operations.begin() + touched[k]);
     }
+    // Finishing passes replay AFTER the new op. Threads always; shells only
+    // when the new op is a face transform (the shell-reflow case) — for any
+    // other insertion a shell in the window keeps its original position, so
+    // e.g. a boolean that ran on the hollow body still does.
+    const bool shellIsFinishing = (op->typeId() == "moveface");
     std::vector<size_t> ntIdx, thIdx; // partition, original order kept
     for (size_t k = 0; k < extracted.size(); ++k) {
-        if (extracted[k]->typeId() == "thread") thIdx.push_back(k);
+        const std::string t = extracted[k]->typeId();
+        if (t == "thread" || (shellIsFinishing && t == "shell"))
+            thIdx.push_back(k);
         else ntIdx.push_back(k);
     }
 

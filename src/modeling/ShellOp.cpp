@@ -111,6 +111,43 @@ bool ShellOp::rebindFaces(const TopoDS_Shape& shape) {
     return true;
 }
 
+void ShellOp::captureFaceRefs(const Document& doc, const TopoDS_Shape& shape) {
+    if (!m_faceRefs.empty() || m_facesToRemove.IsEmpty() || shape.IsNull())
+        return;
+    materializr::topo::Context ctx;
+    ctx.doc = &doc; ctx.shape = shape; ctx.type = TopAbs_FACE;
+    for (const TopoDS_Shape& s : m_facesToRemove)
+        m_faceRefs.push_back(materializr::topo::mint(s, ctx));
+}
+
+bool ShellOp::resolveFacesTopo(const Document& doc, const TopoDS_Shape& shape) {
+    if (m_faceRefs.empty() || shape.IsNull()) return false;
+    for (const auto& r : m_faceRefs)
+        if (r.empty()) return false;   // any unnameable face -> geometric path
+    materializr::topo::Context ctx;
+    ctx.doc = &doc; ctx.shape = shape; ctx.type = TopAbs_FACE;
+    ctx.crossRebuild = true;   // shape may have been rebuilt upstream
+    std::vector<TopoDS_Shape> out;
+    if (!materializr::topo::resolveSet(m_faceRefs, ctx, out) ||
+        out.size() != m_faceRefs.size())
+        return false;
+    // SANITY GUARD: each resolved face must point the way the opened face
+    // pointed when it was captured (m_faceAnchors, zip-aligned with the refs).
+    // A resolution that flips orientation is a MIS-resolve — reject the whole
+    // set and let the geometric rebind handle it, so a bad topo answer can
+    // never preempt the fallback that used to work.
+    if (m_faceAnchors.size() == out.size()) {
+        for (size_t i = 0; i < out.size(); ++i) {
+            gp_Dir n; gp_Pnt p;
+            if (!faceNormalPoint(TopoDS::Face(out[i]), n, p)) return false;
+            if (n.Dot(m_faceAnchors[i].normal) < 0.7) return false;
+        }
+    }
+    m_facesToRemove.Clear();
+    for (const auto& f : out) m_facesToRemove.Append(f);
+    return true;
+}
+
 void ShellOp::setBody(int id) {
     m_bodyId = id;
 }
@@ -143,7 +180,12 @@ bool ShellOp::execute(Document& doc) {
         // edit. Mirrors FilletOp's edge rebind. Capture the anchors first (on
         // the initial run they're still valid against this body).
         captureFaceAnchors(m_previousShape);
-        if (!rebindFaces(m_previousShape)) {
+        captureFaceRefs(doc, m_previousShape);
+        // Prefer the sketch-anchored topo resolution — it follows an opened
+        // face that a dimension edit MOVED (which the geometric normal+point
+        // rebind can't) — then fall back to that rebind for unnameable faces.
+        if (!resolveFacesTopo(doc, m_previousShape) &&
+            !rebindFaces(m_previousShape)) {
             std::fprintf(stderr,
                 "[Shell] could not re-find the opened face(s) on the rebuilt "
                 "body (thickness %.3f mm).\n", m_thickness);
@@ -256,6 +298,22 @@ std::string ShellOp::serializeParams() const {
                                                    TopAbs_FACE);
         if (!idx.empty()) blob += ";faces=" + idx;
     }
+    // Topological face names (additive, robust to a moving edit). Only when
+    // EVERY opened face is nameable — otherwise the ordinal `faces=` above and
+    // the geometric rebind carry it. Written last; a length-prefixed list so
+    // each ref's opaque blob round-trips.
+    if (!m_faceRefs.empty()) {
+        bool allNamed = true;
+        for (const auto& r : m_faceRefs) if (r.empty()) { allNamed = false; break; }
+        if (allNamed) {
+            std::string rb;
+            for (const auto& r : m_faceRefs) {
+                std::string b = r.serialize();
+                rb += std::to_string(b.size()) + ":" + b;
+            }
+            blob += ";facerefs=" + rb;
+        }
+    }
     return blob;
 }
 
@@ -268,6 +326,23 @@ bool ShellOp::deserializeParams(const std::string& blob) {
         size_t end = blob.find(';', eq);
         if (end == std::string::npos) end = blob.size();
         std::string key = blob.substr(pos, eq - pos);
+        // facerefs holds a length-prefixed list of opaque ref blobs, written
+        // last — read it to end-of-string (not to the next ';').
+        if (key == "facerefs") {
+            std::string rest = blob.substr(eq + 1);
+            m_faceRefs.clear();
+            size_t p = 0;
+            while (p < rest.size()) {
+                size_t c = rest.find(':', p);
+                if (c == std::string::npos) break;
+                size_t n = static_cast<size_t>(std::atoll(rest.substr(p, c - p).c_str()));
+                if (c + 1 + n > rest.size()) break;
+                m_faceRefs.push_back(materializr::topo::Ref::parse(rest.substr(c + 1, n)));
+                p = c + 1 + n;
+            }
+            any = true;
+            break;
+        }
         std::string val = blob.substr(eq + 1, end - eq - 1);
         if      (key == "thickness") { m_thickness = std::atof(val.c_str()); any = true; }
         else if (key == "body")      { m_bodyId = std::atoi(val.c_str()); any = true; }

@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Operation.h"
 #include "../core/Document.h"
+#include "TopoName.h"
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Vec.hxx>
@@ -106,4 +107,12 @@ private:
     // profile face within the source body's pre-op shape (see
     // SubShapeIndex.h). 0 = not a face target / not resolvable.
     std::vector<int> m_faceIndices;
+    // Per-target topological name of a FACE-driven target's profile (zip-aligned
+    // with m_targets; empty for sketch/free targets). Minted on first execute,
+    // re-resolved when the profile handle goes stale after an upstream edit
+    // rebuilt the source body — so a pushed/pulled face FOLLOWS the edit.
+    // Serialized additively as per-target `tr<i>=`.
+    std::vector<materializr::topo::Ref> m_targetRefs;
+    // Capture/refresh face-driven target profiles against the current bodies.
+    void refreshFaceTargets(Document& doc);
 };

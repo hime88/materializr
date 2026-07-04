@@ -247,6 +247,12 @@ bool FilletOp::execute(Document& doc) {
             }
         }
 
+        // Publish the generation map (input edge -> blend faces) so the "gen"
+        // naming strategy can name a blend face by its generating edge — the
+        // general-kernel path for op-produced faces. Captured on every execute,
+        // so a rebuild's ledger reflects the current geometry.
+        m_ledger.capture(fillet, m_previousShape, TopAbs_EDGE);
+
         // Record the blend faces generated from each input edge so a later face
         // click can be traced back to this fillet for re-editing.
         m_generatedFaces.clear();

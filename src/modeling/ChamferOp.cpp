@@ -214,6 +214,10 @@ bool ChamferOp::execute(Document& doc) {
 
         // Record the chamfer faces generated from each input edge so a later
         // face click can be traced back to this op for re-editing.
+        // Publish the generation map so "gen" can name a bevel face by its
+        // generating edge (general-kernel path for op-produced faces).
+        m_ledger.capture(chamfer, m_previousShape, TopAbs_EDGE);
+
         m_generatedFaces.clear();
         for (const auto& edge : m_edges) {
             try {

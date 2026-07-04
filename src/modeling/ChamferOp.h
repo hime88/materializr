@@ -2,6 +2,7 @@
 #include "../core/Operation.h"
 #include "../core/Document.h"
 #include "EdgeAnchor.h"
+#include "GenerationLedger.h"
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -80,6 +81,13 @@ private:
     // Generative anchors (EdgeAnchor.h) — same scheme as FilletOp.
     int m_sourceSketchId = -1;
     std::vector<EdgeAnchor::Anchor> m_edgeAnchors;
+
+    // Generation map (input edge -> chamfer bevel face) — lets the "gen"
+    // naming strategy name a bevel face by its generating edge (edit-stable).
+    materializr::topo::GenerationLedger m_ledger;
+public:
+    const materializr::topo::GenerationLedger& generationLedger() const { return m_ledger; }
+private:
     void computeAnchors(Document& doc);
     bool resolveAnchors(Document& doc, const TopoDS_Shape& base);
 
