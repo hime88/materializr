@@ -1222,6 +1222,18 @@ private:
     glm::vec2 m_sketchShapeAnchorPs{0.0f};
     glm::vec2 m_sketchShapeAnchorPe{0.0f};
 
+    // im-touch: anchor for the live action's distance well (extrude /
+    // push-pull), LATCHED in world space when the action starts — the well
+    // must not chase the growing arrow (the sketch bubbles' rule); the
+    // dimension overlay re-projects the latched point each frame so it
+    // still tracks camera pan/zoom. Valid = projected on-screen this frame;
+    // the well falls back to its fixed spot otherwise.
+    bool      m_actionAnchorLatched = false;
+    glm::vec3 m_actionAnchorW{0.0f};
+    bool  m_actionAnchorValid = false;
+    float m_actionAnchorX = 0.0f;
+    float m_actionAnchorY = 0.0f;
+
     // Last hover pick, reused by cursor-zoom so wheel ticks never ray-cast
     // the document themselves (see Application_Viewport zoom handler).
     bool m_zoomFocusHit = false;

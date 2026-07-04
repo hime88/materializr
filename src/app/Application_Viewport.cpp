@@ -1178,6 +1178,38 @@ void Application::renderViewport() {
             }
 
             char dbuf[40];
+            // im-touch: the distance input well (rendered later, different
+            // scope) anchors near the geometry being modified. The anchor is
+            // LATCHED in world space when the action starts — the well must
+            // not chase the growing arrow while values change (same rule as
+            // the sketch bubbles' frozen endpoints), but projecting the
+            // latched point each frame keeps it tracking camera pan/zoom.
+            {
+                const bool actionLive =
+                    m_extruding || (m_pushPullActive && m_pushPullHasArrow) ||
+                    m_edgeOpActive;
+                if (!actionLive) m_actionAnchorLatched = false;
+                m_actionAnchorValid = false;
+                if (actionLive) {
+                    if (!m_actionAnchorLatched) {
+                        m_actionAnchorW =
+                            m_extruding
+                                ? m_extrudeOrigin +
+                                      m_extrudeNormal * m_extrudeDistance
+                            : m_pushPullActive
+                                ? m_pushPullOrigin +
+                                      m_pushPullNormal * m_pushPullDistance
+                                : m_edgeOpMid;   // fillet/chamfer: edge midpoint
+                        m_actionAnchorLatched = true;
+                    }
+                    ImVec2 aS;
+                    if (toImg(m_actionAnchorW, aS)) {
+                        m_actionAnchorX = aS.x;
+                        m_actionAnchorY = aS.y;
+                        m_actionAnchorValid = true;
+                    }
+                }
+            }
             if (m_extruding) {
                 std::snprintf(dbuf, sizeof(dbuf), "%.1f mm", std::abs(m_extrudeDistance));
                 drawDim(m_extrudeOrigin,
@@ -1185,10 +1217,57 @@ void Application::renderViewport() {
                         DimStyle::Bold);
             } else if (m_pushPullActive && m_pushPullHasArrow) {
                 // Arrow out of the face + signed-distance measurement.
-                std::snprintf(dbuf, sizeof(dbuf), "%.1f mm", m_pushPullDistance);
-                drawDim(m_pushPullOrigin,
-                        m_pushPullOrigin + m_pushPullNormal * m_pushPullDistance, dbuf,
-                        DimStyle::Bold);
+                // Push/pull STARTS at 0 mm (no change), and drawDim draws
+                // nothing for a near-zero span — which left the face with no
+                // visible handle at all (extrude starts non-zero, so it
+                // always shows one). Until the distance moves, draw a
+                // STARTER handle instead: a double-headed arrow through the
+                // face centre along ±normal, in the Bold palette.
+                if (std::abs(m_pushPullDistance) > 0.05f) {
+                    std::snprintf(dbuf, sizeof(dbuf), "%.1f mm", m_pushPullDistance);
+                    drawDim(m_pushPullOrigin,
+                            m_pushPullOrigin + m_pushPullNormal * m_pushPullDistance, dbuf,
+                            DimStyle::Bold);
+                } else {
+                    ImVec2 so, sn;
+                    if (toImg(m_pushPullOrigin, so) &&
+                        toImg(m_pushPullOrigin + m_pushPullNormal, sn)) {
+                        ImVec2 d(sn.x - so.x, sn.y - so.y);
+                        const float L = std::sqrt(d.x * d.x + d.y * d.y);
+                        if (L > 1e-3f) { d.x /= L; d.y /= L; }
+                        else           { d = ImVec2(0.0f, -1.0f); }
+                        const float s3   = uiScale();
+                        const float half = 40.0f * s3;
+                        const float ah   = 12.0f * s3;
+                        const ImVec2 a(so.x - d.x * half, so.y - d.y * half);
+                        const ImVec2 b(so.x + d.x * half, so.y + d.y * half);
+                        const ImU32 col     = IM_COL32(255, 200,  60, 255);
+                        const ImU32 outline = IM_COL32( 20,  20,  28, 230);
+                        const ImVec2 perp(-d.y, d.x);
+                        dl->AddLine(a, b, outline, 5.0f);
+                        dl->AddLine(a, b, col, 3.0f);
+                        auto head = [&](ImVec2 tip, float sign) {
+                            ImVec2 back(tip.x - d.x * ah * sign,
+                                        tip.y - d.y * ah * sign);
+                            ImVec2 w1(back.x + perp.x * ah * 0.5f,
+                                      back.y + perp.y * ah * 0.5f);
+                            ImVec2 w2(back.x - perp.x * ah * 0.5f,
+                                      back.y - perp.y * ah * 0.5f);
+                            dl->AddTriangleFilled(tip, w1, w2, col);
+                            dl->AddTriangle(tip, w1, w2, outline, 1.2f);
+                        };
+                        head(b,  1.0f);
+                        head(a, -1.0f);
+                        const char* hint = "0 mm — drag";
+                        ImVec2 ts = ImGui::CalcTextSize(hint);
+                        ImVec2 tp(so.x + perp.x * 18.0f * s3 - ts.x * 0.5f,
+                                  so.y + perp.y * 18.0f * s3 - ts.y * 0.5f);
+                        dl->AddRectFilled(ImVec2(tp.x - 5, tp.y - 3),
+                                          ImVec2(tp.x + ts.x + 5, tp.y + ts.y + 3),
+                                          outline, 3.0f);
+                        dl->AddText(tp, col, hint);
+                    }
+                }
             } else if (m_gizmoDragging && !m_planeGizmoDrag.empty()) {
                 // Construction-plane drag readout. The world-axis dim line
                 // from origin (used for body/sketch translate below) isn't
@@ -6383,19 +6462,36 @@ void Application::renderViewport() {
                     : "EXTRUDE - Drag in viewport or type distance. Enter to confirm, Escape to cancel.");
         ImGui::PopStyleColor();
 
-        // Floating distance input panel
-        ImGui::SetNextWindowPos(ImVec2(
-            std::max(ImGui::GetWindowPos().x + 6.0f,
-                     ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
-            ImGui::GetWindowPos().y + 50));
+        // Floating distance input panel. im-touch: anchored just off the
+        // extrude arrow's tip, like the sketch bubbles; other layouts (or a
+        // tip behind the camera) keep the fixed top-right spot.
+        bool extAnchored = false;
+        if (imTouchLayout() && m_actionAnchorValid) {
+            const float s2 = uiScale();
+            const ImVec2 vwp = ImGui::GetWindowPos();
+            const float vww = ImGui::GetWindowWidth();
+            float ax = std::min(std::max(m_actionAnchorX + 24.0f * s2,
+                                         vwp.x + 8.0f),
+                                vwp.x + vww - 250.0f * s2);
+            float ay = std::max(m_actionAnchorY + 12.0f * s2, vwp.y + 8.0f);
+            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Always);
+            extAnchored = true;
+        }
+        if (!extAnchored)
+            ImGui::SetNextWindowPos(ImVec2(
+                std::max(ImGui::GetWindowPos().x + 6.0f,
+                         ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
+                ImGui::GetWindowPos().y + 50));
         ImGui::SetNextWindowSize(uiSz(240, 0));
         ImGui::Begin("##ExtrudeInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize);
 
-        ImGui::Text("Extrude Distance (mm)");
-        ImGui::Separator();
+        if (!imTouchLayout()) {   // im-touch: just the value well below
+            ImGui::Text("Extrude Distance (mm)");
+            ImGui::Separator();
+        }
 
         if (m_extrudeInputFocus) {
             if (!materializr::touchMode())
@@ -6405,9 +6501,10 @@ void Application::renderViewport() {
 
         bool valueChanged = false;
         if (imTouchLayout()) {
-            // im-touch: number-pad amount field — no InputText, no native
-            // keyboard (which froze the app on iOS).
-            if (touchui::amountField("extAmt", nullptr, &m_extrudeDistance,
+            // im-touch: the WHOLE panel is this one tappable value well —
+            // no header, hint or steppers (Steve: the full "distance
+            // dialog" kept showing up; drag for coarse, pad for exact).
+            if (touchui::amountField("extAmt", "Distance", &m_extrudeDistance,
                                      "mm", 1, /*allowSign=*/true)) {
                 std::snprintf(m_extrudeInputBuf, sizeof(m_extrudeInputBuf),
                               "%.1f", m_extrudeDistance);
@@ -6435,8 +6532,10 @@ void Application::renderViewport() {
         }
 
         // Quick-nudge stepper (replaces the slider): ±10/1/0.1, and 0 to
-        // clear the extrusion mid-preview.
-        if (materializr::stepperRow("extrudeStep", &m_extrudeDistance,
+        // clear the extrusion mid-preview. Desktop only — im-touch stays a
+        // single well.
+        if (!imTouchLayout() &&
+            materializr::stepperRow("extrudeStep", &m_extrudeDistance,
                                     /*allowNegative=*/true, -50.0f, 50.0f)) {
             std::snprintf(m_extrudeInputBuf, sizeof(m_extrudeInputBuf), "%.1f", m_extrudeDistance);
             updateInteractiveExtrude();
@@ -6465,19 +6564,37 @@ void Application::renderViewport() {
                     : "PUSH/PULL - Positive = extrude, Negative = cut. Enter to confirm, Escape to cancel.");
         ImGui::PopStyleColor();
 
-        ImGui::SetNextWindowPos(ImVec2(
-            std::max(ImGui::GetWindowPos().x + 6.0f,
-                     ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
-            ImGui::GetWindowPos().y + 50));
+        // im-touch: anchor the well just off the push/pull arrow's tip,
+        // like the sketch bubbles; other layouts (or a tip behind the
+        // camera) keep the fixed top-right spot.
+        bool ppAnchored = false;
+        if (imTouchLayout() && m_actionAnchorValid) {
+            const float s2 = uiScale();
+            const ImVec2 vwp = ImGui::GetWindowPos();
+            const float vww = ImGui::GetWindowWidth();
+            float ax = std::min(std::max(m_actionAnchorX + 24.0f * s2,
+                                         vwp.x + 8.0f),
+                                vwp.x + vww - 250.0f * s2);
+            float ay = std::max(m_actionAnchorY + 12.0f * s2, vwp.y + 8.0f);
+            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Always);
+            ppAnchored = true;
+        }
+        if (!ppAnchored)
+            ImGui::SetNextWindowPos(ImVec2(
+                std::max(ImGui::GetWindowPos().x + 6.0f,
+                         ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
+                ImGui::GetWindowPos().y + 50));
         ImGui::SetNextWindowSize(uiSz(240, 0));
         ImGui::Begin("##PushPullInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize);
 
-        ImGui::Text(m_pushPullSymmetric ? "Distance per side (mm)"
-                                        : "Distance (mm) - signed");
-        ImGui::Separator();
+        if (!imTouchLayout()) {   // im-touch: just the value well below
+            ImGui::Text(m_pushPullSymmetric ? "Distance per side (mm)"
+                                            : "Distance (mm) - signed");
+            ImGui::Separator();
+        }
 
         if (m_pushPullInputFocus) {
             if (!materializr::touchMode())
@@ -6486,10 +6603,13 @@ void Application::renderViewport() {
         }
 
         if (imTouchLayout()) {
-            // im-touch: number-pad amount field (see the extrude panel).
-            if (touchui::amountField("ppAmt", nullptr, &m_pushPullDistance,
-                                     "mm", 1,
-                                     /*allowSign=*/!m_pushPullSymmetric)) {
+            // im-touch: the panel is the value well (+ the Symmetric toggle
+            // below when it applies) — no header, hint or steppers.
+            if (touchui::amountField(
+                    "ppAmt",
+                    m_pushPullSymmetric ? "Per side" : "Distance",
+                    &m_pushPullDistance, "mm", 1,
+                    /*allowSign=*/!m_pushPullSymmetric)) {
                 m_pushPullDistanceRaw = m_pushPullDistance;
                 std::snprintf(m_pushPullInputBuf, sizeof(m_pushPullInputBuf),
                               "%.1f", m_pushPullDistance);
@@ -6519,7 +6639,9 @@ void Application::renderViewport() {
         // Quick-nudge stepper (replaces the slider). Symmetric sweeps both
         // ways, so a negative distance is meaningless there — drop the minus
         // buttons and clamp positive while ticked. 0 clears the change.
-        if (materializr::stepperRow("ppStep", &m_pushPullDistance,
+        // Desktop only — im-touch stays a single well.
+        if (!imTouchLayout() &&
+            materializr::stepperRow("ppStep", &m_pushPullDistance,
                                     /*allowNegative=*/!m_pushPullSymmetric,
                                     m_pushPullSymmetric ? 0.1f : -50.0f, 50.0f)) {
             m_pushPullDistanceRaw = m_pushPullDistance;
@@ -6579,18 +6701,36 @@ void Application::renderViewport() {
                     : "%s - Type value or use slider. Enter to confirm, Escape to cancel.", opName);
         ImGui::PopStyleColor();
 
-        ImGui::SetNextWindowPos(ImVec2(
-            std::max(ImGui::GetWindowPos().x + 6.0f,
-                     ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
-            ImGui::GetWindowPos().y + 50));
+        // im-touch: anchor the well next to the edge being rounded/cut
+        // (latched midpoint — static while values change, same rule as the
+        // sketch fields); other layouts keep the fixed top-right spot.
+        bool edgeAnchored = false;
+        if (imTouchLayout() && m_actionAnchorValid) {
+            const float s2 = uiScale();
+            const ImVec2 vwp = ImGui::GetWindowPos();
+            const float vww = ImGui::GetWindowWidth();
+            float ax = std::min(std::max(m_actionAnchorX + 24.0f * s2,
+                                         vwp.x + 8.0f),
+                                vwp.x + vww - 250.0f * s2);
+            float ay = std::max(m_actionAnchorY + 12.0f * s2, vwp.y + 8.0f);
+            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Always);
+            edgeAnchored = true;
+        }
+        if (!edgeAnchored)
+            ImGui::SetNextWindowPos(ImVec2(
+                std::max(ImGui::GetWindowPos().x + 6.0f,
+                         ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
+                ImGui::GetWindowPos().y + 50));
         ImGui::SetNextWindowSize(uiSz(240, 0));
         ImGui::Begin("##EdgeOpInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize);
 
-        ImGui::Text("%s", label);
-        ImGui::Separator();
+        if (!imTouchLayout()) {   // im-touch: just the value well below
+            ImGui::Text("%s", label);
+            ImGui::Separator();
+        }
 
         if (m_edgeOpInputFocus) {
             if (!materializr::touchMode())
@@ -6599,10 +6739,13 @@ void Application::renderViewport() {
         }
 
         if (imTouchLayout()) {
-            // im-touch: number-pad amount field (see the extrude panel).
-            if (touchui::amountField("edgeAmt", nullptr, &m_edgeOpValue,
-                                     "mm", 1, /*allowSign=*/false,
-                                     0.1f, 20.0f)) {
+            // im-touch: the panel is the value well (+ the chamfer's
+            // two-distance controls below) — no header, hint or steppers.
+            if (touchui::amountField(
+                    "edgeAmt",
+                    m_edgeOpType == EdgeOpType::Fillet ? "Radius" : "Distance",
+                    &m_edgeOpValue, "mm", 1, /*allowSign=*/false,
+                    0.1f, 20.0f)) {
                 std::snprintf(m_edgeOpInputBuf, sizeof(m_edgeOpInputBuf),
                               "%.1f", m_edgeOpValue);
                 updateInteractiveEdgeOp();
@@ -6629,8 +6772,9 @@ void Application::renderViewport() {
         // Quick-nudge stepper (replaces the slider). Positive-only for a
         // radius / setback; 0 shows the original body mid-preview (updateInter-
         // activeEdgeOp restores it at ~0). Confirming at 0 still cancels — zero
-        // fillet = no fillet.
-        if (materializr::stepperRow("edgeStep", &m_edgeOpValue,
+        // fillet = no fillet. Desktop only — im-touch stays a single well.
+        if (!imTouchLayout() &&
+            materializr::stepperRow("edgeStep", &m_edgeOpValue,
                                     /*allowNegative=*/false, 0.1f, 20.0f)) {
             std::snprintf(m_edgeOpInputBuf, sizeof(m_edgeOpInputBuf), "%.1f", m_edgeOpValue);
             updateInteractiveEdgeOp();
@@ -6651,10 +6795,11 @@ void Application::renderViewport() {
                 updateInteractiveEdgeOp();
             }
             if (m_edgeOpTwoDist) {
-                ImGui::TextColored(materializr::accentText(),
-                                   "Distance B (other face)");
+                if (!imTouchLayout())
+                    ImGui::TextColored(materializr::accentText(),
+                                       "Distance B (other face)");
                 if (imTouchLayout()) {
-                    if (touchui::amountField("edgeAmt2", nullptr,
+                    if (touchui::amountField("edgeAmt2", "Distance B",
                                              &m_edgeOpValue2, "mm", 1,
                                              /*allowSign=*/false,
                                              0.1f, 20.0f)) {
@@ -6681,7 +6826,8 @@ void Application::renderViewport() {
                 ImGui::SameLine();
                 ImGui::Text("mm");
                 }
-                if (materializr::stepperRow("edgeStep2", &m_edgeOpValue2,
+                if (!imTouchLayout() &&
+                    materializr::stepperRow("edgeStep2", &m_edgeOpValue2,
                                             /*allowNegative=*/false, 0.1f, 20.0f)) {
                     std::snprintf(m_edgeOpInputBuf2, sizeof(m_edgeOpInputBuf2),
                                   "%.1f", m_edgeOpValue2);
