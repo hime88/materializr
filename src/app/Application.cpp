@@ -3863,9 +3863,16 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
             // each neighbouring face so the cursor can snap to the body's
             // nearby corners / edges (Fusion-style projected geometry).
             auto processFace = [&](const TopoDS_Face& f3d) {
-                // Vertices — the face's corner points.
+                // Vertices — the face's corner points. IN-PLANE ONLY: a
+                // neighbouring face's out-of-plane vertex (e.g. where two
+                // fillets meet ABOVE the sketch face) projected straight down
+                // becomes an invisible magnet inside the sketch area — it
+                // hover-charges and pulls clicks off the grid even though the
+                // cursor never went near the real 3D edge (Steve's report).
+                const double kPlaneTol = 1e-3;
                 for (TopExp_Explorer ex(f3d, TopAbs_VERTEX); ex.More(); ex.Next()) {
                     gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(ex.Current()));
+                    if (std::abs(planeDist(p)) > kPlaneTol) continue;
                     dedup(refs.points, project(p));
                 }
                 // Edges — straight edges become reference lines (+ midpoint);
@@ -3876,9 +3883,19 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
                     BRepAdaptor_Curve curve(edge);
                     double f = curve.FirstParameter();
                     double l = curve.LastParameter();
-                    gp_Pnt pStart, pEnd;
+                    gp_Pnt pStart, pEnd, pMid;
                     curve.D0(f, pStart);
                     curve.D0(l, pEnd);
+                    curve.D0(0.5 * (f + l), pMid);
+                    // IN-PLANE ONLY (see the vertex gate above): out-of-plane
+                    // neighbour edges (walls, fillets rising off the face)
+                    // projected down are phantom snap geometry, not something
+                    // the user can see or aim at. Shared edges, the host
+                    // perimeter and in-plane rims all pass untouched.
+                    if (std::abs(planeDist(pStart)) > kPlaneTol ||
+                        std::abs(planeDist(pEnd))   > kPlaneTol ||
+                        std::abs(planeDist(pMid))   > kPlaneTol)
+                        continue;
                     glm::vec2 a = project(pStart);
                     glm::vec2 b = project(pEnd);
                     if (curve.GetType() == GeomAbs_Line) {
