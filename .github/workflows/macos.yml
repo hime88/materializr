@@ -28,8 +28,12 @@ concurrency:
 jobs:
   macos:
     name: macOS (arm64)
-    # macos-14 (and -15) are Apple Silicon runners; this build is arm64-only.
-    runs-on: macos-14
+    # Apple Silicon runner. TRACK THE LATEST image: the bundled Homebrew SDL2
+    # bottle is compiled for the RUNNER's macOS — a macos-14 bottle's dylib
+    # initializer aborts before main() on much newer systems (issue #12,
+    # macOS 26.5.2: SIGABRT in libSDL2 dllinit during dyld init). Building on
+    # the newest image keeps the bundled dylibs matched to modern SDKs.
+    runs-on: macos-latest
 
     # contents: write lets softprops/action-gh-release attach the .dmg to a
     # published Release (matches linux.yml / windows.yml).
