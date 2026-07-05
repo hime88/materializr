@@ -1,4 +1,5 @@
 #include "ThreadOp.h"
+#include <Standard_ErrorHandler.hxx>  // OCC_CATCH_SIGNALS (MSVC needs it explicit)
 #include "../core/Verbose.h"
 #include <cstdio>
 #include <cstdlib>

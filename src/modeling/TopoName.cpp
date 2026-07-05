@@ -7,7 +7,6 @@
 
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
-#include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
@@ -231,9 +230,10 @@ Strategy genStrategy() {
             for (int i = 1; i <= map.Extent(); ++i) {
                 const TopoDS_Shape& inSub = map.FindKey(i);
                 int idx = 0;
-                for (TopTools_ListIteratorOfListOfShape it(map.FindFromIndex(i));
-                     it.More(); it.Next(), ++idx) {
-                    if (!it.Value().IsSame(sub)) continue;
+                // Range-based, not TopTools_ListIteratorOfListOfShape — vcpkg
+                // OCCT drops that standalone header on Windows.
+                for (const TopoDS_Shape& outSub : map.FindFromIndex(i)) {
+                    if (!outSub.IsSame(sub)) { ++idx; continue; }
                     const int which = ctx.gen->inputOf(inSub);
                     if (which < 0) return "";
                     // Name the INPUT sub-shape (recursively) against its own
@@ -277,9 +277,8 @@ Strategy genStrategy() {
         const auto& map = (role == 'G') ? ctx.gen->generated : ctx.gen->modified;
         if (!map.Contains(inSub)) return {};
         int i = 0;
-        for (TopTools_ListIteratorOfListOfShape it(map.FindFromKey(inSub));
-             it.More(); it.Next(), ++i)
-            if (i == idx) return it.Value();
+        for (const TopoDS_Shape& outSub : map.FindFromKey(inSub))
+            if (i++ == idx) return outSub;
         return {};
     };
     return s;
