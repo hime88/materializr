@@ -512,6 +512,15 @@ void FilletOp::refreshGeneratedFaces(const TopoDS_Shape& currentBody) {
 
 bool FilletOp::ownsFace(const TopoDS_Shape& face) const {
     if (face.IsNull() || face.ShapeType() != TopAbs_FACE) return false;
+    // A fillet blend is NEVER a plane (straight edges blend to cylinders,
+    // curved/corner cases to tori/spheres/bsplines). Rehydrated generated-face
+    // indices can mis-resolve after an old-save reload (ordinal drift) and
+    // claim a big planar neighbour — clicking the slab top then opened the
+    // fillet editor instead of the face's own properties.
+    try {
+        BRepAdaptor_Surface bs(TopoDS::Face(face));
+        if (bs.GetType() == GeomAbs_Plane) return false;
+    } catch (...) {}
     for (const auto& f : m_generatedFaces) {
         if (f.IsSame(face)) return true;
     }
