@@ -124,6 +124,7 @@ void applyKv(const std::map<std::string, std::string>& kv, AppSettings& s) {
     readString(kv, "lastFileDir",        s.lastFileDir);
     readBool(kv, "checkForUpdatesOnLaunch", s.checkForUpdatesOnLaunch);
     readBool(kv, "includePrereleases",   s.includePrereleases);
+    readBool(kv, "supporter",            s.supporter);
     readBool(kv, "snapToGrid",           s.snapToGrid);
     readFloat(kv, "sketchGridStep",      s.sketchGridStep); // was written but never read back
     readInt (kv, "inferenceLevel",       s.inferenceLevel);
@@ -349,6 +350,7 @@ bool SettingsIO::save(const std::string& path, const AppSettings& s) {
     }
     ofs << "checkForUpdatesOnLaunch = " << (s.checkForUpdatesOnLaunch ? "true" : "false") << "\n";
     ofs << "includePrereleases = "      << (s.includePrereleases ? "true" : "false") << "\n";
+    ofs << "supporter = "               << (s.supporter ? "true" : "false") << "\n";
     ofs << "snapToGrid = "              << (s.snapToGrid ? "true" : "false") << "\n";
     ofs << "sketchGridStep = "          << s.sketchGridStep      << "\n";
     ofs << "inferenceLevel = "          << s.inferenceLevel      << "\n";
@@ -433,6 +435,7 @@ bool SettingsIO::exportJson(const std::string& path, const AppSettings& s) {
     ofs << "  \"autoOpenLastProject\": "     << b(s.autoOpenLastProject)<< ",\n";
     ofs << "  \"checkForUpdatesOnLaunch\": " << b(s.checkForUpdatesOnLaunch) << ",\n";
     ofs << "  \"includePrereleases\": " << b(s.includePrereleases) << ",\n";
+    ofs << "  \"supporter\": "               << b(s.supporter)          << ",\n";
     ofs << "  \"snapToGrid\": "              << b(s.snapToGrid)         << ",\n";
     ofs << "  \"sketchGridStep\": "          << s.sketchGridStep        << ",\n";
     ofs << "  \"inferenceLevel\": "          << s.inferenceLevel        << ",\n";

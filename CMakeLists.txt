@@ -280,6 +280,7 @@ add_executable(materializr
     src/ui/ToastNotification.cpp
     src/ui/ShortcutsPanel.cpp
     src/ui/AboutDialog.cpp
+    src/ui/WelcomeScreen.cpp
     src/ui/UpdateChecker.cpp
     src/ui/HelpPanel.cpp
     src/io/ProjectIO.cpp

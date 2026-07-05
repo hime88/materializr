@@ -78,7 +78,8 @@ list(FILTER MZ_SOURCES EXCLUDE REGEX "/UpdateChecker\\.cpp$")   # libcurl (deskt
 
 set(MZ_OBJCXX_SOURCES
     "${MZ_SRC}/ios_platform.mm"
-    "${MZ_SRC}/ios_files.mm")
+    "${MZ_SRC}/ios_files.mm"
+    "${MZ_SRC}/ios_storekit.mm")
 set_source_files_properties(${MZ_OBJCXX_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
 add_executable(materializr MACOSX_BUNDLE ${MZ_SOURCES} ${MZ_OBJCXX_SOURCES})
@@ -103,7 +104,7 @@ target_link_libraries(materializr PRIVATE z iconv
     "-framework AVFoundation" "-framework AudioToolbox" "-framework CoreAudio"
     "-framework CoreHaptics" "-framework CoreMotion" "-framework GameController"
     "-framework CoreBluetooth" "-framework CoreVideo" "-framework ImageIO"
-    "-framework UniformTypeIdentifiers")
+    "-framework UniformTypeIdentifiers" "-framework StoreKit")
 
 # Version: pass -DMATERIALIZR_VERSION_NAME=<x.y.z[-suffix]> to match the
 # release; the fallback marks ad-hoc developer builds.
@@ -122,11 +123,12 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
 
 set_target_properties(materializr PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
-    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.materializr.app"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.materializr.cad"
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "2"     # iPad-only
     XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
     XCODE_ATTRIBUTE_ENABLE_BITCODE "NO"
-    XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING "YES")
+    XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING "YES"
+    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
 if(DEFINED MZ_DEVELOPMENT_TEAM)
     set_target_properties(materializr PROPERTIES
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${MZ_DEVELOPMENT_TEAM}")
@@ -141,6 +143,15 @@ endif()
 # Launch storyboard (required for native fullscreen resolution).
 target_sources(materializr PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/LaunchScreen.storyboard")
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/LaunchScreen.storyboard"
+    PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+
+# App icon: single-size (1024x1024, opaque) asset catalog. Xcode compiles it
+# with actool (ASSETCATALOG_COMPILER_APPICON_NAME above) and derives every
+# launcher/Settings/Spotlight size; AppIcon.png is regenerated from the
+# repo-root icon.png (cover-crop to square, alpha flattened — Apple rejects
+# icons with an alpha channel).
+target_sources(materializr PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Assets.xcassets")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/Assets.xcassets"
     PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
 # Fonts -> <bundle>/assets/fonts (same layout the Android build extracts to).

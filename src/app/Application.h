@@ -50,6 +50,7 @@ class SectionView;
 class Toolbar;
 class HistoryPanel;
 class AboutDialog;
+class WelcomeScreen;
 class ShortcutsPanel;
 class HelpPanel;
 class MeasureTool;
@@ -491,6 +492,7 @@ private:
     std::unique_ptr<ThemeManager> m_themeManager;
     std::unique_ptr<PropertiesPanel> m_propertiesPanel;
     std::unique_ptr<AboutDialog> m_aboutDialog;
+    std::unique_ptr<WelcomeScreen> m_welcomeScreen;
     std::unique_ptr<ShortcutsPanel> m_shortcutsPanel;
     std::unique_ptr<HelpPanel> m_helpPanel;
     std::unique_ptr<MeasureTool> m_measureTool;
@@ -1716,6 +1718,9 @@ private:
     bool m_checkForUpdatesOnLaunch = true;
     // Beta channel opt-in: update checks also consider GitHub pre-releases.
     bool m_includePrereleases = false;
+    // Supporter state: silences the every-launch support prompt (see
+    // AppSettings::supporter for how it gets set).
+    bool m_supporter = false;
 
     // Set by the --safe-mode CLI flag. When true, loadAppSettings stomps
     // rendering, autosave, and auto-open-last-project back to safe defaults

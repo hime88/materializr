@@ -62,6 +62,8 @@ inline void resetFpuForOcct() {
 #include "ui/ThemeManager.h"
 #include "ui/PropertiesPanel.h"
 #include "ui/AboutDialog.h"
+#include "ui/WelcomeScreen.h"
+#include "ios_storekit.h"
 #include "ui/ShortcutsPanel.h"
 #include "ui/HelpPanel.h"
 #include "ui/MeasureTool.h"
@@ -234,6 +236,13 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
     m_themeManager = std::make_unique<ThemeManager>();
     m_propertiesPanel = std::make_unique<PropertiesPanel>();
     m_aboutDialog = std::make_unique<AboutDialog>();
+    m_welcomeScreen = std::make_unique<WelcomeScreen>();
+#if defined(MZ_IOS)
+    // StoreKit observer must attach at launch (Apple requirement) so a
+    // Supporter purchase interrupted in a previous run is redelivered; the
+    // main loop consumes the entitlement next to the Welcome screen render.
+    iosStoreInit();
+#endif
     m_shortcutsPanel = std::make_unique<ShortcutsPanel>();
     m_helpPanel = std::make_unique<HelpPanel>();
     m_measureTool = std::make_unique<MeasureTool>();
@@ -1196,6 +1205,11 @@ void Application::loadAppSettings() {
             return r;
         });
     }
+
+    // Welcome screen: every launch until the user becomes a Supporter.
+    // Suppressed by --safe-mode — no asking for coffee while the user is
+    // recovering from a crash.
+    if (!m_supporter && !m_safeMode) m_welcomeScreen->setVisible(true);
 }
 
 void Application::applyRenderingSettings() {
@@ -1267,6 +1281,7 @@ AppSettings Application::currentSettings() const {
     s.lastFileDir = materializr::FileDialogs::getLastDir();
     s.checkForUpdatesOnLaunch = m_checkForUpdatesOnLaunch;
     s.includePrereleases = m_includePrereleases;
+    s.supporter = m_supporter;
     s.snapToGrid = m_snapToGrid;
     s.sketchGridStep = m_sketchGridStep;
     // Mirror the live sketch-tool inference level back into the saved settings
@@ -1346,6 +1361,7 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_recentProjects = s.recentProjects;
     m_checkForUpdatesOnLaunch = s.checkForUpdatesOnLaunch;
     m_includePrereleases = s.includePrereleases;
+    m_supporter = s.supporter;
     m_snapToGrid = s.snapToGrid;
     m_sketchGridStep = s.sketchGridStep;
     m_showInferenceToolbarToggle = s.showInferenceToolbarToggle;
@@ -5450,6 +5466,20 @@ void Application::run() {
             m_helpPanel->render();
             m_shortcutsPanel->render();
             m_aboutDialog->render();
+            if (m_welcomeScreen->render() == WelcomeScreen::Action::MarkSupporter) {
+                m_supporter = true;
+                saveAppSettings();
+            }
+#if defined(MZ_IOS)
+            // A completed or restored Supporter purchase — from the Welcome
+            // screen, or an interrupted transaction redelivered at launch.
+            if (iosStoreConsumeEntitled() && !m_supporter) {
+                m_supporter = true;
+                saveAppSettings();
+                m_welcomeScreen->setVisible(false);
+                showToast("Thank you for supporting Materializr!", 6.0);
+            }
+#endif
             renderUpdatePopup();
             renderMultiTransformPanel();
             renderResizeCylindricalPanel();

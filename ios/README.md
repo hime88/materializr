@@ -49,7 +49,7 @@ cmake -S ios -B build-ios -GXcode -DCMAKE_SYSTEM_NAME=iOS \
 open build-ios/MaterializriOS.xcodeproj
 ```
 
-Free-tier signing note: `com.materializr.app` must be unique per team — if
+Free-tier signing note: `com.materializr.cad` must be unique per team — if
 signing fails, change `XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER` in
 `ios/CMakeLists.txt` (or the Xcode Signing pane) to e.g.
 `com.yourname.materializr`.

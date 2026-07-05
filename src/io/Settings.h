@@ -32,8 +32,14 @@ struct AppSettings {
     // Interface layout (see the UiLayout enum above). Orthogonal to touchMode
     // (layout vs input model); switches live, no restart. Serialized as the
     // string key `uiLayout = classic | modern | imtouch`; older builds' bool
-    // pair imTouchUi/imTouchLite is still read as a fallback.
+    // pair imTouchUi/imTouchLite is still read as a fallback. iPad ships
+    // touch-first, so it defaults to the im-touch shell; a saved setting
+    // still wins, so Settings → Appearance can switch back.
+#if defined(MZ_IOS)
+    UiLayout uiLayout       = UiLayout::ImTouch;
+#else
     UiLayout uiLayout       = UiLayout::Classic;
+#endif
     // im-touch layout only: the transparent model tree (Bodies/Sketches/
     // Construction) floating on the right edge. Toggled by the list button
     // in the top-right cluster.
@@ -130,6 +136,11 @@ struct AppSettings {
     // pre-releases (tags like 1.3.0-beta.1) instead of only final releases.
     // Off by default so stable users are never offered test builds.
     bool  includePrereleases      = false;
+    // The user supports the project (tapped "I already support" in the launch
+    // support prompt; store builds will later also set it from a completed or
+    // restored tip in-app purchase). Permanently silences the every-launch
+    // support prompt.
+    bool  supporter               = false;
 
     // --- Snap / grid (persisted) ---
     // Snap-to-grid toggle and step (mm) shared by the sketch grid and the
