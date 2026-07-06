@@ -1116,6 +1116,9 @@ void Application::redoWithCascade() {
 
 void Application::renderSmallScreenWarning() {
     if (m_smallScreenWarned || m_smallScreenAck) return;
+    // Same turn-taking as the sketch-recovery prompt: don't fight the Welcome
+    // modal for the popup stack (mutual close-reopen churn); show right after.
+    if (m_welcomeScreen && m_welcomeScreen->isVisible()) return;
     ImGuiIO& io = ImGui::GetIO();
     // Effective UI canvas in logical points (HiDPI / touch scale is already baked
     // into DisplaySize). The reference tablet sits around 893x558 and is roomy;
@@ -4884,6 +4887,10 @@ void Application::writeSketchDraftIfDue() {
 
 void Application::renderSketchRecoveryPrompt() {
     if (!m_pendingSketchRecovery) return;
+    // Wait for the Welcome screen: opening a second popup at the same stack
+    // level while it is up makes the two close each other every frame (see
+    // the Welcome render site in run()). Fires the frame Welcome closes.
+    if (m_welcomeScreen && m_welcomeScreen->isVisible()) return;
     ImGui::OpenPopup("Recover Sketch?");
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -4972,6 +4979,9 @@ void Application::writeProjectRecoveryIfDue() {
 
 void Application::renderProjectRecoveryPrompt() {
     if (!m_pendingProjectRecovery) return;
+    // Wait for the Welcome screen — same popup-stack turn-taking as the
+    // sketch-recovery prompt (see renderSketchRecoveryPrompt).
+    if (m_welcomeScreen && m_welcomeScreen->isVisible()) return;
     ImGui::OpenPopup("Recover Project?");
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -5600,6 +5610,12 @@ void Application::run() {
             m_helpPanel->render();
             m_shortcutsPanel->render();
             m_aboutDialog->render();
+            // Startup dialogs take turns — two dialogs that each OpenPopup
+            // every frame at the same stack level close each other endlessly:
+            // neither ever draws, while the modal dim eats every touch (the
+            // iPad "second launch locks up" bug). Welcome goes FIRST; sketch
+            // recovery and the small-screen notice hold off while it is up
+            // (they check m_welcomeScreen->isVisible()).
             if (m_welcomeScreen->render() == WelcomeScreen::Action::MarkSupporter) {
                 m_supporter = true;
                 saveAppSettings();

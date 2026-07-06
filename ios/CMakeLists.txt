@@ -162,6 +162,14 @@ if(DEFINED MZ_DEVELOPMENT_TEAM)
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${MZ_DEVELOPMENT_TEAM}")
 endif()
 
+# Keep the StoreKit test configuration as a project member across regens, so
+# the scheme's StoreKit Configuration picker always finds it — a reference
+# dragged into the Xcode navigator by hand dies with the next pbxproj
+# regeneration. HEADER_FILE_ONLY: listed, never compiled or bundled.
+target_sources(materializr PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Materializr.storekit")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/Materializr.storekit"
+    PROPERTIES HEADER_FILE_ONLY TRUE)
+
 # ── Bundle resources ─────────────────────────────────────────────────────────
 # Staged through Xcode's Copy Bundle Resources phase (runs before code signing;
 # a POST_BUILD copy would land after signing and break device installs).

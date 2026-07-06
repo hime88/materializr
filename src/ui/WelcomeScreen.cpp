@@ -18,10 +18,19 @@ WelcomeScreen::Action WelcomeScreen::render() {
 
     Action action = Action::None;
 
-    ImGui::OpenPopup("Welcome");
+    // Guarded reopen: a raw OpenPopup-every-frame stomps any other popup at
+    // the same stack level (see the Application render site: Welcome also
+    // yields to the startup modals for the same reason).
+    if (!ImGui::IsPopupOpen("Welcome")) ImGui::OpenPopup("Welcome");
 
+    // Cond_Always, not Appearing: on iOS the window can first appear on a
+    // frame with a degenerate viewport (splash → UI handoff), and an
+    // Appearing-only position lands wrong ONCE and NoMove pins it there —
+    // a 45px sliver at ImGui's (60,60) cascade default while the modal dim
+    // blocks all input (the "second launch locks up" report). Re-asserting
+    // the centre every frame makes a bad first frame self-heal.
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(uiSz(440, 0).x, 0.0f), ImGuiCond_Appearing);
 
     if (ImGui::BeginPopupModal("Welcome", &m_visible,
