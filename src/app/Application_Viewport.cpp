@@ -7100,29 +7100,38 @@ void Application::renderViewport() {
             ImGui::PopTextWrapPos();
 
             if (materializr::touchMode()) {
-                // Touch: in-app number pad instead of an InputText — focusing
-                // a real field raises the native mobile keyboard, which froze
-                // the app on iOS (see touchui::numberPad). Digits + dot is
-                // all a dimension needs.
-                char readout[48];
-                std::snprintf(readout, sizeof(readout), "%s mm",
-                              m_sketchDimBuf[0] ? m_sketchDimBuf : "--");
-                touchui::valueReadout("sketchDimVal", readout,
-                                      m_sketchDimBuf[0] == '\0',
-                                      touchui::numberPadWidth());
-                ImGui::Spacing();
-                touchui::numberPad("sketchDimPad", m_sketchDimBuf,
-                                   sizeof(m_sketchDimBuf));
+                // TRIAL (Steve): use the NATIVE keyboard here instead of the
+                // in-app number pad. A focused ImGui InputText sets
+                // io.WantTextInput, which Window::updateTextInput answers by
+                // raising the Android IME / iOS keyboard — the same path that
+                // already works in the sketch-element Properties editor. The
+                // old "froze iOS" note predates that mechanism. A big
+                // touch-height field + Enter or Apply commits.
+                if (!m_sketchDimWasShown) {
+                    ImGui::SetKeyboardFocusHere();
+                    m_sketchDimWasShown = true;
+                }
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                    ImVec2(uiW(12.0f), uiW(12.0f)));
+                bool entered = ImGui::InputText("##sketchDimT", m_sketchDimBuf,
+                    sizeof(m_sketchDimBuf),
+                    ImGuiInputTextFlags_EnterReturnsTrue |
+                    ImGuiInputTextFlags_CharsDecimal |
+                    ImGuiInputTextFlags_AutoSelectAll);
+                ImGui::PopStyleVar();
                 ImGui::Spacing();
                 ImGui::BeginDisabled(m_sketchDimBuf[0] == '\0');
-                if (ImGui::Button("Apply", ImVec2(-1.0f, uiW(44.0f)))) {
+                bool applied = ImGui::Button("Apply", ImVec2(-1.0f, uiW(44.0f)));
+                ImGui::EndDisabled();
+                if (entered || applied) {
                     float v = 0.0f;
                     if (materializr::parseFinite(m_sketchDimBuf, v) && v > 0.0f) {
                         recordSketchMutation([&]{ m_sketchTool->applyDimension(v); });
                     }
                     m_sketchDimBuf[0] = '\0';
+                    m_sketchDimWasShown = false; // re-focus next placement
                 }
-                ImGui::EndDisabled();
             } else {
                 // Desktop: keyboard entry. Grab focus the first frame
                 // placement begins so typing works immediately.
