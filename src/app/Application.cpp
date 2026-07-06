@@ -922,8 +922,16 @@ void Application::endFrame() {
     }
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    // Raise/dismiss the Android soft keyboard to match the focused text field.
-    if (m_window) m_window->updateTextInput(ImGui::GetIO().WantTextInput || m_softKeyboardForced);
+    // Raise/dismiss the soft keyboard to match the focused text field. The
+    // retap pulse: a tap this frame with a field STILL focused afterwards
+    // (a defocusing tap would have dropped WantTextInput by now) re-raises a
+    // keyboard the OS dismissed behind the latch's back — see updateTextInput.
+    if (m_window) {
+        ImGuiIO& kio = ImGui::GetIO();
+        const bool want = kio.WantTextInput || m_softKeyboardForced;
+        m_window->updateTextInput(want,
+                                  kio.MouseClicked[0] && kio.WantTextInput);
+    }
 }
 
 void Application::renderSplashFrame(const char* status) {

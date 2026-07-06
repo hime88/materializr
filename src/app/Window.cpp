@@ -630,7 +630,7 @@ bool Window::consumeRedoTap() {
     return true;
 }
 
-void Window::updateTextInput(bool wantTextInput) {
+void Window::updateTextInput(bool wantTextInput, bool retapPulse) {
 #if defined(MZ_MOBILE)
     if (wantTextInput && !m_textInputActive) {
         SDL_StartTextInput();              // enables SDL_TEXTINPUT events
@@ -643,9 +643,26 @@ void Window::updateTextInput(bool wantTextInput) {
         SDL_StopTextInput();
         mobileHideTextInput();
         m_textInputActive = false;
+    } else if (wantTextInput && m_textInputActive && retapPulse) {
+        // Latch says "up" but the OS may have dismissed the keyboard behind
+        // our back (Android back gesture / iOS dismiss key) with the field
+        // still focused — no falling edge ever fired, so a re-tap on the
+        // field was silently ignored (the wedge: only the layout's Keyboard
+        // toggle recovered, because a button tap defocuses the field for a
+        // frame and forces a full edge cycle). Re-raise on the tap:
+        // - Android: showSoftInput() is a no-op when the IME is already up,
+        //   so pulsing is harmless there.
+        // - iOS: mobileShowTextInput() is a no-op; cycle SDL's text input so
+        //   its hidden UITextField resigns/re-becomes first responder, which
+        //   re-presents the keyboard (back-to-back, so no visible flicker
+        //   when it was already up).
+        SDL_StopTextInput();
+        SDL_StartTextInput();
+        mobileShowTextInput();
     }
 #else
     (void)wantTextInput;
+    (void)retapPulse;
 #endif
 }
 

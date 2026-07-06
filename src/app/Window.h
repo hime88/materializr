@@ -47,10 +47,17 @@ public:
     // from the display DPI so fonts and widgets are finger-sized on a tablet.
     float uiScale() const;
 
-    // Raise/lower the Android soft keyboard to match ImGui's WantTextInput. The
+    // Raise/lower the soft keyboard to match ImGui's WantTextInput. The
     // SDL2 backend no longer calls SDL_StartTextInput itself, which is what shows
     // the keyboard on Android — so we drive it each frame. No-op on desktop.
-    void updateTextInput(bool wantTextInput);
+    //
+    // retapPulse: the user tapped this frame and a text field is STILL focused
+    // afterwards (i.e. the tap landed in a field). The raise below is edge-
+    // triggered, and the OS can dismiss the keyboard behind our back (Android
+    // back gesture, iOS dismiss key) with the field still focused — no falling
+    // edge, so re-tapping the field did nothing. The pulse re-raises even when
+    // the latch says the keyboard is already up.
+    void updateTextInput(bool wantTextInput, bool retapPulse = false);
 
     SDL_Window* handle() const { return m_window; }
     void* glContext() const { return m_glContext; }   // SDL_GLContext (opaque)
