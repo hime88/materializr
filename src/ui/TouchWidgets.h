@@ -110,12 +110,18 @@ bool treeGroup(const char* id, const char* label, int count, bool open,
 // on the row body (the touch layer synthesizes right-clicks on press-and-hold)
 // so the caller can open a per-row context menu.
 struct TreeLeafAction {
-    bool eyeToggled   = false;  // *visible already flipped
-    bool clicked      = false;  // row body tapped (select)
-    bool rightClicked = false;  // row body long-pressed (open context menu)
+    bool eyeToggled    = false;  // *visible already flipped
+    bool clicked       = false;  // row body tapped (select)
+    bool rightClicked  = false;  // row body long-pressed (open context menu)
+    bool swatchClicked = false;  // colour swatch tapped (open a picker)
 };
+// swatchRGB, when non-null, points at 3 contiguous floats (an rgb colour, e.g.
+// &glm::vec3::x); treeLeaf draws a colour swatch on the right with its own hit
+// area and reports a tap via swatchClicked. Pass nullptr for kinds without a
+// colour (sketches, planes, axes).
 TreeLeafAction treeLeaf(const char* id, const char* icon, const char* label,
-                        bool* visible, bool selected);
+                        bool* visible, bool selected,
+                        const float* swatchRGB = nullptr);
 
 // 44pt list row: leading visibility checkbox, label, trailing ⋯ button.
 // Returns which part was pressed this frame.

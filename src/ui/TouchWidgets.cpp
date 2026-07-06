@@ -591,13 +591,14 @@ bool treeGroup(const char* id, const char* label, int count, bool open,
 }
 
 TreeLeafAction treeLeaf(const char* id, const char* icon, const char* label,
-                        bool* visible, bool selected) {
+                        bool* visible, bool selected, const float* swatchRGB) {
     TreeLeafAction act;
     const float s = uiScale();
     const float h = 40.0f * s;
     const float w = ImGui::GetContentRegionAvail().x;
     const float indent = 26.0f * s;   // children sit under the group text
     const float eyeW = 34.0f * s;
+    const float swW = swatchRGB ? 40.0f * s : 0.0f;   // trailing colour swatch
 
     ImGui::PushID(id);
     const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -611,20 +612,29 @@ TreeLeafAction treeLeaf(const char* id, const char* icon, const char* label,
     }
     const bool eyeHov = ImGui::IsItemHovered();
 
-    // Row body (select) — after the eye to the right edge.
+    // Colour swatch (right edge) — also its own exclusive hit area, submitted
+    // before the row so a swatch tap doesn't select the row.
+    if (swatchRGB) {
+        ImGui::SetCursorScreenPos(ImVec2(p.x + w - swW, p.y));
+        if (ImGui::InvisibleButton("##swatch", ImVec2(swW, h)))
+            act.swatchClicked = true;
+    }
+
+    // Row body (select) — the middle, between the eye and the swatch.
     ImGui::SetCursorScreenPos(ImVec2(p.x + indent + eyeW, p.y));
     act.clicked = ImGui::InvisibleButton(
-        "##row", ImVec2(std::max(1.0f, w - indent - eyeW), h));
+        "##row", ImVec2(std::max(1.0f, w - indent - eyeW - swW), h));
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) act.rightClicked = true;
     const bool rowHov = ImGui::IsItemHovered();
 
+    const float fillR = p.x + w - swW;   // fills stop short of the swatch
     if (selected) {
         ImVec4 selBg = accentFill();
         selBg.w = 0.30f;   // soft fill — the tree stays see-through
-        dl->AddRectFilled(ImVec2(p.x + indent, p.y), ImVec2(p.x + w, p.y + h),
+        dl->AddRectFilled(ImVec2(p.x + indent, p.y), ImVec2(fillR, p.y + h),
                           ImGui::GetColorU32(selBg), radius(6.0f * s));
     } else if (rowHov) {
-        dl->AddRectFilled(ImVec2(p.x + indent, p.y), ImVec2(p.x + w, p.y + h),
+        dl->AddRectFilled(ImVec2(p.x + indent, p.y), ImVec2(fillR, p.y + h),
                           ImGui::GetColorU32(rowHoverBg()), radius(6.0f * s));
     }
 
@@ -635,13 +645,27 @@ TreeLeafAction treeLeaf(const char* id, const char* icon, const char* label,
         drawIconCentered(dl, ImVec2(p.x + indent + eyeW * 0.5f, p.y + h * 0.5f),
                          15.0f * s, shown ? MZ_ICON_VISIBLE : MZ_ICON_HIDDEN,
                          eyeHov ? ImGui::GetColorU32(textPrimary()) : dimCol);
-    // Type icon + name.
+    // Type icon + name (clipped so a long name can't run under the swatch).
     const float ix = p.x + indent + eyeW + 4.0f * s;
     drawIconCentered(dl, ImVec2(ix + 9.0f * s, p.y + h * 0.5f), 15.0f * s,
                      icon, mainCol);
     const ImVec2 ts = ImGui::CalcTextSize(label);
+    dl->PushClipRect(ImVec2(ix + 24.0f * s, p.y),
+                     ImVec2(fillR - 4.0f * s, p.y + h), true);
     dl->AddText(ImVec2(ix + 24.0f * s, p.y + (h - ts.y) * 0.5f), mainCol,
                 label);
+    dl->PopClipRect();
+
+    // The swatch itself, drawn on top of the fills.
+    if (swatchRGB) {
+        const float sq = 22.0f * s;
+        const ImVec2 a(p.x + w - swW + (swW - sq) * 0.5f, p.y + (h - sq) * 0.5f);
+        const ImVec2 b(a.x + sq, a.y + sq);
+        const ImU32 sc = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(swatchRGB[0], swatchRGB[1], swatchRGB[2], 1.0f));
+        dl->AddRectFilled(a, b, sc, radius(4.0f * s));
+        dl->AddRect(a, b, ImGui::GetColorU32(textDim()), radius(4.0f * s));
+    }
 
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
     ImGui::PopID();

@@ -302,15 +302,46 @@ void Application::renderImTouchLayout() {
 
             // One body row + its long-press context menu. Returns false when a
             // Delete made the surrounding id list stale (caller stops looping).
+            // Hue-wheel colour popup (opened on a swatch tap). Returns the new
+            // colour via `out` when the user drags it. Called inside the row's
+            // PushID scope, so the popup id is unique per row.
+            auto colorPopup = [&](const char* popupId, const char* title,
+                                  glm::vec3 cur, glm::vec3& out) -> bool {
+                bool changed = false;
+                if (ImGui::BeginPopup(popupId)) {
+                    ImGui::TextUnformatted(title);
+                    ImGui::SetNextItemWidth(materializr::uiSz(220, 0).x);
+                    if (ImGui::ColorPicker3(
+                            "##pick", &cur.x,
+                            ImGuiColorEditFlags_NoInputs |
+                            ImGuiColorEditFlags_NoSidePreview |
+                            ImGuiColorEditFlags_PickerHueWheel)) {
+                        out = cur;
+                        changed = true;
+                    }
+                    ImGui::EndPopup();
+                }
+                return changed;
+            };
+
             auto renderBody = [&](int id) -> bool {
                 bool gone = false;
                 ImGui::PushID(id);
                 bool visible = m_document->isBodyVisible(id);
+                glm::vec3 bcol = m_document->getBodyColor(id);
                 auto act = touchui::treeLeaf(
                     "body", MZ_ICON_BODY,
                     m_document->getBodyName(id).c_str(), &visible,
-                    selB.count(id) > 0);
+                    selB.count(id) > 0, &bcol.x);
                 if (act.eyeToggled) m_document->setBodyVisible(id, visible);
+                if (act.swatchClicked) ImGui::OpenPopup("bodyColor");
+                glm::vec3 newCol;
+                if (colorPopup("bodyColor", "Body colour",
+                               m_document->getBodyColor(id), newCol)) {
+                    m_document->setBodyColor(id, newCol);
+                    m_meshesDirty = true;   // colour bakes into the render mesh
+                    markDirty();
+                }
                 if (act.clicked) {
                     SelectionEntry e;
                     e.type = SelectionType::Body;
@@ -386,16 +417,25 @@ void Application::renderImTouchLayout() {
                         ImGui::PushID(2000000 + fid); // namespace off body ids
                         bool fvis = m_document->isFolderVisible(fid);
                         bool fexp = m_document->isFolderExpanded(fid);
+                        glm::vec3 fcol = m_document->getFolderColor(fid);
                         auto fact = touchui::treeLeaf(
                             "folder", MZ_ICON_OPEN,
                             m_document->getFolderName(fid).c_str(), &fvis,
-                            /*selected=*/false);
+                            /*selected=*/false, &fcol.x);
                         if (fact.eyeToggled) {
                             m_document->setFolderVisible(fid, fvis);
                             markDirty();
                         }
                         if (fact.clicked)
                             m_document->setFolderExpanded(fid, !fexp);
+                        if (fact.swatchClicked) ImGui::OpenPopup("folderColor");
+                        glm::vec3 fNewCol;
+                        if (colorPopup("folderColor", "Folder colour",
+                                       m_document->getFolderColor(fid), fNewCol)) {
+                            m_document->setFolderColor(fid, fNewCol); // cascades
+                            m_meshesDirty = true;
+                            markDirty();
+                        }
                         if (fact.rightClicked) ImGui::OpenPopup("folderCtx");
                         bool folderGone = false;
                         if (ImGui::BeginPopup("folderCtx")) {
