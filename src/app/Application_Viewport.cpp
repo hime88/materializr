@@ -1737,12 +1737,14 @@ void Application::renderViewport() {
                         const float cy = vpb->WorkPos.y + vpb->WorkSize.y * 0.5f;
                         float anchorX = rightEdge - bmargin;
                         float pivotX  = 1.0f;
-                        if (m_uiLayout == UiLayout::Modern &&
-                            m_touchVpW > 0.0f && !m_rightPanelHidden) {
-                            // m_touchVpX + m_touchVpW is the right panel's left
-                            // edge; centre the popup across that panel.
-                            anchorX = 0.5f * ((m_touchVpX + m_touchVpW) + rightEdge);
-                            pivotX  = 0.5f;
+                        if (m_uiLayout == UiLayout::Modern && m_touchVpW > 0.0f) {
+                            // Modern: park it at the RIGHT SIDE OF THE VIEWPORT
+                            // (just inside the right panel's edge), not over the
+                            // panel (Steve). m_touchVpX + m_touchVpW is the
+                            // viewport's right edge; the bubble's right edge sits
+                            // there.
+                            anchorX = (m_touchVpX + m_touchVpW) - bmargin;
+                            pivotX  = 1.0f;
                         }
                         ImGui::SetNextWindowPos(ImVec2(anchorX, cy),
                                                 ImGuiCond_Always,
@@ -1757,47 +1759,41 @@ void Application::renderViewport() {
                         bool commit = false;
                         const float keySide = 46.0f * sc;
                         if (holdMode == SketchToolMode::Circle) {
-                            // Value readout: the typed value, or the dragged
-                            // diameter dimmed as the default. Edited by the
-                            // in-app number pad below — NOT an InputText: the
-                            // native mobile keyboard is what froze the app.
-                            char readout[48];
-                            if (m_sketchShapeDimBuf[0] != '\0')
-                                std::snprintf(readout, sizeof(readout), "%s mm",
-                                              m_sketchShapeDimBuf);
-                            else
-                                std::snprintf(readout, sizeof(readout),
-                                              "%.1f mm", diaNow);
-                            touchui::valueReadout("bubbleVal", readout,
-                                                  m_sketchShapeDimBuf[0] == '\0',
-                                                  touchui::numberPadWidth(keySide));
-                            ImGui::Spacing();
-                            touchui::numberPad("bubblePad", m_sketchShapeDimBuf,
-                                               sizeof(m_sketchShapeDimBuf),
-                                               keySide);
+                            // Native keyboard (tap the field) instead of the
+                            // in-app number pad — the im-touch bubble now
+                            // matches Modern. The placeholder shows the dragged
+                            // diameter until you type an exact value; empty
+                            // buffer = keep the drag (handled at commit).
+                            ImGui::TextDisabled("Diameter (mm)");
+                            char hint[32];
+                            std::snprintf(hint, sizeof(hint), "%.1f (drag)", diaNow);
+                            ImGui::SetNextItemWidth(touchui::numberPadWidth(keySide));
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                                ImVec2(uiW(12.0f), uiW(12.0f)));
+                            ImGui::InputTextWithHint("##bubbleDia", hint,
+                                m_sketchShapeDimBuf, sizeof(m_sketchShapeDimBuf),
+                                ImGuiInputTextFlags_CharsDecimal |
+                                ImGuiInputTextFlags_AutoSelectAll);
+                            ImGui::PopStyleVar();
                         } else {
-                            // Rectangle: two tappable wells, each opening its
-                            // own pad popup. Committing either well only
-                            // stages the value; ✓ places the rectangle. Both
-                            // pads share ONE pinned anchor beside the bubble
-                            // so the keypad doesn't jump between Width and
-                            // Height edits. (GetWindowSize is last frame's —
-                            // fine: the pad opens on a later frame's tap.)
-                            const ImVec2 bwin = ImGui::GetWindowPos();
-                            const ImVec2 bsz  = ImGui::GetWindowSize();
-                            // Bubble sits on the right; open the pad to its
-                            // LEFT (toward the viewport) so it stays on screen.
-                            // ImGui clamps to the viewport on a narrow display.
-                            const ImVec2 padAnchor(bwin.x - 232.0f * sc, bwin.y);
-                            (void)bsz;
-                            touchui::amountField("bubbleW", "Width",
-                                                 &m_sketchShapeDimW, "mm", 1,
-                                                 /*allowSign=*/false,
-                                                 0.01f, 1.0e6f, &padAnchor);
-                            touchui::amountField("bubbleH", "Height",
-                                                 &m_sketchShapeDimH, "mm", 1,
-                                                 /*allowSign=*/false,
-                                                 0.01f, 1.0e6f, &padAnchor);
+                            // Rectangle: two native Width/Height fields (tap to
+                            // raise the keyboard) — matches Modern and the
+                            // circle branch above. Seeded from the drag; ✓
+                            // places the rectangle at the shown W x H.
+                            const float fieldW = touchui::numberPadWidth(keySide);
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                                ImVec2(uiW(10.0f), uiW(10.0f)));
+                            ImGui::TextDisabled("Width (mm)");
+                            ImGui::SetNextItemWidth(fieldW);
+                            ImGui::InputFloat("##bubbleW", &m_sketchShapeDimW,
+                                              0.0f, 0.0f, "%.2f");
+                            ImGui::TextDisabled("Height (mm)");
+                            ImGui::SetNextItemWidth(fieldW);
+                            ImGui::InputFloat("##bubbleH", &m_sketchShapeDimH,
+                                              0.0f, 0.0f, "%.2f");
+                            ImGui::PopStyleVar();
+                            if (m_sketchShapeDimW < 0.01f) m_sketchShapeDimW = 0.01f;
+                            if (m_sketchShapeDimH < 0.01f) m_sketchShapeDimH = 0.01f;
                         }
                         ImGui::Spacing();
                         if (touchui::iconButton("bubbleDrop", MZ_ICON_DISCARD,
@@ -5902,8 +5898,9 @@ void Application::renderViewport() {
                                      sm == SketchToolMode::Rectangle)) {
                                     // im-touch: hold the shape as a preview and
                                     // offer the ✗/✓ + exact-value bubble instead
-                                    // of committing on lift (see the confirm-
-                                    // bubble block in the dimension overlay).
+                                    // of committing on lift. Modern uses the
+                                    // inline dimension field (Steve's choice),
+                                    // not this bubble.
                                     m_sketchShapeConfirmPending = true;
                                     m_sketchShapePendingPos = sketchCoord;
                                     m_sketchShapeDimBuf[0] = '\0';
@@ -5923,9 +5920,23 @@ void Application::renderViewport() {
                                     recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
                                 }
                             }
+                        } else if (m_sketchTool->getMode() == SketchToolMode::Line &&
+                                   m_sketchTool->isPlacing()) {
+                            // LINE, chain already live (anchor down): a tap OR a
+                            // press-hold sets the AIM DIRECTION only — anchor ->
+                            // this point — WITHOUT committing a segment. Typing
+                            // the length is what commits it (Steve: tap/hold
+                            // sets direction, type sets length, repeat; a
+                            // press-hold fine-tunes the direction as the finger
+                            // moves via onMouseMove, and this release leaves it
+                            // set). The FIRST-segment freehand drag is handled
+                            // by the drag-centre path above, before a chain
+                            // exists.
+                            m_sketchTool->onMouseMove(sketchCoord);
                         } else {
-                            // Multi-point tool (incl. continuing a line chain), or
-                            // a drag tool's second tap: place the point at release.
+                            // Multi-point tool (incl. a drag-committed line
+                            // segment), or a drag tool's second tap: place the
+                            // point at release.
                             recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
                         }
                     } else if (m_sketchPressActive &&
@@ -7042,8 +7053,13 @@ void Application::renderViewport() {
         // drag, so it doesn't show for them at all. Lines keep it (no
         // bubble). Desktop im-touch (mouse, click-click placement) keeps it
         // too — the bubble only exists on the touch release path.
+        // Only cede the inline field to the bubble when the bubble is ACTUALLY
+        // up (im-touch press-drag-release hold). Otherwise the inline field
+        // shows, so a shape never gets NO input. Modern always uses the inline
+        // field (Steve's choice).
         const bool bubbleOwnsInput =
             imTouchLayout() && materializr::touchMode() &&
+            m_sketchShapeConfirmPending &&
             (mode == SketchToolMode::Circle ||
              mode == SketchToolMode::Rectangle);
         const char* dimLabel = nullptr;
@@ -7057,15 +7073,18 @@ void Application::renderViewport() {
             // radius/rotation come from the drag — so no typed dialog (it was
             // the one that clipped). dimLabel stays null → no input window.
             case SketchToolMode::Rectangle:
-                // Two-stage: first Enter sets horizontal side; second Enter
-                // commits with the typed vertical side. Cursor still drives
-                // whichever axis hasn't been typed yet.
-                dimLabel = (m_sketchTool->getRectDimStage() == 0)
-                             ? "Width (mm)" : "Height (mm)";
-                dimHint  = (m_sketchTool->getRectDimStage() == 0)
-                  ? "Type width and Enter to lock horizontal — cursor still "
-                    "drives height. Or click for both at once."
-                  : "Type height and Enter to commit the rectangle.";
+                // Touch shows BOTH Width and Height fields at once (below);
+                // desktop keeps its two-stage single field.
+                dimLabel = materializr::touchMode()
+                             ? "Rectangle (mm)"
+                             : (m_sketchTool->getRectDimStage() == 0
+                                    ? "Width (mm)" : "Height (mm)");
+                dimHint  = materializr::touchMode()
+                  ? "Type Width and Height, then Apply."
+                  : (m_sketchTool->getRectDimStage() == 0
+                       ? "Type width and Enter to lock horizontal — cursor still "
+                         "drives height. Or click for both at once."
+                       : "Type height and Enter to commit the rectangle.");
                 break;
             default: dimLabel = nullptr;
         }
@@ -7076,14 +7095,17 @@ void Application::renderViewport() {
             // width wants the window width, window width wants the content width)
             // — so some steps (the rectangle's 2nd "Height" entry, the line)
             // came out too narrow and clipped the typed digits off the left.
-            // Anchor to the SCREEN's right edge, not the viewport window's: in
-            // Modern/Classic the viewport ends where the right panel begins, so
-            // the old anchor parked this popup mid-screen ON TOP of the shape
-            // being drawn (Steve). Screen-right puts it over the right-hand
-            // panel in Modern/Classic and at the far right edge in im-touch.
+            // Anchor to the RIGHT SIDE OF THE VIEWPORT (Steve): in Modern the
+            // viewport ends where the right panel begins (m_touchVpX +
+            // m_touchVpW), so park it just inside that edge — in the drawing
+            // area, not over the panel. Falls back to the screen's right edge
+            // when the viewport rect isn't tracked (Classic).
             const float winW = uiW(230.0f);
             const ImGuiViewport* mvp = ImGui::GetMainViewport();
-            float winX = mvp->WorkPos.x + mvp->WorkSize.x - winW - uiW(10.0f);
+            float vpRight = mvp->WorkPos.x + mvp->WorkSize.x;
+            if ((modernLayout() || imTouchLayout()) && m_touchVpW > 0.0f)
+                vpRight = m_touchVpX + m_touchVpW;
+            float winX = vpRight - winW - uiW(10.0f);
             if (winX < mvp->WorkPos.x + 6.0f) winX = mvp->WorkPos.x + 6.0f;
             ImGui::SetNextWindowPos(ImVec2(winX, ImGui::GetWindowPos().y + 50.0f));
             ImGui::SetNextWindowSize(ImVec2(winW, 0.0f)); // fixed width, auto height
@@ -7100,37 +7122,72 @@ void Application::renderViewport() {
             ImGui::PopTextWrapPos();
 
             if (materializr::touchMode()) {
-                // TRIAL (Steve): use the NATIVE keyboard here instead of the
-                // in-app number pad. A focused ImGui InputText sets
-                // io.WantTextInput, which Window::updateTextInput answers by
-                // raising the Android IME / iOS keyboard — the same path that
-                // already works in the sketch-element Properties editor. The
-                // old "froze iOS" note predates that mechanism. A big
-                // touch-height field + Enter or Apply commits.
-                if (!m_sketchDimWasShown) {
-                    ImGui::SetKeyboardFocusHere();
-                    m_sketchDimWasShown = true;
-                }
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                                    ImVec2(uiW(12.0f), uiW(12.0f)));
-                bool entered = ImGui::InputText("##sketchDimT", m_sketchDimBuf,
-                    sizeof(m_sketchDimBuf),
-                    ImGuiInputTextFlags_EnterReturnsTrue |
-                    ImGuiInputTextFlags_CharsDecimal |
-                    ImGuiInputTextFlags_AutoSelectAll);
-                ImGui::PopStyleVar();
-                ImGui::Spacing();
-                ImGui::BeginDisabled(m_sketchDimBuf[0] == '\0');
-                bool applied = ImGui::Button("Apply", ImVec2(-1.0f, uiW(44.0f)));
-                ImGui::EndDisabled();
-                if (entered || applied) {
-                    float v = 0.0f;
-                    if (materializr::parseFinite(m_sketchDimBuf, v) && v > 0.0f) {
-                        recordSketchMutation([&]{ m_sketchTool->applyDimension(v); });
+                // Native keyboard via a focused ImGui field (io.WantTextInput ->
+                // Window::updateTextInput raises the system IME — same path as
+                // the Properties editor). TAP TO FOCUS, no auto-raise: click-
+                // drag still draws and text entry is opt-in (Steve).
+                if (mode == SketchToolMode::Rectangle) {
+                    // BOTH Width and Height at once. Seed from the current
+                    // preview the first frame; the user overrides either, then
+                    // Apply commits the exact W x H rectangle.
+                    if (!m_sketchDimWasShown) {
+                        glm::vec2 d = m_sketchTool->getPreviewEnd() -
+                                      m_sketchTool->getPreviewStart();
+                        m_sketchShapeDimW = std::max(0.01f, std::fabs(d.x));
+                        m_sketchShapeDimH = std::max(0.01f, std::fabs(d.y));
+                        m_sketchDimWasShown = true;
                     }
-                    m_sketchDimBuf[0] = '\0';
-                    m_sketchDimWasShown = false; // re-focus next placement
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                        ImVec2(uiW(10.0f), uiW(10.0f)));
+                    ImGui::TextDisabled("Width (mm)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputFloat("##dimW", &m_sketchShapeDimW, 0.0f, 0.0f, "%.2f");
+                    ImGui::TextDisabled("Height (mm)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputFloat("##dimH", &m_sketchShapeDimH, 0.0f, 0.0f, "%.2f");
+                    ImGui::PopStyleVar();
+                    if (m_sketchShapeDimW < 0.01f) m_sketchShapeDimW = 0.01f;
+                    if (m_sketchShapeDimH < 0.01f) m_sketchShapeDimH = 0.01f;
+                    ImGui::Spacing();
+                    if (ImGui::Button("Apply", ImVec2(-1.0f, uiW(44.0f)))) {
+                        const glm::vec2 ps = m_sketchTool->getPreviewStart();
+                        const glm::vec2 pe = m_sketchTool->getPreviewEnd();
+                        glm::vec2 dir(pe.x >= ps.x ? 1.0f : -1.0f,
+                                      pe.y >= ps.y ? 1.0f : -1.0f);
+                        if (std::fabs(pe.x - ps.x) < 1e-6f) dir.x = 1.0f;
+                        if (std::fabs(pe.y - ps.y) < 1e-6f) dir.y = 1.0f;
+                        const glm::vec2 base = m_sketchTool->getFirstClick();
+                        const glm::vec2 target =
+                            (m_sketchTool->getRectMode() == SketchTool::RectMode::Center)
+                              ? base + glm::vec2(dir.x * m_sketchShapeDimW * 0.5f,
+                                                 dir.y * m_sketchShapeDimH * 0.5f)
+                              : base + glm::vec2(dir.x * m_sketchShapeDimW,
+                                                 dir.y * m_sketchShapeDimH);
+                        recordSketchMutation([&]{ m_sketchTool->onMouseDown(target, false); });
+                        m_sketchDimWasShown = false;
+                    }
+                } else {
+                    // Line / Circle: single field.
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                        ImVec2(uiW(12.0f), uiW(12.0f)));
+                    bool entered = ImGui::InputText("##sketchDimT", m_sketchDimBuf,
+                        sizeof(m_sketchDimBuf),
+                        ImGuiInputTextFlags_EnterReturnsTrue |
+                        ImGuiInputTextFlags_CharsDecimal |
+                        ImGuiInputTextFlags_AutoSelectAll);
+                    ImGui::PopStyleVar();
+                    ImGui::Spacing();
+                    ImGui::BeginDisabled(m_sketchDimBuf[0] == '\0');
+                    bool applied = ImGui::Button("Apply", ImVec2(-1.0f, uiW(44.0f)));
+                    ImGui::EndDisabled();
+                    if (entered || applied) {
+                        float v = 0.0f;
+                        if (materializr::parseFinite(m_sketchDimBuf, v) && v > 0.0f) {
+                            recordSketchMutation([&]{ m_sketchTool->applyDimension(v); });
+                        }
+                        m_sketchDimBuf[0] = '\0';
+                    }
                 }
             } else {
                 // Desktop: keyboard entry. Grab focus the first frame

@@ -341,30 +341,39 @@ bool SketchTool::applyDimension(float value) {
 
     switch (m_mode) {
         case SketchToolMode::Line: {
-            // Type-to-place a single segment, then end the chain. Without the
-            // onConfirm() the chain stayed live and the next click would
-            // either extend the chain or — worse — get pulled onto the
-            // just-drawn line by the on-line inference and look like a point
-            // was added partway along the segment. The user wanted typing to
-            // commit the line and leave a fresh anchor for the next click.
-            glm::vec2 endPos = m_firstClick + dir * value;
-            size_t lnBefore = m_sketch->getLines().size();
-            handleLineTool(endPos);
-            onConfirm();
-            // Typing an exact value is the user explicitly intending that
-            // length — turn it into a Distance constraint so it survives
-            // future drags. Always-on regardless of helper-mode: constraint
-            // creation here is itself an opt-in (the user typed a value).
-            if (m_sketch->getLines().size() > lnBefore) {
-                const auto& l = m_sketch->getLines().back();
+            auto addDistance = [&](int aId, int bId) {
+                // One Distance constraint per segment: drop any prior one on
+                // this pair so repeated refinements don't stack duplicates.
+                for (const auto& c : m_sketch->getConstraints())
+                    if (c.type == ConstraintType::Distance &&
+                        ((c.entityA == aId && c.entityB == bId) ||
+                         (c.entityA == bId && c.entityB == aId)))
+                        m_sketch->removeConstraint(c.id);
                 Constraint c;
                 c.id = 0;
                 c.type = ConstraintType::Distance;
-                c.entityA = l.startPointId;
-                c.entityB = l.endPointId;
+                c.entityA = aId;
+                c.entityB = bId;
                 c.value = static_cast<double>(value);
-                c.isSatisfied = true; // geometry was placed AT the value
+                c.isSatisfied = true;
                 m_sketch->addConstraint(c);
+            };
+
+            // `dir` is the AIM direction: anchor -> the last tap / press-hold
+            // (m_currentPos), set WITHOUT committing a segment (the touch tap
+            // handler routes to onMouseMove while placing). Typing the length
+            // is what commits the segment, at anchor + dir*length. On TOUCH the
+            // chain stays live so you can aim + type the next segment
+            // (Steve: tap sets direction, type sets length, repeat). Desktop
+            // keeps its place-and-finish behaviour (onConfirm ends the chain,
+            // stopping the next click landing on the just-drawn line).
+            glm::vec2 endPos = m_firstClick + dir * value;
+            size_t lnBefore = m_sketch->getLines().size();
+            handleLineTool(endPos);
+            if (!materializr::touchMode()) onConfirm();
+            if (m_sketch->getLines().size() > lnBefore) {
+                const auto& l = m_sketch->getLines().back();
+                addDistance(l.startPointId, l.endPointId);
             }
             return true;
         }
