@@ -126,7 +126,7 @@ bool VideoEncoder::end() {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-#else // stubs: Windows + mobile
+#elif !defined(MZ_IOS) // stubs: Windows + Android (iOS lives in ios_videowriter.mm)
 
 VideoEncoder::~VideoEncoder() = default;
 bool VideoEncoder::available() { return false; }

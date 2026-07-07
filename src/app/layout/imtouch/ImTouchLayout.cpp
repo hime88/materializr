@@ -15,6 +15,7 @@
 #include "core/Operation.h"
 #include "core/SelectionManager.h"
 #include "io/Timelapse.h"               // top-right timelapse button
+#include "io/VideoEncoder.h"            // gates the MP4 export entries
 #include "modeling/DeleteOp.h"          // Items tree: body delete via History
 #include "modeling/SketchEditOp.h"      // timeline: Apply cascade targets
 #include "modeling/SketchTransformOp.h"
@@ -244,6 +245,15 @@ void Application::renderImTouchLayout() {
                     exportTimelapse(0);
                 if (ImGui::MenuItem("Export GIF (30 seconds)"))
                     exportTimelapse(30);
+                // MP4: hardware encoder on iOS, ffmpeg-on-PATH on desktop;
+                // absent where neither exists (Windows, Android for now).
+                static const bool videoOk = VideoEncoder::available();
+                if (videoOk) {
+                    if (ImGui::MenuItem("Export MP4 (full length)"))
+                        exportTimelapse(0, /*asMp4=*/true);
+                    if (ImGui::MenuItem("Export MP4 (30 seconds)"))
+                        exportTimelapse(30, /*asMp4=*/true);
+                }
                 ImGui::EndDisabled();
                 ImGui::Separator();
                 if (ImGui::MenuItem(m_timelapseRecord ? "Recording: on"

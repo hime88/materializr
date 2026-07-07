@@ -79,7 +79,8 @@ list(FILTER MZ_SOURCES EXCLUDE REGEX "/UpdateChecker\\.cpp$")   # libcurl (deskt
 set(MZ_OBJCXX_SOURCES
     "${MZ_SRC}/ios_platform.mm"
     "${MZ_SRC}/ios_files.mm"
-    "${MZ_SRC}/ios_storekit.mm")
+    "${MZ_SRC}/ios_storekit.mm"
+    "${MZ_SRC}/ios_videowriter.mm")
 set_source_files_properties(${MZ_OBJCXX_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
 add_executable(materializr MACOSX_BUNDLE ${MZ_SOURCES} ${MZ_OBJCXX_SOURCES})
@@ -111,7 +112,8 @@ target_link_libraries(materializr PRIVATE z iconv
     "-framework QuartzCore" "-framework OpenGLES" "-framework Metal"
     "-framework AVFoundation" "-framework AudioToolbox" "-framework CoreAudio"
     "-framework GameController" "-framework CoreVideo" "-framework ImageIO"
-    "-framework UniformTypeIdentifiers" "-framework StoreKit")
+    "-framework UniformTypeIdentifiers" "-framework StoreKit"
+    "-framework CoreMedia")  # CMTime for the AVAssetWriter timelapse backend
 
 # Version: pass -DMATERIALIZR_VERSION_NAME=<x.y.z[-suffix]> to override;
 # otherwise default to the desktop project's version + suffix (the single
