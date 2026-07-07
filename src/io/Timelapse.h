@@ -51,6 +51,13 @@ public:
                           const std::string& gifPath, int condenseSeconds,
                           std::string* err);
 
+    // Same contract, H.264 MP4 through the ffmpeg pipe (VideoEncoder). Fails
+    // with a clear message where ffmpeg isn't available (Windows, mobile).
+    static bool encodeMp4(const std::string& dir,
+                          const std::vector<std::string>& names,
+                          const std::string& mp4Path, int condenseSeconds,
+                          std::string* err);
+
 private:
     std::string frameDir() const;
     void appendFrameFile(const std::vector<uint8_t>& rgba, int w, int h);

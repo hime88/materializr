@@ -68,6 +68,7 @@
 #include "modeling/SketchEditOp.h"
 #include "io/StepIO.h"
 #include "io/StlExport.h"
+#include "io/Timelapse.h"   // renderTimelapseFrame: canonical-camera capture
 #include "io/FileDialogs.h"
 #include "io/ProjectIO.h"
 #include "io/Settings.h"
@@ -7225,6 +7226,126 @@ void Application::renderViewport() {
 
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+// ── Timelapse capture ────────────────────────────────────────────────────────
+// Renders the document from a canonical turntable camera into a private FBO
+// and stores the result as a timelapse frame. Runs AFTER the main viewport
+// pass (updateTimelapse), so meshes are tessellated and any in-progress drag
+// preview/ghost lives in m_shapeRenderer — drags capture as motion. Draws
+// bodies + edges + sketches only: no grid, gizmos, or selection chrome, and
+// no dependence on where the user happens to have the live camera.
+void Application::renderTimelapseFrame() {
+    if (!m_timelapse || !m_shapeRenderer || !m_document) return;
+    constexpr int kW = 1280, kH = 720; // 2x the stored 640 → supersampled AA
+
+    // Lazily build the capture FBO (plain colour+depth, no MSAA — the 2x
+    // downscale in the recorder is the anti-aliasing).
+    if (m_tlFbo == 0) {
+        GLint prevTex = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
+        glGenFramebuffers(1, &m_tlFbo);
+        glGenTextures(1, &m_tlColor);
+        glBindTexture(GL_TEXTURE_2D, m_tlColor);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kW, kH, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex));
+        glGenRenderbuffers(1, &m_tlDepth);
+        glBindRenderbuffer(GL_RENDERBUFFER, m_tlDepth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kW, kH);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        GLint prevFbo0 = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo0);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_tlFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, m_tlColor, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                  GL_RENDERBUFFER, m_tlDepth);
+        const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+                        GL_FRAMEBUFFER_COMPLETE;
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo0));
+        if (!ok) {
+            glDeleteFramebuffers(1, &m_tlFbo);
+            glDeleteTextures(1, &m_tlColor);
+            glDeleteRenderbuffers(1, &m_tlDepth);
+            m_tlFbo = m_tlColor = m_tlDepth = 0;
+            return;
+        }
+    }
+
+    // Frame the whole model (visible bodies + the in-progress sketch), the
+    // same bbox the ViewCube's frame-all uses.
+    Bnd_Box bbox;
+    for (int id : m_document->getAllBodyIds()) {
+        if (!m_document->isBodyVisible(id)) continue;
+        try { BRepBndLib::Add(m_document->getBody(id), bbox); } catch (...) {}
+    }
+    glm::vec3 cmin(0.0f), cmax(0.0f);
+    bool have = false;
+    if (!bbox.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        bbox.Get(x0, y0, z0, x1, y1, z1);
+        cmin = glm::vec3(float(x0), float(y0), float(z0));
+        cmax = glm::vec3(float(x1), float(y1), float(z1));
+        have = true;
+    }
+    if (m_activeSketch) {
+        glm::vec3 smin, smax;
+        if (m_activeSketch->getWorldBounds(smin, smax)) {
+            if (!have) { cmin = smin; cmax = smax; have = true; }
+            else { cmin = glm::min(cmin, smin); cmax = glm::max(cmax, smax); }
+        }
+    }
+    if (!have) return; // empty document — nothing worth a frame
+
+    // Canonical turntable: fixed elevation, azimuth derived from the frame
+    // count (~3°/frame → one revolution per ~120 captures) so the rotation is
+    // continuous across sessions with no extra state. Padding lets the model
+    // breathe instead of touching the borders.
+    const glm::vec3 center = (cmin + cmax) * 0.5f;
+    const glm::vec3 pad = glm::max((cmax - cmin) * 0.10f, glm::vec3(0.5f));
+    const float az = glm::radians(float(m_timelapse->frameCount()) * 3.0f);
+    const float el = glm::radians(28.0f);
+    const glm::vec3 dir(std::cos(el) * std::cos(az), std::sin(el),
+                        std::cos(el) * std::sin(az));
+    Camera cam;
+    cam.setAspect(float(kW) / float(kH));
+    cam.setTarget(center);
+    cam.setPosition(center + dir * std::max(glm::length(cmax - cmin), 1.0f));
+    cam.setUp(glm::vec3(0.0f, 1.0f, 0.0f));
+    cam.zoomToFit(cmin - pad, cmax + pad);
+    const glm::mat4 view = cam.getViewMatrix();
+    const glm::mat4 proj = cam.getProjectionMatrix();
+
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_tlFbo);
+    glViewport(0, 0, kW, kH);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    m_backgroundRenderer->render(); // gradient colours themed by the main pass
+    glEnable(GL_DEPTH_TEST);
+    m_shapeRenderer->render(view, proj, cam.getPosition());
+    if (m_edgeRenderer) m_edgeRenderer->render(view, proj);
+    if (m_sketchRenderer) {
+        for (int sid : m_document->getAllSketchIds()) {
+            if (!m_document->isSketchVisible(sid)) continue;
+            if (m_inSketchMode && sid == m_activeSketchId) continue;
+            if (auto sk = m_document->getSketch(sid))
+                m_sketchRenderer->render(sk.get(), nullptr, view, proj, nullptr);
+        }
+        if (m_inSketchMode && m_activeSketch)
+            m_sketchRenderer->render(m_activeSketch.get(), nullptr, view, proj,
+                                     m_sketchSolver.get());
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+
+    m_timelapse->captureFromTexture(m_tlColor, kW, kH);
 }
 
 } // namespace materializr

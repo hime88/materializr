@@ -308,6 +308,7 @@ add_executable(materializr
     src/io/ImageExport.cpp
     src/io/GifEncoder.cpp
     src/io/Timelapse.cpp
+    src/io/VideoEncoder.cpp
     src/io/GltfExport.cpp
     src/io/FileDialogs.cpp
 )

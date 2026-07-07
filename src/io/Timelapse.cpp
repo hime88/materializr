@@ -1,6 +1,7 @@
 #include "gl_common.h"
 #include "Timelapse.h"
 #include "GifEncoder.h"
+#include "VideoEncoder.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -280,17 +281,23 @@ bool TimelapseRecorder::encodeGif(const std::string& dir,
     constexpr int kFinalHoldCs = 150;
 
     // Pick frames + the per-step hold. A condensed export samples steps
-    // evenly and divides the requested duration across them.
+    // evenly and divides the requested duration across them — charging the
+    // tween frames and the final hold against the budget too, so the export
+    // actually lands on the requested length.
     std::vector<size_t> pick;
     int holdCs = 30; // full length: ~0.4 s per step including the blend
     if (condenseSeconds > 0) {
-        const size_t maxFrames = size_t(condenseSeconds) * 10;
-        const size_t n = std::min(names.size(), maxFrames);
+        const int budgetCs = condenseSeconds * 100;
+        const int minStepCs = kTweens * kTweenDelayCs + 4;
+        const size_t maxSteps =
+            size_t(std::max(2, (budgetCs - kFinalHoldCs) / minStepCs));
+        const size_t n = std::min(names.size(), maxSteps);
         pick.reserve(n);
         for (size_t i = 0; i < n; ++i)
             pick.push_back(i * (names.size() - 1) / (n - 1));
-        holdCs = std::clamp(
-            condenseSeconds * 100 / int(n) - kTweens * kTweenDelayCs, 6, 60);
+        holdCs = std::clamp((budgetCs - kFinalHoldCs) / int(n) -
+                                kTweens * kTweenDelayCs,
+                            4, 60);
     } else {
         pick.reserve(names.size());
         for (size_t i = 0; i < names.size(); ++i) pick.push_back(i);
@@ -341,6 +348,95 @@ bool TimelapseRecorder::encodeGif(const std::string& dir,
     }
     if (!gif.end()) {
         if (err) *err = "Couldn't finalize " + gifPath;
+        return false;
+    }
+    return true;
+}
+
+bool TimelapseRecorder::encodeMp4(const std::string& dir,
+                                  const std::vector<std::string>& names,
+                                  const std::string& mp4Path,
+                                  int condenseSeconds, std::string* err) {
+    if (!VideoEncoder::available()) {
+        if (err) *err = "MP4 export needs ffmpeg on PATH.";
+        return false;
+    }
+    if (names.size() < 2) {
+        if (err) *err = "Not enough frames recorded yet.";
+        return false;
+    }
+
+    // Fixed 30 fps timeline: holds become repeated frames (x264 compresses
+    // duplicates to almost nothing), tweens are 3 blended frames per step.
+    constexpr int kFps = 30;
+    constexpr int kTweens = 3;
+    constexpr int kFinalHoldFrames = kFps * 3 / 2; // 1.5 s
+
+    std::vector<size_t> pick;
+    int holdFrames = 9; // full length: ~0.3 s per step + 0.1 s of blend
+    if (condenseSeconds > 0) {
+        // Budget the whole timeline (tweens + holds + final rest) so the
+        // export lands on the requested duration.
+        const int budget = condenseSeconds * kFps;
+        const int minStep = kTweens + 2;
+        const size_t maxSteps =
+            size_t(std::max(2, (budget - kFinalHoldFrames) / minStep));
+        const size_t n = std::min(names.size(), maxSteps);
+        pick.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            pick.push_back(i * (names.size() - 1) / (n - 1));
+        holdFrames = std::clamp(
+            (budget - kFinalHoldFrames) / int(n) - kTweens, 2, 30);
+    } else {
+        pick.reserve(names.size());
+        for (size_t i = 0; i < names.size(); ++i) pick.push_back(i);
+    }
+
+    int cw = 0, ch = 0;
+    VideoEncoder enc;
+    std::vector<uint8_t> rgba, canvas, prev, blend;
+    int written = 0;
+    for (size_t pi = 0; pi < pick.size(); ++pi) {
+        int w = 0, h = 0;
+        if (!readFrameFile(dir + "/" + names[pick[pi]], rgba, w, h)) continue;
+        if (cw == 0) {
+            cw = w;
+            ch = h;
+            if (!enc.begin(mp4Path, cw, ch, kFps)) {
+                if (err) *err = "Couldn't start ffmpeg for " + mp4Path;
+                return false;
+            }
+        }
+        fitOnCanvas(rgba, w, h, canvas, cw, ch);
+        if (!prev.empty()) {
+            blend.resize(canvas.size());
+            for (int t = 1; t <= kTweens; ++t) {
+                const int a = t * 255 / (kTweens + 1);
+                for (size_t i = 0; i < canvas.size(); ++i)
+                    blend[i] = uint8_t(
+                        (int(prev[i]) * (255 - a) + int(canvas[i]) * a) / 255);
+                if (!enc.addFrame(blend.data())) {
+                    if (err) *err = "ffmpeg stopped accepting frames.";
+                    return false;
+                }
+            }
+        }
+        const bool last = (pi + 1 == pick.size());
+        const int reps = last ? kFinalHoldFrames : holdFrames;
+        for (int r = 0; r < reps; ++r)
+            if (!enc.addFrame(canvas.data())) {
+                if (err) *err = "ffmpeg stopped accepting frames.";
+                return false;
+            }
+        prev = canvas;
+        ++written;
+    }
+    if (written < 2) {
+        if (err) *err = "Recorded frames could not be read back.";
+        return false;
+    }
+    if (!enc.end()) {
+        if (err) *err = "ffmpeg reported an encoding error.";
         return false;
     }
     return true;

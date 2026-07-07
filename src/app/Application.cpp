@@ -4943,17 +4943,20 @@ void Application::updateTimelapse() {
         m_tlBoundRef = m_currentProjectPath;
         m_tlBound = true;
         m_tlLastRevision = rev;
-    } else if (m_timelapse->enabled() && rev != m_tlLastRevision &&
-               !m_meshesDirty && m_viewport) {
-        // Capture once the meshes settled; the interval guard coalesces
-        // undo/redo storms into one frame of the final state.
+    } else if (m_timelapse->enabled()) {
+        // Two capture triggers, both rendered from the canonical turntable
+        // camera (renderTimelapseFrame): a settled history commit, and — for
+        // motion — an in-progress interactive drag (the preview/ghost meshes
+        // live in the shape renderer, so they capture like anything else).
+        // The interval guard coalesces undo/redo storms and paces drags to
+        // ~4 fps.
+        const bool commitPending = rev != m_tlLastRevision && !m_meshesDirty;
+        const bool dragging = anyInteractivePreviewActive();
         const double now = ImGui::GetTime();
-        if (now - m_tlLastCapture >= 0.25) {
-            m_tlLastRevision = rev;
+        if ((commitPending || dragging) && now - m_tlLastCapture >= 0.25) {
+            if (commitPending) m_tlLastRevision = rev;
             m_tlLastCapture = now;
-            m_timelapse->captureFromTexture(m_viewport->getTextureID(),
-                                            m_viewport->getWidth(),
-                                            m_viewport->getHeight());
+            renderTimelapseFrame();
         }
     }
 
@@ -4967,9 +4970,12 @@ void Application::updateTimelapse() {
             showToast("Timelapse export failed: " + err);
         } else {
             const std::string tmp = m_tlExportTmp;
+            const bool mp4 = tmp.size() > 4 &&
+                             tmp.compare(tmp.size() - 4, 4, ".mp4") == 0;
             FileDialogs::exportFile(
-                "Save Timelapse", "timelapse.gif", "image/gif",
-                {{"GIF animation", "*.gif"}},
+                "Save Timelapse", mp4 ? "timelapse.mp4" : "timelapse.gif",
+                mp4 ? "video/mp4" : "image/gif",
+                {{mp4 ? "MP4 video" : "GIF animation", mp4 ? "*.mp4" : "*.gif"}},
                 [this, tmp](const std::string& dest) -> bool {
                     std::error_code ec;
                     std::filesystem::copy_file(
@@ -4982,7 +4988,7 @@ void Application::updateTimelapse() {
     }
 }
 
-void Application::exportTimelapse(int condenseSeconds) {
+void Application::exportTimelapse(int condenseSeconds, bool asMp4) {
     if (!m_timelapse) return;
     if (m_timelapse->frameCount() < 2) {
         showToast("No timelapse yet — it records a frame per modelling step.");
@@ -4994,17 +5000,21 @@ void Application::exportTimelapse(int condenseSeconds) {
     }
     std::error_code ec;
     m_tlExportTmp = (std::filesystem::temp_directory_path(ec) /
-                     "materializr-timelapse.gif").string();
+                     (asMp4 ? "materializr-timelapse.mp4"
+                            : "materializr-timelapse.gif")).string();
     showToast("Encoding timelapse\xE2\x80\xA6");
     // Snapshot on this thread (captures mutate the list), encode on a worker.
     m_tlExportFuture = std::async(
         std::launch::async,
         [dir = m_timelapse->frameDirPath(), names = m_timelapse->frameSnapshot(),
-         out = m_tlExportTmp, condenseSeconds]() -> std::string {
+         out = m_tlExportTmp, condenseSeconds, asMp4]() -> std::string {
             std::string err;
-            if (TimelapseRecorder::encodeGif(dir, names, out, condenseSeconds,
-                                             &err))
-                return std::string();
+            const bool ok =
+                asMp4 ? TimelapseRecorder::encodeMp4(dir, names, out,
+                                                     condenseSeconds, &err)
+                      : TimelapseRecorder::encodeGif(dir, names, out,
+                                                     condenseSeconds, &err);
+            if (ok) return std::string();
             return err.empty() ? std::string("unknown error") : err;
         });
 }

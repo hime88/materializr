@@ -587,7 +587,14 @@ private:
     // Always-on timelapse (io/Timelapse): one frame per committed history
     // mutation, per-project store, GIF export from the im-touch button.
     void updateTimelapse();              // per-frame: bind/capture/export poll
-    void exportTimelapse(int condenseSeconds); // 0 = full length, N = fit N seconds
+    // 0 = full length, N = fit N seconds; asMp4 uses the ffmpeg pipe encoder
+    // (desktop POSIX, only offered when VideoEncoder::available()).
+    void exportTimelapse(int condenseSeconds, bool asMp4 = false);
+    // Renders bodies + edges + sketches (no grid/gizmo/highlight chrome) from
+    // the canonical turntable camera into m_tlFbo and stores the frame.
+    // Implemented in Application_Viewport.cpp next to the main scene pass.
+    void renderTimelapseFrame();
+    unsigned int m_tlFbo = 0, m_tlColor = 0, m_tlDepth = 0; // private capture FBO
     std::unique_ptr<TimelapseRecorder> m_timelapse;
     bool m_timelapseRecord = true;       // persisted mirror (AppSettings::timelapseRecord)
     bool m_tlBound = false;              // bindProject ran at least once

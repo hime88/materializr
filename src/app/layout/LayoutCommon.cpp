@@ -17,7 +17,8 @@
 #include "plugin/PluginContext.h"
 #include "plugin/PluginRegistry.h"
 #include "ui/AboutDialog.h"
-#include "io/Timelapse.h"   // File > Export > Timelapse GIF
+#include "io/Timelapse.h"     // File > Export > Timelapse GIF
+#include "io/VideoEncoder.h"  // gates the Timelapse MP4 entries on ffmpeg
 #include "ui/HelpPanel.h"
 #include "ui/LogoTexture.h"
 #include "ui/ShortcutsPanel.h"
@@ -217,8 +218,9 @@ void Application::renderFileMenuItems(bool withSettings) {
             }
             ImGui::PopID();
         }
-        // Timelapse GIF — the desktop surface for the recording the im-touch
-        // timelapse button owns (frames captured per committed step).
+        // Timelapse — the desktop surface for the recording the im-touch
+        // timelapse button owns (frames captured per committed step). MP4
+        // entries appear only when an ffmpeg binary is on PATH.
         ImGui::Separator();
         const int tlFrames = m_timelapse ? m_timelapse->frameCount() : 0;
         ImGui::BeginDisabled(tlFrames < 2);
@@ -226,6 +228,13 @@ void Application::renderFileMenuItems(bool withSettings) {
             exportTimelapse(0);
         if (ImGui::MenuItem("Timelapse GIF (30 seconds)..."))
             exportTimelapse(30);
+        static const bool ffmpegHere = VideoEncoder::available();
+        if (ffmpegHere) {
+            if (ImGui::MenuItem("Timelapse MP4 (full length)..."))
+                exportTimelapse(0, /*asMp4=*/true);
+            if (ImGui::MenuItem("Timelapse MP4 (30 seconds)..."))
+                exportTimelapse(30, /*asMp4=*/true);
+        }
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }
