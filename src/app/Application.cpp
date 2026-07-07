@@ -4923,6 +4923,10 @@ void Application::renderSketchRecoveryPrompt() {
         if (ImGui::Button("Discard", ImVec2(140, 0))) {
             materializr::clearSketchDraft();
             m_pendingSketchRecovery = false;
+            // Same fresh-start rule as the project-recovery Discard: dropping
+            // the previous unsaved session drops its timelapse frames too.
+            if (m_currentProjectPath.empty() && m_timelapse)
+                m_timelapse->clearFrames();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -5114,6 +5118,11 @@ void Application::renderProjectRecoveryPrompt() {
             // live slot is separate and untouched.
             materializr::clearProjectRecoveryCandidate();
             m_pendingProjectRecovery = false;
+            // Declining the old session = fresh start: the unsaved bucket's
+            // timelapse frames belong to the work just discarded, so a new
+            // recording shouldn't begin with them.
+            if (m_currentProjectPath.empty() && m_timelapse)
+                m_timelapse->clearFrames();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
