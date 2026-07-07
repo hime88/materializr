@@ -14,8 +14,6 @@
 #include "core/History.h"
 #include "core/Operation.h"
 #include "core/SelectionManager.h"
-#include "io/Timelapse.h"               // top-right timelapse button
-#include "io/VideoEncoder.h"            // gates the MP4 export entries
 #include "modeling/DeleteOp.h"          // Items tree: body delete via History
 #include "modeling/SketchEditOp.h"      // timeline: Apply cascade targets
 #include "modeling/SketchTransformOp.h"
@@ -228,50 +226,8 @@ void Application::renderImTouchLayout() {
         tip(m_imTouchTree ? "Hide the model tree"
                           : "Show the model tree (bodies, sketches, construction)");
         ImGui::SameLine(0.0f, 8.0f * s);
-        // Timelapse: records a frame per modelling step while enabled; the
-        // popup exports the recording as a GIF (full length or 30 seconds).
-        {
-            if (touchui::iconButton("timelapse", MZ_ICON_TIMELAPSE, bh))
-                ImGui::OpenPopup("##TimelapseMenu");
-            tip(m_timelapseRecord
-                    ? "Timelapse (recording) — export as GIF or turn off"
-                    : "Timelapse (off) — export recorded frames or turn on");
-            if (ImGui::BeginPopup("##TimelapseMenu")) {
-                const int n = m_timelapse ? m_timelapse->frameCount() : 0;
-                ImGui::TextDisabled("%d frame%s recorded", n, n == 1 ? "" : "s");
-                ImGui::Separator();
-                ImGui::BeginDisabled(n < 2);
-                if (m_timelapse && m_timelapse->videoMode()) {
-                    // Chunked H.264 recording (iOS hardware / desktop ffmpeg).
-                    if (ImGui::MenuItem("Export video (full length)"))
-                        exportTimelapse(0, /*asMp4=*/true);
-                    if (ImGui::MenuItem("Export video (30 seconds)"))
-                        exportTimelapse(30, /*asMp4=*/true);
-                } else {
-                    // Pixel-store fallback (Windows/Android): GIF only.
-                    if (ImGui::MenuItem("Export GIF (full length)"))
-                        exportTimelapse(0);
-                    if (ImGui::MenuItem("Export GIF (30 seconds)"))
-                        exportTimelapse(30);
-                }
-                ImGui::EndDisabled();
-                ImGui::Separator();
-                if (ImGui::MenuItem(m_timelapseRecord ? "Recording: on"
-                                                      : "Recording: off")) {
-                    m_timelapseRecord = !m_timelapseRecord;
-                    if (m_timelapse) m_timelapse->setEnabled(m_timelapseRecord);
-                    saveAppSettings();
-                }
-                ImGui::BeginDisabled(n == 0);
-                if (ImGui::MenuItem("Clear recording")) {
-                    if (m_timelapse) m_timelapse->clearFrames();
-                    showToast("Timelapse recording cleared.");
-                }
-                ImGui::EndDisabled();
-                ImGui::EndPopup();
-            }
-            ImGui::SameLine(0.0f, 8.0f * s);
-        }
+        // (Timelapse lives in the ☰ menu — File → Export — and its toggles in
+        // Settings → Timelapse; the top-right cluster stays lean.)
         const bool histLocked = anyInteractivePreviewActive();
         ImGui::BeginDisabled(histLocked || !touchCanUndo());
         if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) touchUndo();

@@ -224,6 +224,22 @@ void Application::renderSettings() {
                     ImGui::TextWrapped("How often a frame is stored while something is "
                                        "happening. Higher is smoother playback and larger "
                                        "recordings; 10 is a good default.");
+
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Recording");
+                    {
+                        const int n = m_timelapse ? m_timelapse->frameCount() : 0;
+                        ImGui::Text("%d frame%s recorded for this project.", n,
+                                    n == 1 ? "" : "s");
+                        ImGui::TextWrapped("Export from File → Export → Timelapse (in "
+                                           "im-touch: the ☰ menu).");
+                        ImGui::BeginDisabled(n == 0);
+                        if (ImGui::Button("Clear this project's recording")) {
+                            if (m_timelapse) m_timelapse->clearFrames();
+                            showToast("Timelapse recording cleared.");
+                        }
+                        ImGui::EndDisabled();
+                    }
                     ImGui::EndTabItem();
                 }
 
