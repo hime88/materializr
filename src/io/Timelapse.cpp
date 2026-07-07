@@ -123,6 +123,12 @@ void fitOnCanvas(const std::vector<uint8_t>& src, int sw, int sh,
                     fitted.data() + size_t(y) * fw * 4, size_t(fw) * 4);
 }
 
+// Camera-move filler frames carry an 'm' before the extension; exports play
+// them fast and skip the crossfade into them (they are already smooth).
+bool isMoveFrame(const std::string& name) {
+    return name.size() > 5 && name[name.size() - 5] == 'm';
+}
+
 } // namespace
 
 std::string TimelapseRecorder::frameDir() const {
@@ -161,7 +167,8 @@ void TimelapseRecorder::bindProject(const std::string& projectRef,
     }
 }
 
-void TimelapseRecorder::captureFromTexture(unsigned texture, int w, int h) {
+void TimelapseRecorder::captureFromTexture(unsigned texture, int w, int h,
+                                           bool moveFrame) {
     if (!m_enabled || texture == 0 || w <= 0 || h <= 0) return;
 
     std::vector<uint8_t> pixels(size_t(w) * h * 4);
@@ -194,10 +201,11 @@ void TimelapseRecorder::captureFromTexture(unsigned texture, int w, int h) {
         std::memcpy(b, row.data(), row.size());
     }
 
-    storeFrame(pixels.data(), w, h);
+    storeFrame(pixels.data(), w, h, moveFrame);
 }
 
-void TimelapseRecorder::storeFrame(const uint8_t* rgba, int w, int h) {
+void TimelapseRecorder::storeFrame(const uint8_t* rgba, int w, int h,
+                                   bool moveFrame) {
     if (!m_enabled || !rgba || w <= 0 || h <= 0) return;
 
     // Downscale to the recording resolution.
@@ -211,12 +219,12 @@ void TimelapseRecorder::storeFrame(const uint8_t* rgba, int w, int h) {
     } else {
         frame.assign(rgba, rgba + size_t(w) * h * 4);
     }
-    appendFrameFile(frame, fw, fh);
+    appendFrameFile(frame, fw, fh, moveFrame);
     thinIfOverCap();
 }
 
 void TimelapseRecorder::appendFrameFile(const std::vector<uint8_t>& rgba,
-                                        int w, int h) {
+                                        int w, int h, bool moveFrame) {
     namespace fs = std::filesystem;
     std::error_code ec;
     fs::create_directories(frameDir(), ec);
@@ -227,8 +235,11 @@ void TimelapseRecorder::appendFrameFile(const std::vector<uint8_t>& rgba,
                   Z_BEST_SPEED) != Z_OK)
         return;
 
+    // Camera-move fillers carry an 'm' marker the export loops read back
+    // ('.'<'m', so a step and its trailing fillers still sort by serial).
     char name[24];
-    std::snprintf(name, sizeof(name), "%08d.mzf", m_nextSerial);
+    std::snprintf(name, sizeof(name), "%08d%s.mzf", m_nextSerial,
+                  moveFrame ? "m" : "");
     const std::string path = frameDir() + "/" + name;
     std::ofstream os(path, std::ios::binary | std::ios::trunc);
     if (!os.is_open()) return;
@@ -331,7 +342,8 @@ bool TimelapseRecorder::encodeGif(const std::string& dir,
             }
         }
         fitOnCanvas(rgba, w, h, canvas, cw, ch);
-        if (!prev.empty()) {
+        const bool move = isMoveFrame(names[pick[pi]]);
+        if (!prev.empty() && !move) {
             blend.resize(canvas.size());
             for (int t = 1; t <= kTweens; ++t) {
                 const int a = t * 255 / (kTweens + 1);
@@ -346,7 +358,8 @@ bool TimelapseRecorder::encodeGif(const std::string& dir,
             }
         }
         const bool last = (pi + 1 == pick.size());
-        if (!gif.addFrame(canvas.data(), last ? kFinalHoldCs : holdCs)) {
+        const int delay = last ? kFinalHoldCs : (move ? kTweenDelayCs : holdCs);
+        if (!gif.addFrame(canvas.data(), delay)) {
             if (err) *err = "Write failed at frame " + std::to_string(written);
             return false;
         }
@@ -419,7 +432,8 @@ bool TimelapseRecorder::encodeMp4(const std::string& dir,
             }
         }
         fitOnCanvas(rgba, w, h, canvas, cw, ch);
-        if (!prev.empty()) {
+        const bool move = isMoveFrame(names[pick[pi]]);
+        if (!prev.empty() && !move) {
             blend.resize(canvas.size());
             for (int t = 1; t <= kTweens; ++t) {
                 const int a = t * 255 / (kTweens + 1);
@@ -433,7 +447,7 @@ bool TimelapseRecorder::encodeMp4(const std::string& dir,
             }
         }
         const bool last = (pi + 1 == pick.size());
-        const int reps = last ? kFinalHoldFrames : holdFrames;
+        const int reps = last ? kFinalHoldFrames : (move ? 2 : holdFrames);
         for (int r = 0; r < reps; ++r)
             if (!enc.addFrame(canvas.data())) {
                 if (err) *err = "ffmpeg stopped accepting frames.";

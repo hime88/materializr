@@ -7309,45 +7309,84 @@ void Application::renderTimelapseFrame() {
     // on-screen view (a wider/narrower field, not a distortion).
     Camera cam = m_viewport->getCamera();
     cam.setAspect(float(kW) / float(kH));
-    const glm::mat4 view = cam.getViewMatrix();
-    const glm::mat4 proj = cam.getProjectionMatrix();
 
     GLint prevFbo = 0, prevVp[4];
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, m_tlFboMs);
+    // One clean scene pass from `c` into the MSAA target, resolved and stored.
+    auto renderOnce = [&](Camera& c, bool moveFrame) {
+        const glm::mat4 view = c.getViewMatrix();
+        const glm::mat4 proj = c.getProjectionMatrix();
+        glBindFramebuffer(GL_FRAMEBUFFER, m_tlFboMs);
 #if !defined(MZ_GLES)
-    glEnable(GL_MULTISAMPLE); // GLES: implied by the multisampled target
+        glEnable(GL_MULTISAMPLE); // GLES: implied by the multisampled target
 #endif
-    glViewport(0, 0, kW, kH);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    m_backgroundRenderer->render(); // gradient colours themed by the main pass
-    glEnable(GL_DEPTH_TEST);
-    m_shapeRenderer->render(view, proj, cam.getPosition());
-    if (m_edgeRenderer) m_edgeRenderer->render(view, proj);
-    if (m_sketchRenderer) {
-        for (int sid : m_document->getAllSketchIds()) {
-            if (!m_document->isSketchVisible(sid)) continue;
-            if (m_inSketchMode && sid == m_activeSketchId) continue;
-            if (auto sk = m_document->getSketch(sid))
-                m_sketchRenderer->render(sk.get(), nullptr, view, proj, nullptr);
+        glViewport(0, 0, kW, kH);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+                GL_STENCIL_BUFFER_BIT);
+        m_backgroundRenderer->render(); // gradient themed by the main pass
+        glEnable(GL_DEPTH_TEST);
+        m_shapeRenderer->render(view, proj, c.getPosition());
+        if (m_edgeRenderer) m_edgeRenderer->render(view, proj);
+        if (m_sketchRenderer) {
+            for (int sid : m_document->getAllSketchIds()) {
+                if (!m_document->isSketchVisible(sid)) continue;
+                if (m_inSketchMode && sid == m_activeSketchId) continue;
+                if (auto sk = m_document->getSketch(sid))
+                    m_sketchRenderer->render(sk.get(), nullptr, view, proj,
+                                             nullptr);
+            }
+            if (m_inSketchMode && m_activeSketch)
+                m_sketchRenderer->render(m_activeSketch.get(), nullptr, view,
+                                         proj, m_sketchSolver.get());
         }
-        if (m_inSketchMode && m_activeSketch)
-            m_sketchRenderer->render(m_activeSketch.get(), nullptr, view, proj,
-                                     m_sketchSolver.get());
-    }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_tlFboMs);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_tlFbo);
+        glBlitFramebuffer(0, 0, kW, kH, 0, 0, kW, kH, GL_COLOR_BUFFER_BIT,
+                          GL_NEAREST);
+        m_timelapse->captureFromTexture(m_tlColor, kW, kH, moveFrame);
+    };
 
-    // Resolve MSAA → texture, then hand the texture to the recorder.
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_tlFboMs);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_tlFbo);
-    glBlitFramebuffer(0, 0, kW, kH, 0, 0, kW, kH, GL_COLOR_BUFFER_BIT,
-                      GL_NEAREST);
+    // Camera-move fillers: when the view jumped since the last capture, glide
+    // through a few eased in-between poses first (stored with the 'm' marker
+    // so exports play them fast) — the replay pans instead of snapping.
+    // Perspective↔ortho flips snap on purpose: sketch entry/exit reads better
+    // as a cut. Function-local state; reset whenever the store is fresh.
+    static bool haveLast = false;
+    static glm::vec3 lastPos(0.0f), lastTarget(0.0f), lastUp(0.0f, 1.0f, 0.0f);
+    static bool lastOrtho = false;
+    if (m_timelapse->frameCount() == 0) haveLast = false;
+
+    const glm::vec3 pos = cam.getPosition(), tgt = cam.getTarget(),
+                    up = cam.getUp();
+    if (haveLast && lastOrtho == cam.isOrthographic()) {
+        const float scale = std::max(glm::length(pos - tgt), 1e-3f);
+        const float moved = (glm::length(pos - lastPos) +
+                             glm::length(tgt - lastTarget)) / scale;
+        if (moved > 0.04f) {
+            const int k = std::clamp(int(moved * 8.0f), 1, 5);
+            for (int i = 1; i <= k; ++i) {
+                float t = float(i) / float(k + 1);
+                t = t * t * (3.0f - 2.0f * t); // ease in–out
+                Camera mid = cam;
+                mid.setPosition(glm::mix(lastPos, pos, t));
+                mid.setTarget(glm::mix(lastTarget, tgt, t));
+                glm::vec3 u = glm::mix(lastUp, up, t);
+                mid.setUp(glm::length(u) > 1e-4f ? glm::normalize(u) : up);
+                renderOnce(mid, /*moveFrame=*/true);
+            }
+        }
+    }
+    renderOnce(cam, /*moveFrame=*/false);
+    haveLast = true;
+    lastPos = pos;
+    lastTarget = tgt;
+    lastUp = up;
+    lastOrtho = cam.isOrthographic();
 
     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
     glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
-
-    m_timelapse->captureFromTexture(m_tlColor, kW, kH);
 }
 
 } // namespace materializr

@@ -26,12 +26,15 @@ public:
     void bindProject(const std::string& projectRef, bool carryFrames);
 
     // GL thread: read `texture` (w×h RGBA), downscale to the recording
-    // resolution, and append a frame to the store.
-    void captureFromTexture(unsigned texture, int w, int h);
+    // resolution, and append a frame to the store. moveFrame marks a camera
+    // interpolation filler ('m' filename suffix): exports play those fast and
+    // skip crossfades into them, so camera moves glide instead of snapping.
+    void captureFromTexture(unsigned texture, int w, int h,
+                            bool moveFrame = false);
 
     // Pure part of capture (also the unit-test entry): downscale + compress +
     // append `rgba` (w×h×4, top-left origin).
-    void storeFrame(const uint8_t* rgba, int w, int h);
+    void storeFrame(const uint8_t* rgba, int w, int h, bool moveFrame = false);
 
     int frameCount() const { return static_cast<int>(m_frames.size()); }
     void clearFrames();
@@ -60,7 +63,8 @@ public:
 
 private:
     std::string frameDir() const;
-    void appendFrameFile(const std::vector<uint8_t>& rgba, int w, int h);
+    void appendFrameFile(const std::vector<uint8_t>& rgba, int w, int h,
+                         bool moveFrame);
     void thinIfOverCap();
 
     bool m_enabled = true;
