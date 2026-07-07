@@ -278,6 +278,8 @@ bool FileDialogs::dialogsAvailable() {
     return true;           // SAF picker is always present
 #elif defined(_WIN32)
     return true;           // native comdlg
+#elif defined(__APPLE__)
+    return true;           // pfd shells out to osascript, always present on macOS
 #else
     // pfd shells out to one of these; scan PATH once for any of them.
     static int cached = -1;

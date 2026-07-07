@@ -1432,6 +1432,19 @@ void Application::beginPushPull() {
                                  : sketch->getSourceBody();
             t.profile = regions[e.subShapeIndex].face;
             if (t.profile.IsNull()) continue;
+            // PUSH/PULL adopts the body the sketch sits flat ON. A sketch with
+            // no body link (e.g. drawn on a construction plane and used to cut
+            // a hole) that lies coplanar-and-over a visible body's face should
+            // fuse/cut that body in place — not spawn a separate solid that
+            // overlaps and z-fights it. (Extrude From keeps its always-new-
+            // body semantics; a new body from this sketch is one Extrude
+            // away.) A DETACHED sketch was deliberately unlinked, so it stays
+            // free-floating; genuine free-space sketches (over no face) return
+            // -1 and are unaffected.
+            if (t.sourceBodyId < 0 && !sketch->isDetachedFromBody()) {
+                int host = findBodyUnderRegion(t.profile, sketch->getPlane());
+                if (host >= 0) t.sourceBodyId = host;
+            }
             m_pushPullTargets.push_back(t);
         } else if (e.type == SelectionType::Face && !e.shape.IsNull()) {
             // Push/Pull on a body face: face is the profile, the owning body is the source.

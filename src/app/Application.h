@@ -309,6 +309,18 @@ private:
     // of a "circle around an existing hole" wrongly produces a solid bar.
     void ensureSketchSourceFace(int sketchId);
 
+    // Re-adopt the body a free-floating sketch sits flat ON. When a sketch has
+    // no body link (never linked, e.g. drawn on a construction plane and used
+    // to cut a hole) but its plane coincides with a visible body's planar face
+    // and the region overlaps that face, PUSH/PULL fuses/cuts that body in
+    // place instead of spawning a separate solid that overlaps and z-fights
+    // it. (Extrude keeps its always-new-body semantics — this helper is only
+    // consulted by beginPushPull.) Returns the body id to adopt, or -1 if the
+    // region isn't sitting on a body face (a genuine free-space sketch —
+    // leave it free-floating). `region` is the sketch-region face; `plane` is
+    // the sketch plane.
+    int findBodyUnderRegion(const TopoDS_Face& region, const gp_Pln& plane) const;
+
     // Apply a sketch constraint of the given type to the current
     // SketchTool element selection. Inspects the selection counts to decide
     // which arity to use (e.g. Coincident chains pairs of selected points;

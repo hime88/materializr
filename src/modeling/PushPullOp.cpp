@@ -162,7 +162,16 @@ void PushPullOp::refreshFaceTargets(Document& doc) {
         m_targetRefs.resize(m_targets.size());
     for (size_t i = 0; i < m_targets.size(); ++i) {
         Target& t = m_targets[i];
-        if (t.sourceBodyId < 0) continue;            // sketch / free-floating
+        if (t.sourceBodyId < 0) continue;            // free-floating
+        // SKETCH-sourced target on a body: the profile is a sketch-region
+        // face, which is NEVER a face of the source body — the liveness scan
+        // below always fails and resolve() swaps in the closest BODY face
+        // (the host face), silently replacing the drawn region with the whole
+        // face ("push a hole" moved the face and ignored the sketch). Sketch
+        // profiles rebuild via rebuildProfileFromSketch instead; only pure
+        // face-driven targets belong to this ref machinery.
+        if (i < m_sketchSourceIds.size() && m_sketchSourceIds[i] >= 0)
+            continue;
         TopoDS_Shape src;
         try { src = doc.getBody(t.sourceBodyId); } catch (...) { continue; }
         if (src.IsNull()) continue;
@@ -235,6 +244,18 @@ bool PushPullOp::execute(Document& doc) {
     auto cutVisibleBodies = [&](const TopoDS_Shape& prism, int excludeId) -> int {
         int n = 0;
         Bnd_Box prismBox; BRepBndLib::Add(prism, prismBox);
+        // The tool prism's own volume sets the scale for "a real cut". A prism
+        // that only GRAZES a body — or lands coincident with a hole the same
+        // sketch already cut — removes a numerically-negligible sliver (a
+        // BRepAlgoAPI_Cut of coincident faces yields ~1e-3 mm³ of noise). Such
+        // a result is valid but tessellates as garbage, and committing it is
+        // never what the user meant. Require the removed volume to be a real
+        // fraction (0.1%) of the tool volume before a cut counts, so a graze
+        // no-ops instead of imploding the body.
+        double prismVol = 0.0;
+        try { GProp_GProps gp; BRepGProp::VolumeProperties(prism, gp);
+              prismVol = gp.Mass(); } catch (...) {}
+        const double minRemoved = std::max(1e-6, prismVol * 1e-3);
         for (int bid : doc.getAllBodyIds()) {
             if (bid == excludeId) continue;
             if (!doc.isBodyVisible(bid)) continue;          // respect hidden
@@ -255,7 +276,7 @@ bool PushPullOp::execute(Document& doc) {
                 }
                 GProp_GProps gb; BRepGProp::VolumeProperties(body, gb);
                 GProp_GProps gr; BRepGProp::VolumeProperties(result, gr);
-                if (gb.Mass() - gr.Mass() < 1e-7) continue; // no real overlap
+                if (gb.Mass() - gr.Mass() < minRemoved) continue; // graze / coincident no-op
                 try {
                     ShapeUpgrade_UnifySameDomain u(result, true, true, true);
                     u.Build();
@@ -390,6 +411,37 @@ bool PushPullOp::execute(Document& doc) {
                     cut.Build();
                     if (!cut.IsDone()) continue;
                     result = cut.Shape();
+                    // CUT vs ADD: when the inward sweep passes through space
+                    // the body doesn't own (an existing hole), the cut removes
+                    // ~nothing — the gesture is a FILL, not a cut. The margin
+                    // is relative to the tool volume: coincident-face booleans
+                    // leave ~1e-3 mm³ slivers, and the plug/hole pair can
+                    // mismatch by that much noise, so an absolute epsilon
+                    // can't tell "grazed" from "cut". Fuse instead — but only
+                    // accept a result that welds into ONE solid; a prism that
+                    // merely missed the body entirely must stay a no-op, not
+                    // graft a disjoint lump onto it.
+                    double removed = 0.0, toolVol = 0.0;
+                    try {
+                        GProp_GProps gc, gr, gt;
+                        BRepGProp::VolumeProperties(current, gc);
+                        BRepGProp::VolumeProperties(result, gr);
+                        BRepGProp::VolumeProperties(prism, gt);
+                        removed = gc.Mass() - gr.Mass();
+                        toolVol = gt.Mass();
+                    } catch (...) {}
+                    if (removed < std::max(1e-6, toolVol * 1e-3)) {
+                        BRepAlgoAPI_Fuse fill(current, prism);
+                        fill.Build();
+                        if (!fill.IsDone()) continue;
+                        TopoDS_Shape fused = fill.Shape();
+                        int nSolids = 0;
+                        for (TopExp_Explorer sx(fused, TopAbs_SOLID);
+                             sx.More(); sx.Next()) ++nSolids;
+                        if (nSolids != 1 ||
+                            !BRepCheck_Analyzer(fused).IsValid()) continue;
+                        result = fused;
+                    }
                 }
                 if (m_distance < 0 && !keepsASolid(result)) {
                     std::fprintf(stderr, "Push/Pull declined for body %d: the "

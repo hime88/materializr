@@ -997,8 +997,15 @@ void Application::renderImTouchLayout() {
         const float stripX = histX + railBtnW + histGap;
         ImGui::SetNextWindowPos(ImVec2(stripX, wp.y + ws.y - m),
                                 ImGuiCond_Always, ImVec2(0.0f, 1.0f));
-        // End before the create FAB (bottom-right).
-        const float fabClear = m + 76.0f * s;
+        // Always reserve room for the WIDEST thing the bottom-right corner can
+        // host — the ✗+gap+✓ Cancel/Apply pair (44+18+56 = 118dp) — not just
+        // the single "+" create FAB (56dp). Sizing to the FAB let the expanded
+        // strip run under the Cancel ✗ during a live action (drawn OVER it on
+        // Android, UNDER on Linux, purely by z-order — #20). Reserving the pair
+        // width unconditionally keeps the strip's right edge fixed instead of
+        // popping in/out as the corner button changes. +20 = the FAB window's
+        // own padding plus a small visual gap.
+        const float fabClear = m + (44.0f + 18.0f + 56.0f + 20.0f) * s;
         ImGui::SetNextWindowSizeConstraints(
             ImVec2(0, 0), ImVec2((wp.x + ws.x - fabClear) - stripX, FLT_MAX));
         ImGui::SetNextWindowBgAlpha(0.92f);

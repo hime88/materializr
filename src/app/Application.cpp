@@ -1134,8 +1134,11 @@ void Application::renderSmallScreenWarning() {
     // Effective UI canvas in logical points (HiDPI / touch scale is already baked
     // into DisplaySize). The reference tablet sits around 893x558 and is roomy;
     // phones land well under, especially in height. Tunable constants.
-    const bool small = io.DisplaySize.x < 640.0f || io.DisplaySize.y < 470.0f;
-    if (!small) return;
+    // NB: `small` is a macro in <rpcndr.h> (#define small char), reachable via
+    // <windows.h> — renamed to avoid the MSVC collision (see the `far` note in
+    // Unfold.cpp; OCCT 7.9.3 leaks these Windows macros where 8.0 doesn't).
+    const bool tiny = io.DisplaySize.x < 640.0f || io.DisplaySize.y < 470.0f;
+    if (!tiny) return;
 
     if (!ImGui::IsPopupOpen("Small screen")) ImGui::OpenPopup("Small screen");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
@@ -3259,6 +3262,50 @@ void Application::ensureSketchSourceFace(int sketchId) {
     TopoDS_Face f = matchPass(/*requireHoles=*/true);
     if (f.IsNull()) f = matchPass(/*requireHoles=*/false);
     if (!f.IsNull()) sk->setSourceFace(f);
+}
+
+int Application::findBodyUnderRegion(const TopoDS_Face& region,
+                                     const gp_Pln& plane) const {
+    if (region.IsNull()) return -1;
+    const gp_Dir sN = plane.Axis().Direction();
+    const gp_Pnt sO = plane.Location();
+    // 2D-in-plane extent of the region (its footprint), used to confirm the
+    // sketch actually sits OVER the candidate face rather than merely sharing
+    // its infinite plane. A bounding-box overlap is robust to the region being
+    // centred on an existing hole (a centroid/point-in-face test would fail
+    // there, since the hole's centre is empty space — which is exactly the
+    // "fill the hole" case we must support).
+    Bnd_Box regionBox;
+    try { BRepBndLib::Add(region, regionBox); } catch (...) { return -1; }
+    if (regionBox.IsVoid()) return -1;
+
+    for (int bid : m_document->getAllBodyIds()) {
+        if (!m_document->isBodyVisible(bid)) continue;
+        TopoDS_Shape body;
+        try { body = m_document->getBody(bid); } catch (...) { continue; }
+        if (body.IsNull()) continue;
+        for (TopExp_Explorer ex(body, TopAbs_FACE); ex.More(); ex.Next()) {
+            TopoDS_Face bf = TopoDS::Face(ex.Current());
+            Handle(Geom_Surface) surf = BRep_Tool::Surface(bf);
+            Handle(Geom_Plane) gpln = Handle(Geom_Plane)::DownCast(surf);
+            if (gpln.IsNull()) continue;
+            const gp_Pln fPln = gpln->Pln();
+            const gp_Dir fN = fPln.Axis().Direction();
+            // Coplanar: normals parallel (either sense) and the sketch origin
+            // on the face's plane. Same tolerances as ensureSketchSourceFace.
+            if (std::abs(sN.Dot(fN)) < 0.9999) continue;
+            gp_Vec d(fPln.Location(), sO);
+            if (std::abs(d.Dot(gp_Vec(fN))) > 0.05) continue;
+            // The region's footprint must overlap this face's footprint —
+            // otherwise it's a coplanar sketch sitting off to the side of the
+            // body, which should stay free-floating.
+            Bnd_Box faceBox;
+            try { BRepBndLib::Add(bf, faceBox); } catch (...) { continue; }
+            if (faceBox.IsVoid() || faceBox.IsOut(regionBox)) continue;
+            return bid;
+        }
+    }
+    return -1;
 }
 
 bool Application::loadProjectAt(const std::string& path) {
