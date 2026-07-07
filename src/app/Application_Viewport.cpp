@@ -106,6 +106,34 @@ namespace materializr { namespace force_link { void linkAll(); } }
 // renderer plus its drag-projection helper.
 namespace materializr {
 
+// A slim draggable grip for the borderless op dialogs (push/pull, extrude,
+// fillet/chamfer, ...): a faint centred "..." strip at the top that moves the
+// window when dragged, so a panel that opened in an awkward spot can be nudged
+// aside without a full title bar. Call right after Begin(); the window must have
+// NoMove removed (grabbing the strip triggers ImGui's built-in move) and be
+// positioned with ImGuiCond_Appearing so a drag isn't re-stomped to the anchor
+// every frame.
+static void opDialogDragGrip(float s) {
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float h = 22.0f * s;   // generous strip: an easy touch target
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    // Reserve the strip as INERT space (Dummy uses id 0, so it never claims
+    // HoveredId): grabbing it triggers ImGui's OWN window move — the dialogs
+    // have NoMove removed. Built-in move handles fast flicks and edge-clamping
+    // cleanly; the earlier manual SetWindowPos drag stalled slow and snapped
+    // back on quick moves.
+    ImGui::Dummy(ImVec2(w, h));
+    const bool hov = ImGui::IsMouseHoveringRect(p0, ImVec2(p0.x + w, p0.y + h)) &&
+                     ImGui::IsWindowHovered();
+    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text, hov ? 0.6f : 0.30f);
+    const float cx = p0.x + w * 0.5f, cy = p0.y + h * 0.5f;
+    const float r = 1.5f * s, gap = 5.5f * s;
+    for (int i = -1; i <= 1; ++i)
+        dl->AddCircleFilled(ImVec2(cx + i * gap, cy), r, col);
+}
+
 // Map a screen drag onto a world direction: project the mouse delta onto the
 // screen-space image of `normal` at `origin`. Falls back to vertical drag when
 // that direction is nearly perpendicular to the screen (face head-on) — otherwise
@@ -6505,19 +6533,23 @@ void Application::renderViewport() {
                                          vwp.x + 8.0f),
                                 vwp.x + vww - 250.0f * s2);
             float ay = std::max(m_actionAnchorY + 12.0f * s2, vwp.y + 8.0f);
-            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Appearing);
             extAnchored = true;
         }
         if (!extAnchored)
             ImGui::SetNextWindowPos(ImVec2(
                 std::max(ImGui::GetWindowPos().x + 6.0f,
                          ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
-                ImGui::GetWindowPos().y + 50));
-        ImGui::SetNextWindowSize(uiSz(240, 0));
+                ImGui::GetWindowPos().y + 50), ImGuiCond_Appearing);
+        // Pin the width (min == max) so moving the panel can't feed back into
+        // the value field's content-avail width and ratchet the window wider.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f * uiScale(), 0.0f),
+                                            ImVec2(240.0f * uiScale(), 100000.0f));
         ImGui::Begin("##ExtrudeInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
             ImGuiWindowFlags_AlwaysAutoResize);
+        opDialogDragGrip(uiScale());
 
         if (!imTouchLayout()) {   // im-touch: just the value well below
             ImGui::Text("Extrude Distance (mm)");
@@ -6613,19 +6645,23 @@ void Application::renderViewport() {
                                          vwp.x + 8.0f),
                                 vwp.x + vww - 250.0f * s2);
             float ay = std::max(m_actionAnchorY + 12.0f * s2, vwp.y + 8.0f);
-            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Appearing);
             ppAnchored = true;
         }
         if (!ppAnchored)
             ImGui::SetNextWindowPos(ImVec2(
                 std::max(ImGui::GetWindowPos().x + 6.0f,
                          ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
-                ImGui::GetWindowPos().y + 50));
-        ImGui::SetNextWindowSize(uiSz(240, 0));
+                ImGui::GetWindowPos().y + 50), ImGuiCond_Appearing);
+        // Pin the width (min == max) so moving the panel can't feed back into
+        // the value field's content-avail width and ratchet the window wider.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f * uiScale(), 0.0f),
+                                            ImVec2(240.0f * uiScale(), 100000.0f));
         ImGui::Begin("##PushPullInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
             ImGuiWindowFlags_AlwaysAutoResize);
+        opDialogDragGrip(uiScale());
 
         if (!imTouchLayout()) {   // im-touch: just the value well below
             ImGui::Text(m_pushPullSymmetric ? "Distance per side (mm)"
@@ -6754,19 +6790,23 @@ void Application::renderViewport() {
                                          vwp.x + 8.0f),
                                 vwp.x + vww - 250.0f * s2);
             float ay = std::max(m_actionAnchorY + 12.0f * s2, vwp.y + 8.0f);
-            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(ax, ay), ImGuiCond_Appearing);
             edgeAnchored = true;
         }
         if (!edgeAnchored)
             ImGui::SetNextWindowPos(ImVec2(
                 std::max(ImGui::GetWindowPos().x + 6.0f,
                          ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale()),
-                ImGui::GetWindowPos().y + 50));
-        ImGui::SetNextWindowSize(uiSz(240, 0));
+                ImGui::GetWindowPos().y + 50), ImGuiCond_Appearing);
+        // Pin the width (min == max) so moving the panel can't feed back into
+        // the value field's content-avail width and ratchet the window wider.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f * uiScale(), 0.0f),
+                                            ImVec2(240.0f * uiScale(), 100000.0f));
         ImGui::Begin("##EdgeOpInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
             ImGuiWindowFlags_AlwaysAutoResize);
+        opDialogDragGrip(uiScale());
 
         if (!imTouchLayout()) {   // im-touch: just the value well below
             ImGui::Text("%s", label);
@@ -6911,12 +6951,14 @@ void Application::renderViewport() {
         ImGui::PopStyleColor();
 
         ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - 250.0f * uiScale(),
-                                       ImGui::GetWindowPos().y + 50));
-        ImGui::SetNextWindowSize(uiSz(240, 0));
+                                       ImGui::GetWindowPos().y + 50), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f * uiScale(), 0.0f),
+                                            ImVec2(240.0f * uiScale(), 100000.0f));
         ImGui::Begin("##MoveFaceInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
             ImGuiWindowFlags_AlwaysAutoResize);
+        opDialogDragGrip(uiScale());
         if (isRot) {
             // Colour the label to the active ring (red = axis B, green = A).
             ImVec4 lc = (m_moveFaceGrab == 1) ? ImVec4(0.4f, 0.95f, 0.45f, 1.0f)
@@ -7125,11 +7167,13 @@ void Application::renderViewport() {
                 vpRight = m_touchVpX + m_touchVpW;
             float winX = vpRight - winW - uiW(10.0f);
             if (winX < mvp->WorkPos.x + 6.0f) winX = mvp->WorkPos.x + 6.0f;
-            ImGui::SetNextWindowPos(ImVec2(winX, ImGui::GetWindowPos().y + 50.0f));
+            ImGui::SetNextWindowPos(ImVec2(winX, ImGui::GetWindowPos().y + 50.0f),
+                                    ImGuiCond_Appearing);
             ImGui::SetNextWindowSize(ImVec2(winW, 0.0f)); // fixed width, auto height
             ImGui::Begin("##SketchDimInput", nullptr,
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking);
+            opDialogDragGrip(uiScale());
 
             ImGui::TextColored(materializr::accentText(), "%s", dimLabel);
             ImGui::Separator();
