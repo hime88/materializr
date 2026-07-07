@@ -135,14 +135,71 @@ std::string TimelapseRecorder::frameDir() const {
     return configBaseDir() + "/timelapse/" + m_key;
 }
 
+TimelapseRecorder::TimelapseRecorder()
+    : m_videoMode(VideoEncoder::available()) {}
+
+TimelapseRecorder::~TimelapseRecorder() { closeSegment(); }
+
+void TimelapseRecorder::appendVideoFrame(const uint8_t* rgba, int w, int h) {
+    if (!m_enabled || !rgba || w <= 0 || h <= 0) return;
+    namespace fs = std::filesystem;
+    // Rotate on dimension change (window/device rotation) or segment length.
+    if (m_seg && (m_segW != w || m_segH != h)) closeSegment();
+    if (!m_seg) {
+        std::error_code ec;
+        fs::create_directories(frameDir(), ec);
+        char name[32];
+        std::snprintf(name, sizeof(name), "seg_%06d.mp4", m_segSerial);
+        auto enc = std::make_unique<VideoEncoder>();
+        if (!enc->begin(frameDir() + "/" + name, w, h, 30,
+                        /*fragmented=*/true))
+            return;
+        m_seg = std::move(enc);
+        m_segName = name;
+        m_segW = w;
+        m_segH = h;
+        m_segFrames = 0;
+        ++m_segSerial;
+    }
+    if (m_seg->addFrame(rgba)) ++m_segFrames;
+    if (m_segFrames >= 3000) closeSegment(); // ~100 s per chunk at 30 fps
+}
+
+void TimelapseRecorder::closeSegment() {
+    if (!m_seg) return;
+    m_seg->end();
+    m_seg.reset();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (m_segFrames > 0) {
+        m_closedSegs.emplace_back(m_segName, m_segFrames);
+        // Ledger line "name frames" — frame counts survive restarts.
+        std::ofstream os(frameDir() + "/segments.txt", std::ios::app);
+        os << m_segName << ' ' << m_segFrames << '\n';
+    } else {
+        fs::remove(frameDir() + "/" + m_segName, ec); // empty segment
+    }
+    m_segFrames = 0;
+    m_segName.clear();
+}
+
+std::vector<std::string> TimelapseRecorder::segmentPaths() const {
+    std::vector<std::string> out;
+    out.reserve(m_closedSegs.size());
+    for (const auto& s : m_closedSegs) out.push_back(frameDir() + "/" + s.first);
+    return out;
+}
+
 void TimelapseRecorder::bindProject(const std::string& projectRef,
                                     bool carryFrames) {
     namespace fs = std::filesystem;
     const std::string newKey = projectKey(projectRef);
-    if (newKey == m_key && !m_frames.empty()) return;
+    if (newKey == m_key && frameCount() > 0) return;
+
+    closeSegment(); // never leave an open encoder writing into the old key
 
     const std::string oldDir = frameDir();
-    const bool hadFrames = !m_frames.empty();
+    const bool hadFrames = frameCount() > 0;
     m_key = newKey;
     const std::string newDir = frameDir();
 
@@ -151,19 +208,37 @@ void TimelapseRecorder::bindProject(const std::string& projectRef,
         fs::create_directories(fs::path(newDir).parent_path(), ec);
         fs::rename(oldDir, newDir, ec); // Save As adopts the unsaved recording
     }
+    loadStore();
+}
 
-    // (Re)load the frame listing for the bound project.
+void TimelapseRecorder::loadStore() {
+    namespace fs = std::filesystem;
     m_frames.clear();
     m_nextSerial = 0;
-    if (fs::exists(newDir, ec)) {
-        for (const auto& e : fs::directory_iterator(newDir, ec))
-            if (e.is_regular_file() && e.path().extension() == ".mzf")
-                m_frames.push_back(e.path().filename().string());
-        std::sort(m_frames.begin(), m_frames.end());
-        if (!m_frames.empty()) {
-            // Serials keep growing past the highest existing one.
-            m_nextSerial = std::atoi(m_frames.back().c_str()) + 1;
-        }
+    m_closedSegs.clear();
+    m_segSerial = 0;
+    std::error_code ec;
+    const std::string dir = frameDir();
+    if (!fs::exists(dir, ec)) return;
+
+    for (const auto& e : fs::directory_iterator(dir, ec))
+        if (e.is_regular_file() && e.path().extension() == ".mzf")
+            m_frames.push_back(e.path().filename().string());
+    std::sort(m_frames.begin(), m_frames.end());
+    if (!m_frames.empty())
+        m_nextSerial = std::atoi(m_frames.back().c_str()) + 1;
+
+    // Segment ledger: keep entries whose file still exists; the serial
+    // continues past the highest seen.
+    std::ifstream is(dir + "/segments.txt");
+    std::string name;
+    int frames = 0;
+    while (is >> name >> frames) {
+        if (!fs::exists(dir + "/" + name, ec)) continue;
+        m_closedSegs.emplace_back(name, frames);
+        int serial = 0;
+        if (std::sscanf(name.c_str(), "seg_%d.mp4", &serial) == 1)
+            m_segSerial = std::max(m_segSerial, serial + 1);
     }
 }
 
@@ -201,6 +276,10 @@ void TimelapseRecorder::captureFromTexture(unsigned texture, int w, int h,
         std::memcpy(b, row.data(), row.size());
     }
 
+    if (m_videoMode) {
+        appendVideoFrame(pixels.data(), w, h);
+        return;
+    }
     storeFrame(pixels.data(), w, h, moveFrame);
 }
 
@@ -275,9 +354,15 @@ void TimelapseRecorder::thinIfOverCap() {
 void TimelapseRecorder::clearFrames() {
     namespace fs = std::filesystem;
     std::error_code ec;
+    closeSegment();
     for (const auto& f : m_frames) fs::remove(frameDir() + "/" + f, ec);
     m_frames.clear();
     m_nextSerial = 0;
+    for (const auto& sfr : m_closedSegs)
+        fs::remove(frameDir() + "/" + sfr.first, ec);
+    m_closedSegs.clear();
+    m_segSerial = 0;
+    fs::remove(frameDir() + "/segments.txt", ec);
 }
 
 bool TimelapseRecorder::encodeGif(const std::string& dir,

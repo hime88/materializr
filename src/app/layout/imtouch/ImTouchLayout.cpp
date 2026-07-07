@@ -241,18 +241,18 @@ void Application::renderImTouchLayout() {
                 ImGui::TextDisabled("%d frame%s recorded", n, n == 1 ? "" : "s");
                 ImGui::Separator();
                 ImGui::BeginDisabled(n < 2);
-                if (ImGui::MenuItem("Export GIF (full length)"))
-                    exportTimelapse(0);
-                if (ImGui::MenuItem("Export GIF (30 seconds)"))
-                    exportTimelapse(30);
-                // MP4: hardware encoder on iOS, ffmpeg-on-PATH on desktop;
-                // absent where neither exists (Windows, Android for now).
-                static const bool videoOk = VideoEncoder::available();
-                if (videoOk) {
-                    if (ImGui::MenuItem("Export MP4 (full length)"))
+                if (m_timelapse && m_timelapse->videoMode()) {
+                    // Chunked H.264 recording (iOS hardware / desktop ffmpeg).
+                    if (ImGui::MenuItem("Export video (full length)"))
                         exportTimelapse(0, /*asMp4=*/true);
-                    if (ImGui::MenuItem("Export MP4 (30 seconds)"))
+                    if (ImGui::MenuItem("Export video (30 seconds)"))
                         exportTimelapse(30, /*asMp4=*/true);
+                } else {
+                    // Pixel-store fallback (Windows/Android): GIF only.
+                    if (ImGui::MenuItem("Export GIF (full length)"))
+                        exportTimelapse(0);
+                    if (ImGui::MenuItem("Export GIF (30 seconds)"))
+                        exportTimelapse(30);
                 }
                 ImGui::EndDisabled();
                 ImGui::Separator();

@@ -51,7 +51,7 @@ VideoEncoder::~VideoEncoder() {
 bool VideoEncoder::available() { return !findFfmpeg().empty(); }
 
 bool VideoEncoder::begin(const std::string& path, int width, int height,
-                         int fps) {
+                         int fps, bool fragmented) {
     if (m_pipe >= 0 || width <= 0 || height <= 0) return false;
     const std::string ffmpeg = findFfmpeg();
     if (ffmpeg.empty()) return false;
@@ -65,6 +65,10 @@ bool VideoEncoder::begin(const std::string& path, int width, int height,
     char size[32], rate[16];
     std::snprintf(size, sizeof(size), "%dx%d", width, height);
     std::snprintf(rate, sizeof(rate), "%d", fps);
+    // Fragmented segments survive a crash (readable up to the last fragment);
+    // one-shot exports keep the streamable faststart layout.
+    const char* movflags =
+        fragmented ? "+frag_keyframe+empty_moov" : "+faststart";
     // yuv420p requires even dimensions; the scale filter floors odd sizes.
     const char* argv[] = {
         ffmpeg.c_str(), "-y",           "-loglevel", "error",
@@ -74,7 +78,7 @@ bool VideoEncoder::begin(const std::string& path, int width, int height,
         "-vf",          "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:v",         "libx264",      "-preset",   "veryfast",
         "-crf",         "20",           "-pix_fmt",  "yuv420p",
-        "-movflags",    "+faststart",   path.c_str(), nullptr};
+        "-movflags",    movflags,       path.c_str(), nullptr};
 
     const pid_t pid = fork();
     if (pid < 0) {
@@ -126,13 +130,93 @@ bool VideoEncoder::end() {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+namespace {
+
+// Spawn ffmpeg with the given arguments (no stdin pipe) and wait. argv-array
+// exec, no shell — same posture as the streaming path above.
+bool runFfmpeg(const std::vector<std::string>& args) {
+    const std::string ffmpeg = findFfmpeg();
+    if (ffmpeg.empty()) return false;
+    std::vector<const char*> argv;
+    argv.push_back(ffmpeg.c_str());
+    for (const auto& a : args) argv.push_back(a.c_str());
+    argv.push_back(nullptr);
+    const pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        const int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            close(devnull);
+        }
+        execv(ffmpeg.c_str(), const_cast<char* const*>(argv.data()));
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+} // namespace
+
+bool VideoEncoder::concatSegments(const std::vector<std::string>& segments,
+                                  const std::string& outPath, int totalFrames,
+                                  int condenseSeconds, std::string* err) {
+    if (segments.empty()) {
+        if (err) *err = "Nothing recorded yet.";
+        return false;
+    }
+    // ffmpeg concat demuxer wants a list file: file '<path>' per line.
+    const std::string listPath = outPath + ".list.txt";
+    {
+        FILE* fp = std::fopen(listPath.c_str(), "w");
+        if (!fp) {
+            if (err) *err = "Couldn't write " + listPath;
+            return false;
+        }
+        for (const auto& s : segments)
+            std::fprintf(fp, "file '%s'\n", s.c_str());
+        std::fclose(fp);
+    }
+    std::vector<std::string> args = {"-y",    "-loglevel", "error",
+                                     "-f",    "concat",    "-safe",
+                                     "0",     "-i",        listPath};
+    const int targetFrames = condenseSeconds * 30;
+    if (condenseSeconds > 0 && totalFrames > targetFrames) {
+        char setpts[64];
+        std::snprintf(setpts, sizeof(setpts), "setpts=%.6f*PTS",
+                      double(targetFrames) / double(totalFrames));
+        const std::vector<std::string> tail = {
+            "-vf",  setpts,      "-r",        "30",       "-c:v",
+            "libx264", "-preset", "veryfast", "-crf",     "20",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", outPath};
+        args.insert(args.end(), tail.begin(), tail.end());
+    } else {
+        const std::vector<std::string> tail = {"-c", "copy", "-movflags",
+                                               "+faststart", outPath};
+        args.insert(args.end(), tail.begin(), tail.end());
+    }
+    const bool ok = runFfmpeg(args);
+    std::remove(listPath.c_str());
+    if (!ok && err) *err = "ffmpeg failed to assemble the video.";
+    return ok;
+}
+
 #elif !defined(MZ_IOS) // stubs: Windows + Android (iOS lives in ios_videowriter.mm)
 
 VideoEncoder::~VideoEncoder() = default;
 bool VideoEncoder::available() { return false; }
-bool VideoEncoder::begin(const std::string&, int, int, int) { return false; }
+bool VideoEncoder::begin(const std::string&, int, int, int, bool) {
+    return false;
+}
 bool VideoEncoder::addFrame(const uint8_t*) { return false; }
 bool VideoEncoder::end() { return false; }
+bool VideoEncoder::concatSegments(const std::vector<std::string>&,
+                                  const std::string&, int, int,
+                                  std::string* err) {
+    if (err) *err = "Video export is not available on this platform.";
+    return false;
+}
 
 #endif
 

@@ -7360,7 +7360,10 @@ void Application::renderTimelapseFrame() {
 
     const glm::vec3 pos = cam.getPosition(), tgt = cam.getTarget(),
                     up = cam.getUp();
-    if (haveLast && lastOrtho == cam.isOrthographic()) {
+    // Video mode records real camera motion at ~10 Hz — synthetic glide
+    // fillers are only for the sparse pixel-store fallback.
+    if (!m_timelapse->videoMode() && haveLast &&
+        lastOrtho == cam.isOrthographic()) {
         const float scale = std::max(glm::length(pos - tgt), 1e-3f);
         const float moved = (glm::length(pos - lastPos) +
                              glm::length(tgt - lastTarget)) / scale;

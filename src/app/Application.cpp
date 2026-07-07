@@ -64,6 +64,7 @@ inline void resetFpuForOcct() {
 #include "ui/AboutDialog.h"
 #include "ui/WelcomeScreen.h"
 #include "io/Timelapse.h"
+#include "io/VideoEncoder.h"
 #include "ui_layout_bridge.h"
 #include <fstream>
 #include "ios_storekit.h"
@@ -4947,13 +4948,35 @@ void Application::updateTimelapse() {
         m_tlBoundRef = m_currentProjectPath;
         m_tlBound = true;
         m_tlLastRevision = rev;
+    } else if (m_timelapse->enabled() && m_timelapse->videoMode() &&
+               m_viewport) {
+        // Video mode: ~10 Hz ACTION sampling. A frame is worth storing when
+        // the camera moved, the history changed, or a drag preview is live —
+        // idle time appends nothing, so the recording is pure action. One
+        // trailing frame lands after action settles so every burst ends on
+        // its final state.
+        const Camera& c = m_viewport->getCamera();
+        const glm::vec3 pos = c.getPosition(), tgt = c.getTarget();
+        const float viewDist = std::max(glm::length(pos - tgt), 1e-3f);
+        const bool camMoved = (glm::length(pos - m_tlLastCamPos) +
+                               glm::length(tgt - m_tlLastCamTgt)) /
+                                  viewDist > 0.002f;
+        const bool dragging = anyInteractivePreviewActive();
+        const bool commitPending = rev != m_tlLastRevision && !m_meshesDirty;
+        const bool action = camMoved || dragging || commitPending;
+        const double now = ImGui::GetTime();
+        if ((action || m_tlTrailing) && now - m_tlLastCapture >= 0.1) {
+            m_tlLastRevision = rev;
+            m_tlLastCapture = now;
+            m_tlLastCamPos = pos;
+            m_tlLastCamTgt = tgt;
+            m_tlTrailing = action; // capture once more after the burst ends
+            renderTimelapseFrame();
+        }
     } else if (m_timelapse->enabled()) {
-        // Two capture triggers, both rendered from the canonical turntable
-        // camera (renderTimelapseFrame): a settled history commit, and — for
-        // motion — an in-progress interactive drag (the preview/ghost meshes
-        // live in the shape renderer, so they capture like anything else).
-        // The interval guard coalesces undo/redo storms and paces drags to
-        // ~4 fps.
+        // Pixel-store fallback (Windows/Android): a settled history commit or
+        // an in-progress drag, paced to ~4 fps; camera moves get synthetic
+        // glide fillers inside renderTimelapseFrame.
         const bool commitPending = rev != m_tlLastRevision && !m_meshesDirty;
         const bool dragging = anyInteractivePreviewActive();
         const double now = ImGui::GetTime();
@@ -4995,7 +5018,7 @@ void Application::updateTimelapse() {
 void Application::exportTimelapse(int condenseSeconds, bool asMp4) {
     if (!m_timelapse) return;
     if (m_timelapse->frameCount() < 2) {
-        showToast("No timelapse yet — it records a frame per modelling step.");
+        showToast("No timelapse yet — it records as you model.");
         return;
     }
     if (m_tlExportFuture.valid()) {
@@ -5003,6 +5026,34 @@ void Application::exportTimelapse(int condenseSeconds, bool asMp4) {
         return;
     }
     std::error_code ec;
+
+    if (m_timelapse->videoMode()) {
+        // Chunked recording: finalize the open segment (cheap, main thread),
+        // then assemble on a worker — a lossless concat for full length, a
+        // retimed re-encode for the condensed cut.
+        m_timelapse->closeSegment();
+        const auto segs = m_timelapse->segmentPaths();
+        if (segs.empty()) {
+            showToast("No timelapse yet — it records as you model.");
+            return;
+        }
+        const int total = m_timelapse->frameCount();
+        m_tlExportTmp = (std::filesystem::temp_directory_path(ec) /
+                         "materializr-timelapse.mp4").string();
+        showToast("Assembling timelapse\xE2\x80\xA6");
+        m_tlExportFuture = std::async(
+            std::launch::async,
+            [segs, out = m_tlExportTmp, total, condenseSeconds]() -> std::string {
+                std::string err;
+                if (VideoEncoder::concatSegments(segs, out, total,
+                                                 condenseSeconds, &err))
+                    return std::string();
+                return err.empty() ? std::string("unknown error") : err;
+            });
+        return;
+    }
+
+    // Pixel-store fallback: encode GIF (or ffmpeg MP4) from the .mzf frames.
     m_tlExportTmp = (std::filesystem::temp_directory_path(ec) /
                      (asMp4 ? "materializr-timelapse.mp4"
                             : "materializr-timelapse.gif")).string();

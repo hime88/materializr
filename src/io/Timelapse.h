@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,8 +18,26 @@ namespace materializr {
 // a frame deleted concurrently (cap thinning) is skipped, not fatal.
 class TimelapseRecorder {
 public:
+    TimelapseRecorder();
+    ~TimelapseRecorder(); // finalizes the open video segment
+
     void setEnabled(bool on) { m_enabled = on; }
     bool enabled() const { return m_enabled; }
+
+    // True where a video backend exists (desktop ffmpeg, iOS AVAssetWriter):
+    // frames stream into rolling fragmented MP4 segments instead of .mzf
+    // pixel files — ~50-200 KB/frame becomes video-codec small, and exports
+    // are a concat (full) or a retime (condensed). Windows/Android keep the
+    // pixel store + GIF path until an AMediaCodec backend lands.
+    bool videoMode() const { return m_videoMode; }
+
+    // Video mode: append one frame to the current segment (opens/rotates
+    // segments as needed). Public as the headless-test entry.
+    void appendVideoFrame(const uint8_t* rgba, int w, int h);
+    // Finalize the open segment (app quit, project switch, before export).
+    void closeSegment();
+    // Closed segments, oldest first, as full paths.
+    std::vector<std::string> segmentPaths() const;
 
     // Bind the store to the current document ("" = unsaved). When carryFrames
     // is true and the previous binding has frames but the new one has none,
@@ -36,7 +55,12 @@ public:
     // append `rgba` (w×h×4, top-left origin).
     void storeFrame(const uint8_t* rgba, int w, int h, bool moveFrame = false);
 
-    int frameCount() const { return static_cast<int>(m_frames.size()); }
+    int frameCount() const {
+        if (!m_videoMode) return static_cast<int>(m_frames.size());
+        int n = m_segFrames;
+        for (const auto& s : m_closedSegs) n += s.second;
+        return n;
+    }
     void clearFrames();
 
     // Snapshot for a worker-thread encode: take these on the main thread
@@ -66,11 +90,19 @@ private:
     void appendFrameFile(const std::vector<uint8_t>& rgba, int w, int h,
                          bool moveFrame);
     void thinIfOverCap();
+    void loadStore(); // (re)read frame/segment listings for the bound key
 
     bool m_enabled = true;
+    bool m_videoMode = false;
     std::string m_key = "_unsaved";
     std::vector<std::string> m_frames; // ordered file names within frameDir()
     int m_nextSerial = 0;
+
+    // Video mode: the open segment + the closed-segment ledger (name, frames).
+    std::unique_ptr<class VideoEncoder> m_seg;
+    std::string m_segName;
+    int m_segW = 0, m_segH = 0, m_segFrames = 0, m_segSerial = 0;
+    std::vector<std::pair<std::string, int>> m_closedSegs;
 };
 
 } // namespace materializr

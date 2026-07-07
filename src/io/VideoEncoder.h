@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace materializr {
 
@@ -18,9 +19,21 @@ public:
 
     static bool available();
 
-    bool begin(const std::string& path, int width, int height, int fps);
+    // fragmented=true writes recoverable fragmented MP4 (a crash mid-segment
+    // loses at most the tail, not the file) — used for the rolling recording
+    // segments; exports keep plain faststart MP4.
+    bool begin(const std::string& path, int width, int height, int fps,
+               bool fragmented = false);
     bool addFrame(const uint8_t* rgba); // width*height*4, top-left origin
     bool end();                          // finalizes; true when the encoder succeeded
+
+    // Concatenate finished segments (same codec/dimensions, in order) into
+    // one MP4. condenseSeconds > 0 retimes the whole thing to that length
+    // (re-encode); <= 0 stream-copies losslessly. totalFrames = sum of frames
+    // across segments (for the retime ratio).
+    static bool concatSegments(const std::vector<std::string>& segments,
+                               const std::string& outPath, int totalFrames,
+                               int condenseSeconds, std::string* err);
 
 private:
     int m_pipe = -1;        // ffmpeg backend

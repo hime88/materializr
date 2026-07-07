@@ -219,21 +219,21 @@ void Application::renderFileMenuItems(bool withSettings) {
             ImGui::PopID();
         }
         // Timelapse — the desktop surface for the recording the im-touch
-        // timelapse button owns (frames captured per committed step). MP4
-        // entries appear only when an ffmpeg binary is on PATH.
+        // timelapse button owns. Video where a backend exists (chunked H.264
+        // recording); GIF from the pixel-store fallback otherwise.
         ImGui::Separator();
         const int tlFrames = m_timelapse ? m_timelapse->frameCount() : 0;
         ImGui::BeginDisabled(tlFrames < 2);
-        if (ImGui::MenuItem("Timelapse GIF (full length)..."))
-            exportTimelapse(0);
-        if (ImGui::MenuItem("Timelapse GIF (30 seconds)..."))
-            exportTimelapse(30);
-        static const bool ffmpegHere = VideoEncoder::available();
-        if (ffmpegHere) {
-            if (ImGui::MenuItem("Timelapse MP4 (full length)..."))
+        if (m_timelapse && m_timelapse->videoMode()) {
+            if (ImGui::MenuItem("Timelapse video (full length)..."))
                 exportTimelapse(0, /*asMp4=*/true);
-            if (ImGui::MenuItem("Timelapse MP4 (30 seconds)..."))
+            if (ImGui::MenuItem("Timelapse video (30 seconds)..."))
                 exportTimelapse(30, /*asMp4=*/true);
+        } else {
+            if (ImGui::MenuItem("Timelapse GIF (full length)..."))
+                exportTimelapse(0);
+            if (ImGui::MenuItem("Timelapse GIF (30 seconds)..."))
+                exportTimelapse(30);
         }
         ImGui::EndDisabled();
         ImGui::EndMenu();

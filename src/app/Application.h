@@ -602,6 +602,9 @@ private:
     std::string m_tlBoundRef;            // project ref the store is bound to
     unsigned m_tlLastRevision = 0;       // History::revision() already captured
     double m_tlLastCapture = 0.0;        // ImGui time of last capture (storm guard)
+    glm::vec3 m_tlLastCamPos{0.0f};      // video mode: camera pose at last capture
+    glm::vec3 m_tlLastCamTgt{0.0f};
+    bool m_tlTrailing = false;           // video mode: one settled frame after action
     std::future<std::string> m_tlExportFuture; // "" = ok, else error message
     std::string m_tlExportTmp;           // encode target handed to the save dialog
 

@@ -45,7 +45,7 @@ VideoEncoder::~VideoEncoder() {
 bool VideoEncoder::available() { return true; }
 
 bool VideoEncoder::begin(const std::string& path, int width, int height,
-                         int fps) {
+                         int fps, bool fragmented) {
     if (m_impl || width <= 0 || height <= 0) return false;
     @autoreleasepool {
         auto* im = new WriterImpl;
@@ -87,6 +87,11 @@ bool VideoEncoder::begin(const std::string& path, int width, int height,
             return false;
         }
         [im->writer addInput:im->input];
+        if (fragmented) {
+            // Recoverable QuickTime fragments: a crash mid-segment loses at
+            // most the last ~2 s, not the whole file.
+            im->writer.movieFragmentInterval = CMTimeMake(2, 1);
+        }
         if (![im->writer startWriting]) {
             delete im;
             return false;
@@ -160,6 +165,77 @@ bool VideoEncoder::end() {
     delete im;
     m_impl = nullptr;
     return ok;
+}
+
+bool VideoEncoder::concatSegments(const std::vector<std::string>& segments,
+                                  const std::string& outPath, int totalFrames,
+                                  int condenseSeconds, std::string* err) {
+    (void)totalFrames;
+    if (segments.empty()) {
+        if (err) *err = "Nothing recorded yet.";
+        return false;
+    }
+    @autoreleasepool {
+        AVMutableComposition* comp = [AVMutableComposition composition];
+        AVMutableCompositionTrack* track = [comp
+            addMutableTrackWithMediaType:AVMediaTypeVideo
+                        preferredTrackID:kCMPersistentTrackID_Invalid];
+        CMTime cursor = kCMTimeZero;
+        for (const auto& segPath : segments) {
+            NSURL* u = [NSURL fileURLWithPath:@(segPath.c_str())];
+            AVURLAsset* asset = [AVURLAsset URLAssetWithURL:u options:nil];
+            AVAssetTrack* v =
+                [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+            if (!v) continue; // unreadable segment: skip, keep the rest
+            NSError* e = nil;
+            if ([track insertTimeRange:CMTimeRangeMake(kCMTimeZero,
+                                                       asset.duration)
+                               ofTrack:v
+                                atTime:cursor
+                                 error:&e] &&
+                !e)
+                cursor = CMTimeAdd(cursor, asset.duration);
+        }
+        if (CMTimeCompare(cursor, kCMTimeZero) == 0) {
+            if (err) *err = "Recorded segments could not be read.";
+            return false;
+        }
+
+        const double totalSec = CMTimeGetSeconds(cursor);
+        const bool retime =
+            condenseSeconds > 0 && totalSec > double(condenseSeconds);
+        if (retime)
+            [comp scaleTimeRange:CMTimeRangeMake(kCMTimeZero, cursor)
+                      toDuration:CMTimeMake(condenseSeconds, 1)];
+
+        // Passthrough concatenates without re-encoding; a retimed timeline
+        // gets a proper re-encode so players honour the new timestamps.
+        NSString* preset = retime ? AVAssetExportPresetHighestQuality
+                                  : AVAssetExportPresetPassthrough;
+        AVAssetExportSession* ex =
+            [[AVAssetExportSession alloc] initWithAsset:comp
+                                             presetName:preset];
+        NSURL* out = [NSURL fileURLWithPath:@(outPath.c_str())];
+        [[NSFileManager defaultManager] removeItemAtURL:out error:nil];
+        ex.outputURL = out;
+        ex.outputFileType = AVFileTypeMPEG4;
+        ex.shouldOptimizeForNetworkUse = YES;
+
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        [ex exportAsynchronouslyWithCompletionHandler:^{
+          dispatch_semaphore_signal(done);
+        }];
+        dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+        if (ex.status != AVAssetExportSessionStatusCompleted) {
+            if (err)
+                *err = ex.error
+                           ? std::string(
+                                 ex.error.localizedDescription.UTF8String)
+                           : std::string("Video export failed.");
+            return false;
+        }
+        return true;
+    }
 }
 
 } // namespace materializr
