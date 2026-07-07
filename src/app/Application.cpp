@@ -63,6 +63,7 @@ inline void resetFpuForOcct() {
 #include "ui/PropertiesPanel.h"
 #include "ui/AboutDialog.h"
 #include "ui/WelcomeScreen.h"
+#include "io/Timelapse.h"
 #include "ui_layout_bridge.h"
 #include <fstream>
 #include "ios_storekit.h"
@@ -239,6 +240,7 @@ Application::Application(bool safeMode) : m_safeMode(safeMode) {
     m_propertiesPanel = std::make_unique<PropertiesPanel>();
     m_aboutDialog = std::make_unique<AboutDialog>();
     m_welcomeScreen = std::make_unique<WelcomeScreen>();
+    m_timelapse = std::make_unique<TimelapseRecorder>();
 #if defined(MZ_IOS)
     // StoreKit observer must attach at launch (Apple requirement) so a
     // Supporter purchase interrupted in a previous run is redelivered; the
@@ -1338,6 +1340,7 @@ AppSettings Application::currentSettings() const {
     s.checkForUpdatesOnLaunch = m_checkForUpdatesOnLaunch;
     s.includePrereleases = m_includePrereleases;
     s.supporter = m_supporter;
+    s.timelapseRecord = m_timelapseRecord;
     s.snapToGrid = m_snapToGrid;
     s.sketchGridStep = m_sketchGridStep;
     // Mirror the live sketch-tool inference level back into the saved settings
@@ -1418,6 +1421,8 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_checkForUpdatesOnLaunch = s.checkForUpdatesOnLaunch;
     m_includePrereleases = s.includePrereleases;
     m_supporter = s.supporter;
+    m_timelapseRecord = s.timelapseRecord;
+    if (m_timelapse) m_timelapse->setEnabled(m_timelapseRecord);
     m_snapToGrid = s.snapToGrid;
     m_sketchGridStep = s.sketchGridStep;
     m_showInferenceToolbarToggle = s.showInferenceToolbarToggle;
@@ -4924,6 +4929,86 @@ void Application::renderSketchRecoveryPrompt() {
     }
 }
 
+void Application::updateTimelapse() {
+    if (!m_timelapse) return;
+
+    // Follow the current document. A revision jump alongside the path change
+    // means a project load (fresh history) — don't carry frames; a plain path
+    // change with an unchanged history is Save As adopting the unsaved
+    // session's recording.
+    const unsigned rev = m_history ? m_history->revision() : 0;
+    if (!m_tlBound || m_currentProjectPath != m_tlBoundRef) {
+        const bool carry = m_tlBound && rev == m_tlLastRevision;
+        m_timelapse->bindProject(m_currentProjectPath, carry);
+        m_tlBoundRef = m_currentProjectPath;
+        m_tlBound = true;
+        m_tlLastRevision = rev;
+    } else if (m_timelapse->enabled() && rev != m_tlLastRevision &&
+               !m_meshesDirty && m_viewport) {
+        // Capture once the meshes settled; the interval guard coalesces
+        // undo/redo storms into one frame of the final state.
+        const double now = ImGui::GetTime();
+        if (now - m_tlLastCapture >= 0.25) {
+            m_tlLastRevision = rev;
+            m_tlLastCapture = now;
+            m_timelapse->captureFromTexture(m_viewport->getTextureID(),
+                                            m_viewport->getWidth(),
+                                            m_viewport->getHeight());
+        }
+    }
+
+    // Finished background encode → hand the ready GIF to the export dialog
+    // (which copies it to the chosen destination / share target).
+    if (m_tlExportFuture.valid() &&
+        m_tlExportFuture.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+        const std::string err = m_tlExportFuture.get();
+        if (!err.empty()) {
+            showToast("Timelapse export failed: " + err);
+        } else {
+            const std::string tmp = m_tlExportTmp;
+            FileDialogs::exportFile(
+                "Save Timelapse", "timelapse.gif", "image/gif",
+                {{"GIF animation", "*.gif"}},
+                [this, tmp](const std::string& dest) -> bool {
+                    std::error_code ec;
+                    std::filesystem::copy_file(
+                        tmp, dest,
+                        std::filesystem::copy_options::overwrite_existing, ec);
+                    if (!ec) showToast("Timelapse saved.");
+                    return !ec;
+                });
+        }
+    }
+}
+
+void Application::exportTimelapse(int condenseSeconds) {
+    if (!m_timelapse) return;
+    if (m_timelapse->frameCount() < 2) {
+        showToast("No timelapse yet — it records a frame per modelling step.");
+        return;
+    }
+    if (m_tlExportFuture.valid()) {
+        showToast("A timelapse export is already running.");
+        return;
+    }
+    std::error_code ec;
+    m_tlExportTmp = (std::filesystem::temp_directory_path(ec) /
+                     "materializr-timelapse.gif").string();
+    showToast("Encoding timelapse\xE2\x80\xA6");
+    // Snapshot on this thread (captures mutate the list), encode on a worker.
+    m_tlExportFuture = std::async(
+        std::launch::async,
+        [dir = m_timelapse->frameDirPath(), names = m_timelapse->frameSnapshot(),
+         out = m_tlExportTmp, condenseSeconds]() -> std::string {
+            std::string err;
+            if (TimelapseRecorder::encodeGif(dir, names, out, condenseSeconds,
+                                             &err))
+                return std::string();
+            return err.empty() ? std::string("unknown error") : err;
+        });
+}
+
 void Application::restoreSketchDraftNow() {
     Sketch draft;
     materializr::SketchDraftMeta meta;
@@ -5638,6 +5723,7 @@ void Application::run() {
                 showToast("Thank you for supporting Materializr!", 6.0);
             }
 #endif
+            updateTimelapse();
             renderUpdatePopup();
             renderMultiTransformPanel();
             renderResizeCylindricalPanel();

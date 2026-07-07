@@ -17,6 +17,7 @@
 #include "plugin/PluginContext.h"
 #include "plugin/PluginRegistry.h"
 #include "ui/AboutDialog.h"
+#include "io/Timelapse.h"   // File > Export > Timelapse GIF
 #include "ui/HelpPanel.h"
 #include "ui/LogoTexture.h"
 #include "ui/ShortcutsPanel.h"
@@ -216,6 +217,16 @@ void Application::renderFileMenuItems(bool withSettings) {
             }
             ImGui::PopID();
         }
+        // Timelapse GIF — the desktop surface for the recording the im-touch
+        // timelapse button owns (frames captured per committed step).
+        ImGui::Separator();
+        const int tlFrames = m_timelapse ? m_timelapse->frameCount() : 0;
+        ImGui::BeginDisabled(tlFrames < 2);
+        if (ImGui::MenuItem("Timelapse GIF (full length)..."))
+            exportTimelapse(0);
+        if (ImGui::MenuItem("Timelapse GIF (30 seconds)..."))
+            exportTimelapse(30);
+        ImGui::EndDisabled();
         ImGui::EndMenu();
     }
 

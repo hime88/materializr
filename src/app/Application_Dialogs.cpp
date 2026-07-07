@@ -1,5 +1,6 @@
 #include "ui/UiTheme.h"
 #include "ui/TouchWidgets.h" // im-touch number-pad amount fields
+#include "io/Timelapse.h"    // Settings > General > Timelapse toggle
 #include "ui_scale.h"
 #include "touch_mode.h"
 #include "gl_common.h"
@@ -179,6 +180,18 @@ void Application::renderSettings() {
                                        "pre-release builds (e.g. 1.3.0-beta.1) — early access to "
                                        "the next version's features, which may be rougher. Off "
                                        "keeps you on stable releases only.");
+
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Timelapse");
+                    if (ImGui::Checkbox("Record a timelapse of your work", &m_timelapseRecord)) {
+                        if (m_timelapse) m_timelapse->setEnabled(m_timelapseRecord);
+                        changed = true;
+                    }
+                    ImGui::TextWrapped("Stores one small viewport frame per modelling step, per "
+                                       "project, on this device only — export it as a GIF of the "
+                                       "part building itself (in the im-touch layout: the "
+                                       "timelapse button, top right). Turning this off stops "
+                                       "recording but keeps the frames already stored.");
                     ImGui::EndTabItem();
                 }
 

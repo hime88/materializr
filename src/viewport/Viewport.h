@@ -31,6 +31,10 @@ public:
     /// Get the color texture ID for ImGui::Image().
     unsigned int getTextureID() const { return m_colorTexture; }
 
+    /// Current framebuffer dimensions in pixels.
+    int getWidth() const { return m_width; }
+    int getHeight() const { return m_height; }
+
     /// Access the camera.
     Camera& getCamera() { return m_camera; }
     const Camera& getCamera() const { return m_camera; }

@@ -51,6 +51,7 @@ class Toolbar;
 class HistoryPanel;
 class AboutDialog;
 class WelcomeScreen;
+class TimelapseRecorder;
 class ShortcutsPanel;
 class HelpPanel;
 class MeasureTool;
@@ -582,6 +583,19 @@ private:
     void writeSketchDraftIfDue();        // throttled per-frame draft write
     void renderSketchRecoveryPrompt();   // startup "restore unfinished sketch?" modal
     void restoreSketchDraftNow();        // re-enter sketch mode with the saved draft
+
+    // Always-on timelapse (io/Timelapse): one frame per committed history
+    // mutation, per-project store, GIF export from the im-touch button.
+    void updateTimelapse();              // per-frame: bind/capture/export poll
+    void exportTimelapse(int condenseSeconds); // 0 = full length, N = fit N seconds
+    std::unique_ptr<TimelapseRecorder> m_timelapse;
+    bool m_timelapseRecord = true;       // persisted mirror (AppSettings::timelapseRecord)
+    bool m_tlBound = false;              // bindProject ran at least once
+    std::string m_tlBoundRef;            // project ref the store is bound to
+    unsigned m_tlLastRevision = 0;       // History::revision() already captured
+    double m_tlLastCapture = 0.0;        // ImGui time of last capture (storm guard)
+    std::future<std::string> m_tlExportFuture; // "" = ok, else error message
+    std::string m_tlExportTmp;           // encode target handed to the save dialog
 
     // Whole-project crash/hang recovery (see io/ProjectRecovery). Independent of
     // the user-facing autosave (which only writes a SAVED file): the committed
