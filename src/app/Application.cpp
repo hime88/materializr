@@ -1131,8 +1131,11 @@ void Application::renderSmallScreenWarning() {
     // Effective UI canvas in logical points (HiDPI / touch scale is already baked
     // into DisplaySize). The reference tablet sits around 893x558 and is roomy;
     // phones land well under, especially in height. Tunable constants.
-    const bool small = io.DisplaySize.x < 640.0f || io.DisplaySize.y < 470.0f;
-    if (!small) return;
+    // NB: `small` is a macro in <rpcndr.h> (#define small char), reachable via
+    // <windows.h> — renamed to avoid the MSVC collision (see the `far` note in
+    // Unfold.cpp; OCCT 7.9.3 leaks these Windows macros where 8.0 doesn't).
+    const bool tiny = io.DisplaySize.x < 640.0f || io.DisplaySize.y < 470.0f;
+    if (!tiny) return;
 
     if (!ImGui::IsPopupOpen("Small screen")) ImGui::OpenPopup("Small screen");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),

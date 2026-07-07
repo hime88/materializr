@@ -1381,19 +1381,22 @@ void cutMeshToDisks(std::vector<gp_Pnt>& verts, std::vector<Tri>& tris) {
         std::priority_queue<std::pair<double,int>, std::vector<std::pair<double,int>>,
                             std::greater<std::pair<double,int>>> pq;
         for (int s : sources) { dist[s] = 0.0; par[s] = -1; pq.push({0.0, s}); }
-        int far = sources.empty() ? -1 : sources[0]; double farD = -1.0;
+        // NB: `far` (and `near`) are legacy macros defined by <windows.h>, which
+        // OCCT 7.9.3's Windows headers leak into this TU (8.0 doesn't) — using
+        // them as identifiers breaks the MSVC parse. Hence `farthest`.
+        int farthest = sources.empty() ? -1 : sources[0]; double farD = -1.0;
         while (!pq.empty()) {
             const double d = pq.top().first; const int u = pq.top().second; pq.pop();
             if (d > dist[u] + 1e-9) continue;
             if (targets && targets->count(u)) return u;
-            if (d > farD) { farD = d; far = u; }
+            if (d > farD) { farD = d; farthest = u; }
             for (int w : vadj[u]) {
                 const double nd = d + verts[u].Distance(verts[w]);
                 auto it = dist.find(w);
                 if (it == dist.end() || nd < it->second) { dist[w] = nd; par[w] = u; pq.push({nd, w}); }
             }
         }
-        return far;
+        return farthest;
     };
     auto pathTo = [&](const std::unordered_map<int,int>& par, int hit) {
         std::vector<int> path;
