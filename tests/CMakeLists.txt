@@ -168,6 +168,11 @@ add_executable(test_pushpull_through test_pushpull_through.cpp)
 target_link_libraries(test_pushpull_through PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_pushpull_through COMMAND test_pushpull_through)
 
+# test_duplicate_sketch — a duplicated sketch is severed from the source's body (#21)
+add_executable(test_duplicate_sketch test_duplicate_sketch.cpp)
+target_link_libraries(test_duplicate_sketch PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_duplicate_sketch COMMAND test_duplicate_sketch)
+
 # test_stl_import — STL triangle soup sews into a clean 6-face solid (parked feature)
 add_executable(test_stl_import test_stl_import.cpp)
 target_link_libraries(test_stl_import PRIVATE materializr_core gtest gtest_main)

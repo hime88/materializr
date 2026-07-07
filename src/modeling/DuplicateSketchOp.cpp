@@ -1,8 +1,24 @@
 #include "DuplicateSketchOp.h"
+#include <TopoDS_Face.hxx>
 #include <cstdio>
 
 bool DuplicateSketchOp::execute(Document& doc) {
     if (!m_sketchCopy) return false;
+    // A duplicate is an INDEPENDENT sketch, never a second driver of the
+    // source's body (issue #21). The deep copy carried the source's
+    // m_sourceBodyId AND its bound host face, which made the copy:
+    //   - cascade edits back into the original body (it wasn't detached),
+    //   - re-bind that host face — pulling the body face's wires into the copy's
+    //     region (the stray translucent fill over the body),
+    //   - aim push/pull + extrude at the ORIGINAL body instead of a new one, so
+    //     push/pull did nothing and extrude was degenerate (perimeter fused flat,
+    //     inherited holes inverted).
+    // Sever the body/face link so the copy builds its region from its OWN loops
+    // (clearing the source face re-keys the region cache) and any edit / push-pull
+    // / extrude produces a fresh body. Idempotent, so redo/reload stay correct.
+    m_sketchCopy->setSourceBody(-1);
+    m_sketchCopy->setSourceFace(TopoDS_Face());
+    m_sketchCopy->setDetachedFromBody(false);
     if (m_newSketchId < 0) {
         // First run: allocate a fresh id.
         m_newSketchId = doc.addSketch(m_sketchCopy, m_name);

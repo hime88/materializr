@@ -3773,9 +3773,11 @@ void Application::duplicateSketch(int sketchId) {
     auto src = m_document->getSketch(sketchId);
     if (!src) return;
 
-    // Independent deep copy: geometry, constraints, plane and source-body link
-    // all come along, but it's a separate Sketch object with its own id, so
-    // editing it never touches the original or any body built from it.
+    // Independent deep copy: geometry, constraints and plane come along. The
+    // deep copy also carries the source's body/face link, but
+    // DuplicateSketchOp::execute severs it (issue #21) so the copy is a
+    // standalone sketch with its own id — editing, push/pull or extrude never
+    // touches the original or the body built from it, and instead makes a new one.
     auto copy = std::make_shared<Sketch>(*src);
 
     std::string base = m_document->getSketchName(sketchId);
