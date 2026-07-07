@@ -10,6 +10,23 @@ Use the issue templates. For bugs, a small `.materializr` project (or STEP file)
 that reproduces the problem is the most valuable thing you can attach. For
 usage questions, prefer [Discussions](https://github.com/materializr-cad/materializr/discussions).
 
+### Bug workflow (maintainers)
+
+Every bug we discover gets tracked, even the ones we fix immediately — so the
+issue history is a complete record of what broke and how it was resolved.
+
+1. **File the issue first.** Open a `bug` issue (the template above) capturing
+   the symptom, a repro, and the platform/version — *before* diving into the
+   fix. A bug found while working on something else still gets its own issue.
+2. **Fix it, referencing the issue.** Land the fix and close the issue from the
+   commit or PR — put `Fixes #<n>` (or `Closes #<n>`) in the message. GitHub
+   then links the issue to the exact commit(s) and diff, so anyone can see
+   which files were touched to resolve which bug.
+3. **One issue per bug.** If a single investigation uncovers several distinct
+   defects, file them separately so each has its own fix trail.
+
+This keeps `Fixes #<n>` → commit → changed files traceable end to end.
+
 ## Building
 
 - **Desktop (Linux/Windows):** see [`BUILD.md`](BUILD.md). In short — configure a
