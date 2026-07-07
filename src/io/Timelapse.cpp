@@ -41,11 +41,17 @@ std::string projectKey(const std::string& ref) {
 }
 
 // Recording resolution: frames are downscaled so the long edge is at most
-// this. Keeps the store small and GIF encode times sane.
-constexpr int kMaxLongEdge = 640;
+// this (capture renders 1920x1080, stored as-is → 1080p MP4 exports).
+constexpr int kMaxLongEdge = 1920;
 // Store cap: beyond this the store is thinned by dropping every second frame,
-// so a marathon session stays bounded while keeping even coverage.
-constexpr int kMaxStoredFrames = 1200;
+// so a marathon session stays bounded while keeping even coverage. At 1080p a
+// zlib frame runs ~0.5-2 MB, so the cap also bounds disk to the low hundreds
+// of MB worst case.
+constexpr int kMaxStoredFrames = 600;
+// GIFs get re-downscaled at encode time: 256 colours + no temporal
+// compression makes 1080p GIFs enormous and slow to dither; MP4 keeps the
+// full stored resolution.
+constexpr int kGifMaxLongEdge = 960;
 
 // Frame file: "MZTL" magic, u16 w, u16 h, u32 rawSize, zlib-deflated RGBA.
 constexpr char kMagic[4] = {'M', 'Z', 'T', 'L'};
@@ -314,6 +320,11 @@ bool TimelapseRecorder::encodeGif(const std::string& dir,
         if (cw == 0) {
             cw = w;
             ch = h;
+            const int longEdge = std::max(cw, ch);
+            if (longEdge > kGifMaxLongEdge) {
+                cw = std::max(1, cw * kGifMaxLongEdge / longEdge);
+                ch = std::max(1, ch * kGifMaxLongEdge / longEdge);
+            }
             if (!gif.begin(gifPath, cw, ch, holdCs)) {
                 if (err) *err = "Couldn't write " + gifPath;
                 return false;

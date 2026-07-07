@@ -591,10 +591,11 @@ private:
     // (desktop POSIX, only offered when VideoEncoder::available()).
     void exportTimelapse(int condenseSeconds, bool asMp4 = false);
     // Renders bodies + edges + sketches (no grid/gizmo/highlight chrome) from
-    // the canonical turntable camera into m_tlFbo and stores the frame.
-    // Implemented in Application_Viewport.cpp next to the main scene pass.
+    // the user's live camera into a private 1080p MSAA FBO and stores the
+    // frame. Implemented in Application_Viewport.cpp next to the main pass.
     void renderTimelapseFrame();
-    unsigned int m_tlFbo = 0, m_tlColor = 0, m_tlDepth = 0; // private capture FBO
+    unsigned int m_tlFbo = 0, m_tlColor = 0;      // resolve FBO + texture
+    unsigned int m_tlFboMs = 0, m_tlColorMs = 0, m_tlDepth = 0; // MSAA target
     std::unique_ptr<TimelapseRecorder> m_timelapse;
     bool m_timelapseRecord = true;       // persisted mirror (AppSettings::timelapseRecord)
     bool m_tlBound = false;              // bindProject ran at least once
