@@ -181,17 +181,49 @@ void Application::renderSettings() {
                                        "the next version's features, which may be rougher. Off "
                                        "keeps you on stable releases only.");
 
-                    ImGui::Spacing();
-                    ImGui::SeparatorText("Timelapse");
+                    ImGui::EndTabItem();
+                }
+
+                // ── Timelapse ─────────────────────────────────────────────
+                if (ImGui::BeginTabItem("Timelapse")) {
                     if (ImGui::Checkbox("Record a timelapse of your work", &m_timelapseRecord)) {
                         if (m_timelapse) m_timelapse->setEnabled(m_timelapseRecord);
                         changed = true;
                     }
-                    ImGui::TextWrapped("Stores one small viewport frame per modelling step, per "
-                                       "project, on this device only — export it as a GIF of the "
-                                       "part building itself (in the im-touch layout: the "
-                                       "timelapse button, top right). Turning this off stops "
-                                       "recording but keeps the frames already stored.");
+                    ImGui::TextWrapped("Records your modelling as video, per project, on this "
+                                       "device only — only moments where something happens "
+                                       "(camera moves, sketching, operations) are stored, so "
+                                       "idle time costs nothing. Export it from the timelapse "
+                                       "button (im-touch, top right) or File → Export. Turning "
+                                       "this off stops recording but keeps what's already "
+                                       "stored.");
+
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Quality");
+                    // Capture anti-aliasing — mirrors the viewport MSAA
+                    // choices. The capture FBO rebuilds lazily on change.
+                    {
+                        const int values[] = {0, 2, 4, 8};
+                        const char* names[] = {"Off", "2x", "4x", "8x"};
+                        int idx = 2; // default 4x
+                        for (int i = 0; i < 4; ++i)
+                            if (values[i] == m_timelapseMsaa) idx = i;
+                        if (ImGui::Combo("Capture anti-aliasing", &idx, names, 4)) {
+                            m_timelapseMsaa = values[idx];
+                            changed = true;
+                        }
+                    }
+                    ImGui::TextWrapped("Smooths edges in the recording. Lower it if recording "
+                                       "costs frame rate on this device.");
+
+                    ImGui::Spacing();
+                    if (ImGui::SliderInt("Capture rate (fps)", &m_timelapseCaptureHz, 1, 30)) {
+                        m_timelapseCaptureHz = std::clamp(m_timelapseCaptureHz, 1, 30);
+                        changed = true;
+                    }
+                    ImGui::TextWrapped("How often a frame is stored while something is "
+                                       "happening. Higher is smoother playback and larger "
+                                       "recordings; 10 is a good default.");
                     ImGui::EndTabItem();
                 }
 

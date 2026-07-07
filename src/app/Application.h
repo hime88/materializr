@@ -598,6 +598,9 @@ private:
     unsigned int m_tlFboMs = 0, m_tlColorMs = 0, m_tlDepth = 0; // MSAA target
     std::unique_ptr<TimelapseRecorder> m_timelapse;
     bool m_timelapseRecord = false;      // persisted mirror (AppSettings::timelapseRecord)
+    int m_timelapseMsaa = 4;             // capture FBO samples (0/2/4/8)
+    int m_timelapseCaptureHz = 10;       // action-sampling rate (1..30 fps)
+    int m_tlFboSamples = -1;             // samples the capture FBO was built with
     bool m_tlBound = false;              // bindProject ran at least once
     std::string m_tlBoundRef;            // project ref the store is bound to
     unsigned m_tlLastRevision = 0;       // History::revision() already captured

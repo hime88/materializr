@@ -7238,7 +7238,7 @@ void Application::renderViewport() {
 void Application::renderTimelapseFrame() {
     if (!m_timelapse || !m_shapeRenderer || !m_document || !m_viewport) return;
     constexpr int kW = 1920, kH = 1080;
-    constexpr int kSamples = 4;
+    const int kSamples = m_timelapseMsaa; // Settings > Timelapse (0 = off)
 
     // Empty documents aren't worth a frame.
     bool haveContent = m_inSketchMode && m_activeSketch;
@@ -7252,7 +7252,16 @@ void Application::renderTimelapseFrame() {
 
     // Lazily build the capture targets: a multisampled render FBO (colour +
     // depth renderbuffers) resolved into a plain texture FBO — the same
-    // pattern as Viewport's own framebuffer.
+    // pattern as Viewport's own framebuffer. Rebuilt when the MSAA setting
+    // changes (0 samples = ordinary single-sample storage, same code path).
+    if (m_tlFbo != 0 && m_tlFboSamples != kSamples) {
+        glDeleteFramebuffers(1, &m_tlFbo);
+        glDeleteFramebuffers(1, &m_tlFboMs);
+        glDeleteTextures(1, &m_tlColor);
+        glDeleteRenderbuffers(1, &m_tlColorMs);
+        glDeleteRenderbuffers(1, &m_tlDepth);
+        m_tlFbo = m_tlColor = m_tlFboMs = m_tlColorMs = m_tlDepth = 0;
+    }
     if (m_tlFbo == 0) {
         GLint prevFbo0 = 0, prevTex = 0;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo0);
@@ -7275,6 +7284,7 @@ void Application::renderTimelapseFrame() {
         GLint maxSamples = 1;
         glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
         const int samples = std::min(kSamples, int(maxSamples));
+        m_tlFboSamples = kSamples;
         glGenFramebuffers(1, &m_tlFboMs);
         glBindFramebuffer(GL_FRAMEBUFFER, m_tlFboMs);
         glGenRenderbuffers(1, &m_tlColorMs);

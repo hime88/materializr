@@ -1342,6 +1342,8 @@ AppSettings Application::currentSettings() const {
     s.includePrereleases = m_includePrereleases;
     s.supporter = m_supporter;
     s.timelapseRecord = m_timelapseRecord;
+    s.timelapseMsaa = m_timelapseMsaa;
+    s.timelapseCaptureHz = m_timelapseCaptureHz;
     s.snapToGrid = m_snapToGrid;
     s.sketchGridStep = m_sketchGridStep;
     // Mirror the live sketch-tool inference level back into the saved settings
@@ -1423,6 +1425,8 @@ void Application::applyAppSettings(const AppSettings& s) {
     m_includePrereleases = s.includePrereleases;
     m_supporter = s.supporter;
     m_timelapseRecord = s.timelapseRecord;
+    m_timelapseMsaa = std::clamp(s.timelapseMsaa, 0, 8);
+    m_timelapseCaptureHz = std::clamp(s.timelapseCaptureHz, 1, 30);
     if (m_timelapse) m_timelapse->setEnabled(m_timelapseRecord);
     m_snapToGrid = s.snapToGrid;
     m_sketchGridStep = s.sketchGridStep;
@@ -4968,7 +4972,8 @@ void Application::updateTimelapse() {
         const bool commitPending = rev != m_tlLastRevision && !m_meshesDirty;
         const bool action = camMoved || dragging || commitPending;
         const double now = ImGui::GetTime();
-        if ((action || m_tlTrailing) && now - m_tlLastCapture >= 0.1) {
+        const double interval = 1.0 / double(std::max(1, m_timelapseCaptureHz));
+        if ((action || m_tlTrailing) && now - m_tlLastCapture >= interval) {
             m_tlLastRevision = rev;
             m_tlLastCapture = now;
             m_tlLastCamPos = pos;

@@ -144,9 +144,14 @@ struct AppSettings {
     // Timelapse recording: viewport frames stream into a per-project store
     // while you model (exportable as video/GIF from the im-touch timelapse
     // button or File > Export). Local-only. OFF by default — opt in via
-    // Settings > General or the timelapse button; off stops recording but
+    // Settings > Timelapse or the timelapse button; off stops recording but
     // keeps anything already stored.
     bool  timelapseRecord         = false;
+    // Capture anti-aliasing (0 = off, 2/4/8 samples; clamped to the GPU max)
+    // and the action-sampling rate in frames per second (1..30). Lower both
+    // on weaker GPUs if recording during camera orbits costs frame rate.
+    int   timelapseMsaa           = 4;
+    int   timelapseCaptureHz      = 10;
 
     // --- Snap / grid (persisted) ---
     // Snap-to-grid toggle and step (mm) shared by the sketch grid and the
