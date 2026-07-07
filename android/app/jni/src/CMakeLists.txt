@@ -64,13 +64,15 @@ message(STATUS "Linking ${_occt_count} OpenCASCADE toolkits from ${OCCT_LIB}")
 target_link_options(main PRIVATE "-Wl,--no-as-needed")
 target_link_libraries(main PRIVATE ${OCCT_SO_PATHS})
 
-# Android system libs: GL ES 3, EGL, zlib (NDK-provided), Android logging.
+# Android system libs: GL ES 3, EGL, zlib (NDK-provided), Android logging,
+# and the NDK media API (AMediaCodec/AMediaMuxer — the timelapse encoder).
 find_library(EGL_LIB EGL)
 find_library(GLES3_LIB GLESv3)
 find_library(LOG_LIB log)
 find_library(ANDROID_LIB android)
 find_library(Z_LIB z)
-target_link_libraries(main PRIVATE ${GLES3_LIB} ${EGL_LIB} ${LOG_LIB} ${ANDROID_LIB} ${Z_LIB})
+find_library(MEDIANDK_LIB mediandk)
+target_link_libraries(main PRIVATE ${GLES3_LIB} ${EGL_LIB} ${LOG_LIB} ${ANDROID_LIB} ${Z_LIB} ${MEDIANDK_LIB})
 
 # Version is passed in from build.gradle (-DMATERIALIZR_VERSION_NAME=<versionName>)
 # so the splash/about version can't drift from the APK version — it silently did

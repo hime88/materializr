@@ -202,7 +202,8 @@ bool VideoEncoder::concatSegments(const std::vector<std::string>& segments,
     return ok;
 }
 
-#elif !defined(MZ_IOS) // stubs: Windows + Android (iOS lives in ios_videowriter.mm)
+#elif !defined(MZ_IOS) && !defined(__ANDROID__)
+// Stubs: Windows only (iOS: ios_videowriter.mm, Android: android_videowriter.cpp)
 
 VideoEncoder::~VideoEncoder() = default;
 bool VideoEncoder::available() { return false; }

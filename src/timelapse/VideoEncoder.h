@@ -11,8 +11,10 @@ namespace materializr {
 //     involved (same posture as url_open.h). VideoEncoder.cpp.
 //   - iOS: AVAssetWriter driving the hardware H.264 encoder — the same way
 //     the big drawing apps export their timelapses. ios_videowriter.mm.
-//   - Windows / Android: stubs; available() reports false so callers simply
-//     don't offer MP4 there (Android's AMediaCodec backend is future work).
+//   - Android: AMediaCodec + AMediaMuxer (NDK C API, hardware encoder).
+//     android_videowriter.cpp.
+//   - Windows: stubs; available() reports false so callers fall back to the
+//     pixel store + GIF path there.
 class VideoEncoder {
 public:
     ~VideoEncoder(); // aborts cleanly if end() wasn't called

@@ -28,11 +28,11 @@ public:
     void setEnabled(bool on) { m_enabled = on; }
     bool enabled() const { return m_enabled; }
 
-    // True where a video backend exists (desktop ffmpeg, iOS AVAssetWriter):
-    // frames stream into rolling fragmented MP4 segments instead of .mzf
-    // pixel files — ~50-200 KB/frame becomes video-codec small, and exports
-    // are a concat (full) or a retime (condensed). Windows/Android keep the
-    // pixel store + GIF path until an AMediaCodec backend lands.
+    // True where a video backend exists (desktop ffmpeg, iOS AVAssetWriter,
+    // Android AMediaCodec): frames stream into rolling MP4 segments instead
+    // of .mzf pixel files — video-codec small, and exports are a concat
+    // (full) or a retime (condensed). Windows keeps the pixel store + GIF
+    // path.
     bool videoMode() const { return m_videoMode; }
 
     // Video mode: append one frame to the current segment (opens/rotates
