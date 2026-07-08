@@ -471,7 +471,7 @@ private:
     // again. isBody=true re-links every detached sketch driving that body.
     // Geometry is left as-is — re-link resumes parametric control, it doesn't move.
     void relinkSketch(bool isBody, int id);
-    void updateInteractiveExtrude();
+    void updateInteractiveExtrude(bool applySnap = true);
     // Signed distance to pass to ExtrudeOp: Subtract cuts into the body (the
     // profile normal points outward), so it uses the negated distance.
     double extrudeOpDistance() const;

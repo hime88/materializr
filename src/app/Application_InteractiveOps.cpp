@@ -1088,9 +1088,19 @@ void Application::beginInteractiveExtrude(const TopoDS_Shape& profile,
     }
 }
 
-void Application::updateInteractiveExtrude() {
+void Application::updateInteractiveExtrude(bool applySnap) {
     if (!m_extruding || m_extrudePreviewBodyId < 0) return;
     if (!std::isfinite(m_extrudeDistance)) { m_extrudeDistance = 0.0f; return; }
+
+    // Snap the live distance to the corner-widget grid step before applying —
+    // mirrors updatePushPull (issue #24). Drag/commit paths snap; live typing
+    // and the steppers pass applySnap=false so a typed value stays exact.
+    if (applySnap && m_snapToGrid && m_sketchGridStep > 0.0f) {
+        const float step = m_sketchGridStep;
+        m_extrudeDistance = std::round(m_extrudeDistance / step) * step;
+        std::snprintf(m_extrudeInputBuf, sizeof(m_extrudeInputBuf),
+                      "%.1f", m_extrudeDistance);
+    }
 
     // Remove old preview and create new one at current distance. The undo
     // is VERIFIED against the recorded preview op so an outside history

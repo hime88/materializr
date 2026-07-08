@@ -6571,7 +6571,7 @@ void Application::renderViewport() {
                                      "mm", 1, /*allowSign=*/true)) {
                 std::snprintf(m_extrudeInputBuf, sizeof(m_extrudeInputBuf),
                               "%.1f", m_extrudeDistance);
-                updateInteractiveExtrude();
+                updateInteractiveExtrude(/*applySnap=*/false);  // typed = exact
             }
             // touch: raise the soft keyboard only when the field is TAPPED (not
             // on open, which would cover the drag handle). ImGui's own
@@ -6592,7 +6592,7 @@ void Application::renderViewport() {
             if (materializr::parseFinite(m_extrudeInputBuf, parsed) &&
                 std::abs(parsed - m_extrudeDistance) > 0.01f && std::abs(parsed) > 0.01f) {
                 m_extrudeDistance = parsed;
-                updateInteractiveExtrude();
+                updateInteractiveExtrude(/*applySnap=*/false);  // live typing = exact
             }
         }
 
@@ -6607,7 +6607,7 @@ void Application::renderViewport() {
             materializr::stepperRow("extrudeStep", &m_extrudeDistance,
                                     /*allowNegative=*/true, -50.0f, 50.0f)) {
             std::snprintf(m_extrudeInputBuf, sizeof(m_extrudeInputBuf), "%.1f", m_extrudeDistance);
-            updateInteractiveExtrude();
+            updateInteractiveExtrude(/*applySnap=*/false);  // steppers override the grid
         }
 
         if (!imTouchActionCorner()) {   // im-touch: corner ✓/✗ FABs instead
