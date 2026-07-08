@@ -5786,6 +5786,20 @@ void Application::renderViewport() {
                             recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
                             m_sketchDragCenterPlaced = true;
                         }
+                    } else if (m_sketchTool->getMode() == SketchToolMode::Line) {
+                        // Line, desktop: press-drag-release, coexisting with
+                        // click-chain (#25). Drop the start on press if fresh; the
+                        // release commits the endpoint — a drag draws one segment,
+                        // click-click chains a polyline. Tracking mirrors the touch
+                        // path so the release handler can measure the drag.
+                        m_sketchPressActive = true;
+                        m_sketchDownX = io.MousePos.x;
+                        m_sketchDownY = io.MousePos.y;
+                        m_sketchDragCenterPlaced = false;
+                        if (!m_sketchTool->isPlacing()) {
+                            recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                            m_sketchDragCenterPlaced = true;
+                        }
                     } else {
                         // Drawing tool, desktop: place on press; hover previews.
                         recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
@@ -5951,21 +5965,25 @@ void Application::renderViewport() {
                                     m_sketchShapeDimH = std::abs(pe.y - ps.y);
                                 } else {
                                     recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                                    // LINE: a genuine drag draws ONE segment — end
+                                    // the chain so a lone line doesn't leave the
+                                    // tool placing. Tap-tap still chains (#25).
+                                    if (m_sketchTool->getMode() == SketchToolMode::Line)
+                                        m_sketchTool->onConfirm();
                                 }
                             }
                         } else if (m_sketchTool->getMode() == SketchToolMode::Line &&
                                    m_sketchTool->isPlacing()) {
-                            // LINE, chain already live (anchor down): a tap OR a
-                            // press-hold sets the AIM DIRECTION only — anchor ->
-                            // this point — WITHOUT committing a segment. Typing
-                            // the length is what commits it (Steve: tap/hold
-                            // sets direction, type sets length, repeat; a
-                            // press-hold fine-tunes the direction as the finger
-                            // moves via onMouseMove, and this release leaves it
-                            // set). The FIRST-segment freehand drag is handled
-                            // by the drag-centre path above, before a chain
-                            // exists.
-                            m_sketchTool->onMouseMove(sketchCoord);
+                            // LINE, chain live: commit the segment at the tap /
+                            // release position — no typing required (#25). A drag
+                            // draws a single segment and ends the chain; a
+                            // stationary tap commits and keeps chaining a polyline.
+                            // A zero-length tap on the anchor is rejected inside
+                            // handleLineTool. (Typing an exact length via the
+                            // dimension field stays available, just no longer the
+                            // only way to commit.)
+                            recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                            if (moved) m_sketchTool->onConfirm();
                         } else {
                             // Multi-point tool (incl. a drag-committed line
                             // segment), or a drag tool's second tap: place the
@@ -6002,6 +6020,24 @@ void Application::renderViewport() {
                     }
                     m_sketchPressActive = false;
                     m_sketchDragCenterPlaced = false;
+                    }
+                    else if (m_sketchPressActive &&
+                             m_sketchTool->getMode() == SketchToolMode::Line) {
+                        // Desktop line press-drag-release (#25): commit the
+                        // endpoint at the release position. A stationary click
+                        // that only just dropped the fresh start waits for the
+                        // next click (click-chain); otherwise commit — and a
+                        // genuine drag ends the chain (a single segment).
+                        float ddx = io.MousePos.x - m_sketchDownX;
+                        float ddy = io.MousePos.y - m_sketchDownY;
+                        float slop = 5.0f * (m_window ? m_window->uiScale() : 1.0f);
+                        bool moved = (ddx * ddx + ddy * ddy) > slop * slop;
+                        if (!(m_sketchDragCenterPlaced && !moved)) {
+                            recordSketchMutation([&]{ m_sketchTool->onMouseDown(sketchCoord, io.KeyCtrl); });
+                            if (moved) m_sketchTool->onConfirm();
+                        }
+                        m_sketchPressActive = false;
+                        m_sketchDragCenterPlaced = false;
                     }
                     if (m_sketchDragBefore) {
                         // Compare point positions; commit a SketchEditOp if any moved.

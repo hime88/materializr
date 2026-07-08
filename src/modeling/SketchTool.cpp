@@ -1801,7 +1801,13 @@ void SketchTool::handleLineTool(glm::vec2 pos) {
         m_lineChain.clear();
         m_lineChain.push_back(m_lastPointId);
     } else {
-        // Second click: create line and continue chain
+        // Second click: create line and continue chain.
+        // Reject a zero-length segment — a tap/release back onto the anchor (or
+        // snapped onto it) commits nothing and keeps the chain placing (#25),
+        // so press-drag-release / tap-tap can't drop a degenerate line.
+        const SketchPoint* anchorPt = m_sketch->getPoint(m_lastPointId);
+        if (anchorPt && glm::length(pos - anchorPt->pos) < 1e-4f)
+            return;
         int endPointId = -1;
 
         // Check if snapping to existing point
