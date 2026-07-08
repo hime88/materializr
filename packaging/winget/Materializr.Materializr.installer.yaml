@@ -14,7 +14,7 @@ UpgradeBehavior: install
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/materializr-cad/materializr/releases/download/v1.4.3/Materializr-Setup.exe
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000  # PLACEHOLDER — set from the v1.4.3 Setup.exe before submitting the winget PR
+    InstallerSha256: 0E4531E042E60FDB2B08A7C99E41B391403DEF884B4682543D67D76C75187BC8
     # The NSIS script writes these ARP values; the installer tags DisplayVersion
     # with the tag name (leading "v") via /DAPPVERSION=${github.ref_name}.
     AppsAndFeaturesEntries:
