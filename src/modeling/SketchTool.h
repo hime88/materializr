@@ -362,6 +362,12 @@ private:
     // previously only the preview snapped, so the committed arc landed at the
     // raw cursor and its centre drifted off the intended (e.g. semicircle) one.
     glm::vec2 snapArcApex(glm::vec2 start, glm::vec2 end, glm::vec2 apex) const;
+    // Final arc-apex snap for the 3rd click: prefer a clean sweep angle over a
+    // grid square. Runs snapArcApex on the RAW cursor (so grid quantization
+    // can't suppress a 90°/180° hit) and only falls back to the grid when no
+    // angle target is near. Used by both the live preview and the commit so
+    // they always agree (issue #27).
+    glm::vec2 arcApexSnap(glm::vec2 rawPos) const;
     // Snap the radial distance from `fixed` to `moving` onto the grid step,
     // keeping the direction. For a circle this snaps the radius (Center mode)
     // or diameter (2-point mode) to whole grid units, so a 1 mm grid can't

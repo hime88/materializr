@@ -101,7 +101,9 @@ void SketchTool::onMouseDown(glm::vec2 pos, bool addToSel) {
             handleRectangleTool(snapped);
             break;
         case SketchToolMode::Arc:
-            handleArcTool(snapped);
+            // The 3rd click (apex) prefers a clean sweep angle over the grid,
+            // computed from the RAW cursor; the chord ends still grid-snap.
+            handleArcTool(m_clickCount == 2 ? arcApexSnap(pos) : snapped);
             break;
         case SketchToolMode::Spline:
             handleSplineTool(snapped);
@@ -157,8 +159,11 @@ void SketchTool::onMouseMove(glm::vec2 pos) {
     // feel without locking out finer adjustments.
     // Live preview: snap the swept apex to a 15°-multiple sweep (esp. 180°).
     // Same helper the commit uses (handleArcTool), so preview == result.
-    if (m_mode == SketchToolMode::Arc && m_clickCount == 2 && m_snapToGridEnabled) {
-        m_currentPos = snapArcApex(m_firstClick, m_secondClick, m_currentPos);
+    if (m_mode == SketchToolMode::Arc && m_clickCount == 2) {
+        // Feed the RAW cursor (not the already-grid-snapped m_currentPos): the
+        // apex should prefer a clean sweep angle over a grid square, which grid
+        // quantization would otherwise block (issue #27).
+        m_currentPos = arcApexSnap(pos);
     }
 
     // Circle live preview: snap the radius/diameter to the grid so what's
@@ -1961,7 +1966,7 @@ glm::vec2 SketchTool::snapArcApex(glm::vec2 A, glm::vec2 B, glm::vec2 apex) cons
     const float deg = sweep * 180.0f / static_cast<float>(M_PI);
     const float step = 15.0f;
     const float target = std::round(deg / step) * step;
-    if (std::abs(target) >= 0.5f && std::abs(deg - target) <= 5.0f) {
+    if (std::abs(target) >= 0.5f && std::abs(deg - target) <= 7.0f) {
         glm::vec2 chord = B - A;
         float L = glm::length(chord);
         if (L > 1e-4f) {
@@ -1975,6 +1980,16 @@ glm::vec2 SketchTool::snapArcApex(glm::vec2 A, glm::vec2 B, glm::vec2 apex) cons
         }
     }
     return apex;
+}
+
+glm::vec2 SketchTool::arcApexSnap(glm::vec2 rawPos) const {
+    if (!m_snapToGridEnabled) return rawPos;
+    // Angle first, on the RAW cursor. snapArcApex returns its input unchanged
+    // when the sweep isn't near a 15° multiple, so an unequal result means an
+    // angle target (45/90/180/…) was hit — prefer it over the grid.
+    glm::vec2 angled = snapArcApex(m_firstClick, m_secondClick, rawPos);
+    if (angled != rawPos) return angled;
+    return snap(rawPos);   // no clean angle nearby — fall back to the grid
 }
 
 void SketchTool::handleArcTool(glm::vec2 pos) {
@@ -1991,10 +2006,10 @@ void SketchTool::handleArcTool(glm::vec2 pos) {
         // Third click: set midpoint on arc, compute center and radius
         glm::vec2 start = m_firstClick;
         glm::vec2 end = m_secondClick;
-        // Commit the SAME snapped apex the preview showed (snap toggle on),
-        // so the placed arc's centre matches the previewed semicircle instead
-        // of drifting to the raw click position.
-        glm::vec2 mid = m_snapToGridEnabled ? snapArcApex(start, end, pos) : pos;
+        // `pos` is already the final apex (onMouseDown ran it through
+        // arcApexSnap — angle preferred over grid), the SAME value the preview
+        // showed, so the placed arc's centre matches the previewed one.
+        glm::vec2 mid = pos;
 
         // Compute the circumcenter of the three points (start, mid, end)
         // This gives us the arc center
