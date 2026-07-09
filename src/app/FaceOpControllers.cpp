@@ -104,37 +104,21 @@ void ShellController::panelBody(const IopContext& ctx, bool& changed) {
 
     if (!previewOk()) {
         const ImVec4 warn(1.0f, 0.6f, 0.3f, 1.0f);
-        // A wall that reaches a rounded edge's radius is THE cause: a fillet
-        // offset inward by >= its own radius collapses (its inner offset radius
-        // goes to zero or negative), so the shell can't be built there. On a
-        // body whose opened face is ringed by fillets this is a hard floor — the
-        // wall must stay UNDER the smallest fillet radius; a thicker wall does
-        // NOT recover. Name that limit. roundedFaceRadii is a full-face scan and
-        // panelBody runs every frame, so cache it keyed on the body shape.
+        // The dominant cause on a rounded body: OCCT can't OPEN a face whose
+        // edges are ringed by fillets — the kernel seals the cavity instead of
+        // opening it, so the shell can't be built. There is no thickness that
+        // fixes this; the answer is order-of-operations: shell first, fillet
+        // after. Detect any fillet on the body and say so. roundedFaceRadii is a
+        // full-face scan and panelBody runs every frame, so cache it by body.
         const TopoDS_Shape& body = ctx.doc.getBody(bodyId());
         if (m_radiiCacheShape.IsNull() || !m_radiiCacheShape.IsEqual(body)) {
             m_radiiCache = ShellOp::roundedFaceRadii(body);
             m_radiiCacheShape = body;
         }
-        double minR = 1e18, nearR = -1.0, bestD = 1e18;
-        for (double r : m_radiiCache) {
-            minR = std::min(minR, r);
-            double d = std::abs(r - static_cast<double>(m_thickness));
-            if (d < bestD) { bestD = d; nearR = r; }
-        }
-        const double t = static_cast<double>(m_thickness);
-        if (minR < 1e17 && t >= minR - 1e-6) {
+        if (!m_radiiCache.empty()) {
             ImGui::TextColored(warn,
-                "Shell failed: a %.2f mm wall meets this body's %.2f mm rounded\n"
-                "edge. The wall must stay below the smallest fillet radius -\n"
-                "try a wall under %.2f mm.",
-                t, minR, minR);
-        } else if (nearR > 0.0 && bestD < 0.5) {
-            ImGui::TextColored(warn,
-                "Shell failed: %.2f mm is too close to this body's %.2f mm\n"
-                "rounded edge - a wall near a fillet radius can't be offset.\n"
-                "Try a wall clearly thinner than %.2f mm.",
-                t, nearR, nearR);
+                "Shell failed: OCCT can't open a fillet-bordered face.\n"
+                "Shell the body FIRST, then add the fillets.");
         } else {
             ImGui::TextColored(warn,
                 "Shell failed - try a thinner wall, or\n"

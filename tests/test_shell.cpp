@@ -21,6 +21,8 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
@@ -116,26 +118,24 @@ TEST(Shell, ReasonableWallShells) {
     EXPECT_GT(vol(doc.getBody(body)), 0.0);
 }
 
-// A box filleted on ALL edges shells for real below the fillet radius. The arc
-// join builds the correct hollow but trips BRepCheck on a face/shell near the
-// ringed opening; ShellOp now repairs it with ShapeFix instead of discarding it
-// and committing the intersection join's untouched-solid no-op (#30).
-TEST(Shell, AllEdgesFilletedShellsBelowRadius) {
+// A face ringed by fillets on every edge CANNOT be opened by OCCT's offset —
+// it seals the cavity into a closed void (2 shells) instead of an open cup, or
+// no-ops outright. Both disguise as "valid" with reduced volume, so ShellOp
+// insists on a single-shell OPEN cup and otherwise fails HONESTLY, leaving the
+// body untouched (never a silent do-nothing that looks like the solid) (#30).
+TEST(Shell, FilletRingedFaceFailsNotSilentSeal) {
     Document doc;
     int body; TopoDS_Shape solid = allFilletedBox(doc, body, 2.0);
+    double before = vol(solid);
     ShellOp op;
     op.setBody(body);
     op.setThickness(1.0);            // well under the 2mm fillet radius
     op.addFaceToRemove(bottomFace(solid));
-    ASSERT_TRUE(op.execute(doc)) << "a sub-radius wall must actually shell";
-    // A genuine hollow removes most of the interior — nothing near a no-op.
-    EXPECT_LT(vol(doc.getBody(body)), vol(solid) * 0.5)
-        << "must be a real hollow, not the silent no-op that kept full volume";
+    EXPECT_FALSE(op.execute(doc)) << "a fillet-ringed face can't be opened";
+    EXPECT_NEAR(vol(doc.getBody(body)), before, 1e-6) << "body untouched on fail";
 }
 
-// A wall at/over the fillet radius on an all-filleted body genuinely cannot be
-// offset — it must fail HONESTLY (return false, body untouched), never report
-// success while leaving the solid unchanged.
+// Same story for an over-radius wall: honest failure, body untouched.
 TEST(Shell, AllEdgesFilletedOverRadiusFailsNotNoOp) {
     Document doc;
     int body; TopoDS_Shape solid = allFilletedBox(doc, body, 2.0);
@@ -148,12 +148,11 @@ TEST(Shell, AllEdgesFilletedOverRadiusFailsNotNoOp) {
     EXPECT_NEAR(vol(doc.getBody(body)), before, 1e-6) << "body untouched on fail";
 }
 
-// Steve's #30 repro: fillet ONE face's 4 edges, then shell THAT face. The +X
-// face of a BRepPrimAPI box makes MakeThickSolid silently no-op on the offset
-// (a face-parameterisation quirk — the mirror-image face shells fine), so
-// ShellOp mirrors the body, shells, and mirrors the hollow back.
-TEST(Shell, FilletedFaceThenShellThatFace_PlusX) {
-    // The planar face whose outward normal points ~+X.
+// Steve's #30 repro: fillet ONE face's 4 edges, then shell THAT face. OCCT
+// cannot open a fillet-bordered face (it seals or no-ops); ShellOp must refuse
+// rather than commit a sealed hollow that looks identical to the solid. The
+// workaround is order-of-operations: shell first, fillet after.
+TEST(Shell, FilletedFaceThenShellThatFace_FailsCleanly) {
     auto plusXFace = [](const TopoDS_Shape& b) {
         for (TopExp_Explorer ex(b, TopAbs_FACE); ex.More(); ex.Next()) {
             TopoDS_Face f = TopoDS::Face(ex.Current());
@@ -176,14 +175,31 @@ TEST(Shell, FilletedFaceThenShellThatFace_PlusX) {
         es.push_back(TopoDS::Edge(ex.Current()));
     FilletOp f; f.setBody(body); f.setEdges(es); f.setRadius(2.0); f.execute(doc);
     TopoDS_Shape solid = doc.getBody(body);
+    double before = vol(solid);
 
     ShellOp op;
     op.setBody(body);
     op.setThickness(1.0);
     op.addFaceToRemove(plusXFace(solid));
-    ASSERT_TRUE(op.execute(doc)) << "the +X filleted face must shell (mirror path)";
-    EXPECT_LT(vol(doc.getBody(body)), vol(solid) * 0.5) << "a real hollow";
-    EXPECT_TRUE(BRepCheck_Analyzer(doc.getBody(body)).IsValid());
+    EXPECT_FALSE(op.execute(doc)) << "OCCT can't open a fillet-bordered face";
+    EXPECT_NEAR(vol(doc.getBody(body)), before, 1e-6) << "body untouched on fail";
+}
+
+// Sanity: shelling a fillet-FREE face still produces a real OPEN cup (1 shell).
+TEST(Shell, PlainFaceStillOpensToOneShell) {
+    Document doc;
+    TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(0,0,0), 20, 20, 20).Shape();
+    int body = doc.addBody(box, "box");
+    ShellOp op;
+    op.setBody(body);
+    op.setThickness(1.0);
+    op.addFaceToRemove(bottomFace(box));
+    ASSERT_TRUE(op.execute(doc)) << "a plain face must still shell open";
+    TopoDS_Shape r = doc.getBody(body);
+    EXPECT_LT(vol(r), vol(box) * 0.5) << "a real hollow";
+    TopTools_IndexedMapOfShape shells;
+    TopExp::MapShapes(r, TopAbs_SHELL, shells);
+    EXPECT_EQ(shells.Extent(), 1) << "an open cup is a single shell, not a sealed void";
 }
 
 // The rounded-face radius detector finds the R3 fillet, so the panel can name

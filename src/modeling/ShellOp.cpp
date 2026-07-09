@@ -10,10 +10,8 @@
 #include <BRepGProp_Face.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
-#include <ShapeFix_Shape.hxx>
-#include <BRepBuilderAPI_Transform.hxx>
-#include <gp_Trsf.hxx>
-#include <gp_Ax2.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomAbs_JoinType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
@@ -220,27 +218,30 @@ bool ShellOp::execute(Document& doc) {
         // capacity), do NOT fall through to Intersection — that's the hang.
         // Only try Intersection when Arc failed *cleanly* (produced an invalid
         // or null result without throwing), i.e. the lofted-wall case.
-        // Volume of the solid going in. A genuine shell removes a cavity, so its
-        // net volume drops well below this; a result that keeps (nearly) the full
-        // volume is a NO-OP that MakeThickSolid can hand back marked valid — most
-        // often on a body whose opened face is ringed by fillets, where the
-        // intersection join silently returns the untouched solid. We must reject
-        // those, or the op reports success while doing nothing.
+        //
+        // Accept ONLY a genuine OPEN hollow (issue #30). Two disguised failures
+        // must be rejected, because OCCT marks both "valid" and both would be
+        // committed as a silent do-nothing:
+        //   • NO-OP  — volume ≈ the solid: the offset declined the face and
+        //     handed the untouched solid straight back.
+        //   • SEALED — a closed thick shell (2 shells: outer + inner void). This
+        //     is what OCCT produces when the removed face is ringed by fillets:
+        //     it can't OPEN the face, so it seals the cavity. From the outside a
+        //     sealed hollow is indistinguishable from the solid.
+        // A real open cup is a single shell whose volume dropped. If neither
+        // join yields one, fail — the user should shell BEFORE filleting.
         const double solidVol = shapeVolume(m_previousShape);
-        auto hollowed = [&](const TopoDS_Shape& s) {
-            return !s.IsNull() && shapeVolume(s) < solidVol * 0.99;
+        auto isOpenHollow = [&](const TopoDS_Shape& s) {
+            if (s.IsNull() || shapeVolume(s) >= solidVol * 0.99) return false;
+            if (!BRepCheck_Analyzer(s).IsValid()) return false;
+            TopTools_IndexedMapOfShape shells;
+            TopExp::MapShapes(s, TopAbs_SHELL, shells);
+            return shells.Extent() == 1;   // 2 shells == sealed void
         };
 
         enum Outcome { Ok, CleanFail, Threw };
-        // allowFix: repair a hollowed-but-invalid result with ShapeFix. Enabled
-        // ONLY for the arc join, which produces the geometrically-correct hollow
-        // and merely trips BRepCheck on a face/shell near a fillet-ringed opening
-        // (issue #30). The intersection join is the desperate lofted-wall
-        // fallback and its over-thick results are genuinely degenerate, so it
-        // stays strict — repairing those would resurrect the "impossible wall"
-        // no-op that OverThickWallFailsFastNotHang guards against.
         auto tryShell = [&](Standard_Boolean inter, GeomAbs_JoinType join,
-                            Standard_Boolean allowFix, TopoDS_Shape& out) -> Outcome {
+                            TopoDS_Shape& out) -> Outcome {
             try {
                 // A thick-solid that exceeds the body's available wall space can
                 // SIGSEGV deep in BRepOffset. With OCC_CONVERT_SIGNALS enabled,
@@ -252,23 +253,9 @@ bool ShellOp::execute(Document& doc) {
                                         -m_thickness, 1.0e-3, BRepOffset_Skin,
                                         inter, Standard_False, join);
                 mk.Build();
-                if (!mk.IsDone() || mk.Shape().IsNull()) return CleanFail;
-                TopoDS_Shape s = mk.Shape();
-                // A result that didn't actually hollow the body is a no-op — never
-                // accept it, however "valid" OCCT calls it. This is the silent
-                // no-op the intersection join hands back on a fillet-ringed
-                // opening.
-                if (!hollowed(s)) return CleanFail;
-                if (BRepCheck_Analyzer(s).IsValid()) { out = s; return Ok; }
-                if (allowFix) {
-                    ShapeFix_Shape fix(s);
-                    fix.Perform();
-                    TopoDS_Shape fixed = fix.Shape();
-                    if (!fixed.IsNull() && hollowed(fixed) &&
-                        BRepCheck_Analyzer(fixed).IsValid()) {
-                        out = fixed;
-                        return Ok;
-                    }
+                if (mk.IsDone() && isOpenHollow(mk.Shape())) {
+                    out = mk.Shape();
+                    return Ok;
                 }
             } catch (...) {
                 return Threw;
@@ -276,83 +263,18 @@ bool ShellOp::execute(Document& doc) {
             return CleanFail;
         };
 
-        // Last-resort workaround for a MakeThickSolid quirk: some box faces
-        // (notably the +X / +Y faces of a BRepPrimAPI box) make the offset
-        // silently return the untouched solid — a no-op — purely because of the
-        // face's parameterisation handedness, NOT the geometry (the mirror-image
-        // face on the same body shells fine). Mirroring the whole body flips that
-        // handedness, so we shell the mirror and mirror the hollow back. This is
-        // Steve's case: fillet a face's edges, then shell that face (#30).
-        auto tryShellMirrored = [&](TopoDS_Shape& out) -> bool {
-            gp_Trsf M;
-            M.SetMirror(gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(1.0, 0.0, 0.0)));
-            TopoDS_Shape mbody =
-                BRepBuilderAPI_Transform(m_previousShape, M, Standard_True).Shape();
-            if (mbody.IsNull()) return false;
-            // Re-find each opened face on the mirrored body by its mirrored
-            // normal + point (a fresh transform makes new sub-shapes, so the
-            // stored faces aren't IsSame with the mirror's faces).
-            TopTools_ListOfShape mfaces;
-            for (const TopoDS_Shape& s : m_facesToRemove) {
-                gp_Dir n; gp_Pnt p;
-                if (!faceNormalPoint(TopoDS::Face(s), n, p)) return false;
-                gp_Pnt mp = p.Transformed(M);
-                gp_Dir mn = n.Transformed(M);
-                TopoDS_Face best; double bestScore = -1e18;
-                for (TopExp_Explorer ex(mbody, TopAbs_FACE); ex.More(); ex.Next()) {
-                    TopoDS_Face f = TopoDS::Face(ex.Current());
-                    gp_Dir fn; gp_Pnt fp;
-                    if (!faceNormalPoint(f, fn, fp)) continue;
-                    if (fn.Dot(mn) < 0.9) continue;
-                    double score = fn.Dot(mn) - 0.01 * fp.Distance(mp);
-                    if (score > bestScore) { bestScore = score; best = f; }
-                }
-                if (best.IsNull()) return false;
-                mfaces.Append(best);
-            }
-            try {
-                OCC_CATCH_SIGNALS
-                BRepOffsetAPI_MakeThickSolid mk;
-                mk.MakeThickSolidByJoin(mbody, mfaces, -m_thickness, 1.0e-3,
-                                        BRepOffset_Skin, Standard_False,
-                                        Standard_False, GeomAbs_Arc);
-                mk.Build();
-                if (!mk.IsDone() || mk.Shape().IsNull()) return false;
-                // Mirror the result back (a mirror is its own inverse).
-                TopoDS_Shape sb =
-                    BRepBuilderAPI_Transform(mk.Shape(), M, Standard_True).Shape();
-                if (sb.IsNull() || !hollowed(sb)) return false;
-                if (BRepCheck_Analyzer(sb).IsValid()) { out = sb; return true; }
-                ShapeFix_Shape fix(sb);
-                fix.Perform();
-                TopoDS_Shape fixed = fix.Shape();
-                if (!fixed.IsNull() && hollowed(fixed) &&
-                    BRepCheck_Analyzer(fixed).IsValid()) {
-                    out = fixed;
-                    return true;
-                }
-            } catch (...) { return false; }
-            return false;
-        };
-
         TopoDS_Shape result;
-        Outcome arc = tryShell(Standard_False, GeomAbs_Arc, Standard_True, result);
+        Outcome arc = tryShell(Standard_False, GeomAbs_Arc, result);
         if (arc != Ok) {
-            // A throw means the wall is too thick for the geometry — do NOT try
-            // the intersection join (it hangs) or the mirror (it can't help an
-            // impossible wall, and skipping it keeps the failure fast). Only a
-            // clean fail earns the intersection retry (lofted walls) and then the
-            // mirror workaround (the box-face no-op).
-            bool recovered =
-                arc != Threw &&
-                (tryShell(Standard_True, GeomAbs_Intersection, Standard_False,
-                          result) == Ok ||
-                 tryShellMirrored(result));
-            if (!recovered) {
+            // Only the clean-fail (lofted-wall) case earns the intersection
+            // retry; a throw means the wall is too thick for the geometry, and
+            // the intersection join would hang instead of refusing.
+            if (arc == Threw ||
+                tryShell(Standard_True, GeomAbs_Intersection, result) != Ok) {
                 std::fprintf(stderr,
-                    "[Shell] failed at thickness %.3f mm — the wall is too thick "
-                    "for the body (it must stay below the smallest inner fillet "
-                    "radius), or the body has faces the offset can't shell.\n",
+                    "[Shell] failed at thickness %.3f mm — the wall is too thick, "
+                    "or the opened face is ringed by fillets (shell BEFORE adding "
+                    "fillets: OCCT can't open a fillet-bordered face).\n",
                     m_thickness);
                 return false;
             }
