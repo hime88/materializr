@@ -322,6 +322,12 @@ private:
     // the sketch plane.
     int findBodyUnderRegion(const TopoDS_Face& region, const gp_Pln& plane) const;
 
+    // True if `face` is geometrically flat (a real plane, or a flat trapezoid on
+    // a ruled/BSpline surface). Uses GeomLib_IsPlanarSurface, so it accepts
+    // flat-but-not-Geom_Plane faces and rejects genuinely curved ones (cylinder /
+    // sphere / fillet). Gates push/pull off rounded faces (fillets freak it out).
+    bool faceIsPlanar(const TopoDS_Face& face) const;
+
     // Apply a sketch constraint of the given type to the current
     // SketchTool element selection. Inspects the selection counts to decide
     // which arity to use (e.g. Coincident chains pairs of selected points;

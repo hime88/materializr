@@ -3921,6 +3921,14 @@ void Application::enterSketchOnPlane(const gp_Pln& plane) {
     alignCameraToActiveSketch();
 }
 
+bool Application::faceIsPlanar(const TopoDS_Face& face) const {
+    Handle(Geom_Surface) s = BRep_Tool::Surface(face);
+    if (s.IsNull()) return false;
+    if (s->IsKind(STANDARD_TYPE(Geom_Plane))) return true;
+    GeomLib_IsPlanarSurface tester(s, 1.0e-7);
+    return tester.IsPlanar();
+}
+
 void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
     // Sketching needs a FLAT face. A curved face (cylinder / sphere / fillet)
     // has no single plane — we'd otherwise drop the sketch onto a tangent plane

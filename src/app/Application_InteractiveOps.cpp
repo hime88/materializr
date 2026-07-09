@@ -1418,6 +1418,7 @@ void Application::beginPushPull() {
     m_pushPullDistanceRaw = 0.0f;
 
     // Gather all selected SketchRegion entries AND body face selections.
+    bool curvedFaceSkipped = false;   // a rounded/fillet face was picked (#28)
     for (const auto& e : m_selection->getSelection()) {
         if (e.type == SelectionType::SketchRegion) {
             // For sketches loaded from a previous session, the in-memory
@@ -1465,6 +1466,12 @@ void Application::beginPushPull() {
             t.sourceBodyId = e.bodyId;
             t.profile = TopoDS::Face(e.shape);
             if (t.profile.IsNull()) continue;
+            // Push/Pull only works on FLAT faces. Sweeping a prism from a curved
+            // face (fillet / round / cylinder wall) and booling it produces
+            // self-intersecting garbage — skip it (and toast below). Same
+            // planarity test as "Sketch on face"; a flat face bounded by fillets
+            // still pushes fine — this only rejects the rounded face itself. #28
+            if (!faceIsPlanar(t.profile)) { curvedFaceSkipped = true; continue; }
             m_pushPullTargets.push_back(t);
         } else if (e.type == SelectionType::Sketch && e.sketchId >= 0) {
             // Whole-sketch push/pull (selected from the Items panel, no specific
@@ -1495,8 +1502,14 @@ void Application::beginPushPull() {
         }
     }
 
+    // A rounded/fillet face was picked — tell the user why it was ignored (#28).
+    if (curvedFaceSkipped) {
+        showToast("Push/Pull works on flat faces \xE2\x80\x94 not curved or "
+                  "fillet faces.");
+    }
     if (m_pushPullTargets.empty()) {
-        std::fprintf(stderr, "Push/Pull: select a sketch region or a body face first\n");
+        if (!curvedFaceSkipped)
+            std::fprintf(stderr, "Push/Pull: select a sketch region or a body face first\n");
         return;
     }
 
