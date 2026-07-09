@@ -26,10 +26,39 @@
 #include <Geom_Plane.hxx>
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom_ConicalSurface.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Pln.hxx>
 
 namespace materializr {
+
+namespace {
+// True if `face` shares an edge with a rounded (cylinder/torus = fillet) face of
+// `body`. That's the exact condition OCCT's offset can't open, so it's what the
+// Shell warning should key on — NOT merely "the body has fillets somewhere"
+// (which mis-blamed fillets on a plain side face that failed for another reason).
+bool faceBordersRounded(const TopoDS_Shape& body, const TopoDS_Face& face) {
+    if (body.IsNull() || face.IsNull()) return false;
+    TopTools_IndexedDataMapOfShapeListOfShape edgeToFaces;
+    TopExp::MapShapesAndAncestors(body, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        int idx = edgeToFaces.FindIndex(ex.Current());
+        if (idx == 0) continue;
+        for (const TopoDS_Shape& nb : edgeToFaces.FindFromIndex(idx)) {
+            if (nb.IsSame(face)) continue;
+            BRepAdaptor_Surface sa(TopoDS::Face(nb));
+            if (sa.GetType() == GeomAbs_Cylinder || sa.GetType() == GeomAbs_Torus)
+                return true;
+        }
+    }
+    return false;
+}
+} // namespace
 
 // ─── Shell ───────────────────────────────────────────────────────────────────
 
@@ -104,18 +133,12 @@ void ShellController::panelBody(const IopContext& ctx, bool& changed) {
 
     if (!previewOk()) {
         const ImVec4 warn(1.0f, 0.6f, 0.3f, 1.0f);
-        // The dominant cause on a rounded body: OCCT can't OPEN a face whose
-        // edges are ringed by fillets — the kernel seals the cavity instead of
-        // opening it, so the shell can't be built. There is no thickness that
-        // fixes this; the answer is order-of-operations: shell first, fillet
-        // after. Detect any fillet on the body and say so. roundedFaceRadii is a
-        // full-face scan and panelBody runs every frame, so cache it by body.
+        // Only blame fillets when THIS face actually borders one — OCCT can't
+        // open a fillet-bordered face (it seals the cavity), and no thickness
+        // fixes it; the answer is order-of-operations: shell first, fillet after.
+        // A plain side face that failed for another reason gets the generic hint.
         const TopoDS_Shape& body = ctx.doc.getBody(bodyId());
-        if (m_radiiCacheShape.IsNull() || !m_radiiCacheShape.IsEqual(body)) {
-            m_radiiCache = ShellOp::roundedFaceRadii(body);
-            m_radiiCacheShape = body;
-        }
-        if (!m_radiiCache.empty()) {
+        if (faceBordersRounded(body, m_face)) {
             ImGui::TextColored(warn,
                 "Shell failed: OCCT can't open a fillet-bordered face.\n"
                 "Shell the body FIRST, then add the fillets.");
@@ -129,8 +152,6 @@ void ShellController::panelBody(const IopContext& ctx, bool& changed) {
 
 void ShellController::onCleanup() {
     m_face.Nullify();
-    m_radiiCache.clear();
-    m_radiiCacheShape.Nullify();
 }
 
 // ─── Taper ───────────────────────────────────────────────────────────────────
