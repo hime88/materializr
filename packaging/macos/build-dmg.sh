@@ -62,6 +62,7 @@ dylibbundler -b -cd -of \
   -x "$APP/Contents/MacOS/materializr" \
   -d "$APP/Contents/Frameworks/" \
   -p "@executable_path/../Frameworks/" \
+  -s "${SDL2_PREFIX:-$BREW}/lib" \
   -s "$BREW/lib" \
   -s "$BREW/opt/opencascade/lib" </dev/null
 
