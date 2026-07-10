@@ -2490,6 +2490,12 @@ void Application::renderViewport() {
                 // edit and leaves the constraint unchanged. Enter commits the
                 // typed value, re-runs the solver, and marks the project dirty.
                 if (m_dimEditingId >= 0) {
+                    // Restore normal padding — the viewport window's
+                    // WindowPadding(0,0) is still pushed here, and the popup
+                    // captures the style at its own Begin.
+                    ImGui::PushStyleVar(
+                        ImGuiStyleVar_WindowPadding,
+                        ImVec2(8.0f * uiScale(), 8.0f * uiScale()));
                     if (ImGui::BeginPopup("##DimEdit")) {
                         ImGui::TextUnformatted("Edit dimension");
                         ImGui::Separator();
@@ -2535,6 +2541,7 @@ void Application::renderViewport() {
                         // Popup closed without committing — drop edit state.
                         m_dimEditingId = -1;
                     }
+                    ImGui::PopStyleVar(); // ##DimEdit WindowPadding
                 }
             }
 
@@ -5494,6 +5501,12 @@ void Application::renderViewport() {
                     ImGui::SetNextWindowPos(ImVec2(m_sketchGizmoAdjustAnchor.x,
                                                    m_sketchGizmoAdjustAnchor.y),
                                             ImGuiCond_Appearing);
+                    // Restore normal padding — the viewport window's
+                    // WindowPadding(0,0) is still pushed here, and the popup
+                    // captures the style at its own Begin.
+                    ImGui::PushStyleVar(
+                        ImGuiStyleVar_WindowPadding,
+                        ImVec2(8.0f * uiScale(), 8.0f * uiScale()));
                     if (ImGui::BeginPopup("##SketchRotateAdjust",
                                           ImGuiWindowFlags_AlwaysAutoResize)) {
                         ImGui::TextColored(ImVec4(0.85f, 0.75f, 0.30f, 1.0f),
@@ -5593,6 +5606,7 @@ void Application::renderViewport() {
                         m_sketchGizmoOriginals.clear();
                         m_sketchGizmoRotateAdjusting = false;
                     }
+                    ImGui::PopStyleVar(); // ##SketchRotateAdjust WindowPadding
                 }
 
                 // Hit-test helper shared by box-select start and chain-select
@@ -6271,7 +6285,12 @@ void Application::renderViewport() {
 
     }
 
-    // Right-click face context menu
+    // Right-click face context menu. The viewport window pushed
+    // WindowPadding(0,0) (the 3D scene must fill the window rect), and a popup
+    // captures the style at its own Begin — so without this restore the
+    // context menus render their items flush against the popup edges.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        ImVec2(8.0f * uiScale(), 8.0f * uiScale()));
     if (m_contextMenuPending) {
         ImGui::OpenPopup(m_contextMenuPlaneId >= 0 ? "PlaneContextMenu"
                                                    : "FaceContextMenu");
@@ -6539,6 +6558,7 @@ void Application::renderViewport() {
         }
         ImGui::EndPopup();
     }
+    ImGui::PopStyleVar(); // context-menu WindowPadding
 
     // Gizmo hint
     if (m_gizmo->isVisible()) {
