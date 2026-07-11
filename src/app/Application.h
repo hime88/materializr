@@ -211,6 +211,7 @@ private:
     // "Export STL" (which writes every visible body to one file).
     void exportBodyAsStl(int bodyId);
     void exportSketchAsSvg(int sketchId);
+    void exportSketchAsDxf(int sketchId);
     // Zoom-fit the camera onto the selection (or all visible bodies when
     // nothing is selected). Bound to F and View > Frame Selection — the menu
     // item is the touch path.

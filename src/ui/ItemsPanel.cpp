@@ -343,6 +343,9 @@ bool ItemsPanel::renderContent() {
                     if (ImGui::MenuItem("Export as SVG…")) {
                         if (m_exportSketchSvg) m_exportSketchSvg(id);
                     }
+                    if (ImGui::MenuItem("Export as DXF…")) {
+                        if (m_exportSketchDxf) m_exportSketchDxf(id);
+                    }
                     // Make an independent copy — edit it freely (e.g. resize
                     // holes) to derive a same-layout variant without touching
                     // this sketch or any body built from it.

@@ -70,6 +70,10 @@ add_library(materializr_core STATIC
     ${CMAKE_SOURCE_DIR}/src/modeling/GenerationLedger.cpp
     ${CMAKE_SOURCE_DIR}/src/io/ProjectIO.cpp
     ${CMAKE_SOURCE_DIR}/src/io/ImageDecode.cpp
+    ${CMAKE_SOURCE_DIR}/src/io/BrepIO.cpp
+    ${CMAKE_SOURCE_DIR}/src/io/ObjExport.cpp
+    ${CMAKE_SOURCE_DIR}/src/io/DxfExport.cpp
+    ${CMAKE_SOURCE_DIR}/src/io/ThreeMfExport.cpp
     ${CMAKE_SOURCE_DIR}/src/io/StlIO.cpp
     ${CMAKE_SOURCE_DIR}/src/io/MeshDecimate.cpp
     ${CMAKE_SOURCE_DIR}/src/io/ProjectRecovery.cpp
@@ -140,6 +144,11 @@ add_test(NAME test_history COMMAND test_history)
 add_executable(test_recovery test_recovery.cpp)
 target_link_libraries(test_recovery PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_recovery COMMAND test_recovery)
+
+# Exchange formats: BREP round-trip, OBJ/DXF/3MF structural checks
+add_executable(test_exchange_io test_exchange_io.cpp)
+target_link_libraries(test_exchange_io PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_exchange_io COMMAND test_exchange_io)
 
 # test_operations
 add_executable(test_operations test_operations.cpp)

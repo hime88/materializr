@@ -6458,6 +6458,10 @@ void Application::renderViewport() {
                 exportSketchAsSvg(sid);
                 m_contextMenuSketchId = -1;
             }
+            if (ImGui::MenuItem("Export as DXF…")) {
+                exportSketchAsDxf(sid);
+                m_contextMenuSketchId = -1;
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Move")) {
                 selectThisSketch();

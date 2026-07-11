@@ -7,6 +7,9 @@ void forceLink_IgesIO();
 void forceLink_StlImport();
 void forceLink_StlExport();
 void forceLink_GltfExport();
+void forceLink_BrepIO();
+void forceLink_ObjExport();
+void forceLink_ThreeMfExport();
 
 // Phase 2 plugins
 void forceLink_Boolean();
@@ -45,6 +48,9 @@ void linkAll() {
     forceLink_StlImport();
     forceLink_StlExport();
     forceLink_GltfExport();
+    forceLink_BrepIO();
+    forceLink_ObjExport();
+    forceLink_ThreeMfExport();
     // Phase 2
     forceLink_Boolean();
     forceLink_Delete();

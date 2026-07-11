@@ -92,6 +92,7 @@ inline void resetFpuForOcct() {
 #include "io/StepIO.h"
 #include "io/StlExport.h"
 #include "io/SvgExport.h"
+#include "io/DxfExport.h"
 #include "io/FileDialogs.h"
 #include "modeling/SvgImport.h"
 #include "io/ProjectIO.h"
@@ -294,6 +295,7 @@ Application::Application(bool safeMode, float uiScaleOverride)
     m_itemsPanel->setExportStlCallback([this](int bodyId) { exportBodyAsStl(bodyId); });
     m_itemsPanel->setEditSketchCallback([this](int sketchId) { editSketch(sketchId); });
     m_itemsPanel->setExportSketchSvgCallback([this](int sketchId) { exportSketchAsSvg(sketchId); });
+    m_itemsPanel->setExportSketchDxfCallback([this](int sketchId) { exportSketchAsDxf(sketchId); });
     m_itemsPanel->setDuplicateSketchCallback([this](int sketchId) { duplicateSketch(sketchId); });
     m_itemsPanel->setCombineSketchesCallback(
         [this](const std::vector<int>& ids) { combineSketches(ids); });
@@ -3802,6 +3804,53 @@ void Application::exportSketchAsSvg(int sketchId) {
                              result.curveCount, path.c_str());
             } else {
                 std::fprintf(stderr, "SVG export failed: %s\n",
+                             result.errorMessage.c_str());
+            }
+        });
+#endif
+}
+
+void Application::exportSketchAsDxf(int sketchId) {
+    // The SVG twin (above) for the CAM/laser-cutter world: R12 DXF entities
+    // in millimeters. Same name derivation and dialog flow.
+    if (!m_document || sketchId < 0) return;
+    auto sketch = m_document->getSketch(sketchId);
+    if (!sketch) return;
+
+    std::string name = m_document->getSketchName(sketchId);
+    if (name.empty()) name = "sketch-" + std::to_string(sketchId);
+    for (char& ch : name) {
+        if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' ||
+            ch == '"' || ch == '<' || ch == '>' || ch == '|') ch = '_';
+    }
+    std::string defaultFile = name + ".dxf";
+    auto sk = sketch; // keep alive across the async dialog callback
+
+#if defined(MZ_MOBILE)
+    FileDialogs::mobileExportShareOrSave(defaultFile, "application/dxf",
+        [sk](const std::string& path) {
+            auto result = materializr::DxfExport::exportSketch(path, *sk);
+            if (result.success)
+                std::fprintf(stdout, "Exported %d DXF entit%s to %s\n",
+                             result.entityCount,
+                             result.entityCount == 1 ? "y" : "ies", path.c_str());
+            else
+                std::fprintf(stderr, "DXF export failed: %s\n", result.errorMessage.c_str());
+            return result.success;
+        });
+#else
+    FileDialogs::saveFile("Export Sketch to DXF", defaultFile,
+        {{"DXF Files", "*.dxf"}},
+        [sk](std::string path) {
+            if (path.empty()) return;
+            if (std::filesystem::path(path).extension() != ".dxf") path += ".dxf";
+            auto result = materializr::DxfExport::exportSketch(path, *sk);
+            if (result.success) {
+                std::fprintf(stdout, "Exported %d DXF entit%s to %s\n",
+                             result.entityCount,
+                             result.entityCount == 1 ? "y" : "ies", path.c_str());
+            } else {
+                std::fprintf(stderr, "DXF export failed: %s\n",
                              result.errorMessage.c_str());
             }
         });

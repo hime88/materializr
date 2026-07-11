@@ -192,6 +192,9 @@ add_executable(materializr
     src/plugins/StlImportPlugin.cpp
     src/plugins/StlExportPlugin.cpp
     src/plugins/GltfExportPlugin.cpp
+    src/plugins/BrepIOPlugin.cpp
+    src/plugins/ObjExportPlugin.cpp
+    src/plugins/ThreeMfExportPlugin.cpp
     src/plugins/BooleanPlugin.cpp
     src/plugins/DeletePlugin.cpp
     src/plugins/TransformPlugin.cpp
@@ -318,6 +321,10 @@ add_executable(materializr
     src/io/StlExport.cpp
     src/io/SvgExport.cpp
     src/io/IgesIO.cpp
+    src/io/BrepIO.cpp
+    src/io/ObjExport.cpp
+    src/io/DxfExport.cpp
+    src/io/ThreeMfExport.cpp
     src/io/ImageExport.cpp
     src/io/GltfExport.cpp
     src/io/FileDialogs.cpp
