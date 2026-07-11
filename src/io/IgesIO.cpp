@@ -10,10 +10,18 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Compound.hxx>
 #include <BRep_Builder.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Ax1.hxx>
 #include <Interface_Static.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Standard_Failure.hxx>
 #include <Standard_ErrorHandler.hxx>
+
+#include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace materializr {
 
@@ -67,6 +75,13 @@ ImportResult IgesIO::import(const std::string& filePath, Document& doc) {
 
     int importCount = 0;
 
+    // Disk Z-up → scene Y-up, the StepIO convention. IGES skipped this for
+    // years ("i don't think anyone even noticed it was sideways" — Steve),
+    // which left IGES imports lying down relative to STEP imports (#46).
+    gp_Trsf zUpToYUp;
+    zUpToYUp.SetRotation(gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(1.0, 0.0, 0.0)),
+                         -M_PI * 0.5);
+
     // Iterate over transferred shapes
     for (Standard_Integer i = 1; i <= reader.NbShapes(); ++i) {
         if (importCount >= kMaxEntities) {
@@ -74,6 +89,10 @@ ImportResult IgesIO::import(const std::string& filePath, Document& doc) {
             return result;
         }
         TopoDS_Shape shape = reader.Shape(i);
+        try {
+            BRepBuilderAPI_Transform xf(shape, zUpToYUp, /*copy=*/true);
+            if (xf.IsDone() && !xf.Shape().IsNull()) shape = xf.Shape();
+        } catch (...) {}
 
         // Explore for solids first
         bool foundSolids = false;
@@ -147,13 +166,24 @@ ExportResult IgesIO::exportFile(const std::string& filePath, const Document& doc
 
     IGESControl_Writer writer;
 
+    // Scene Y-up → disk Z-up (+90° about X), matching StepIO::exportBodies —
+    // see the import-side note (#46).
+    gp_Trsf yUpToZUp;
+    yUpToZUp.SetRotation(gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(1.0, 0.0, 0.0)),
+                         M_PI * 0.5);
+
     int bodyCount = 0;
     for (int id : allIds) {
         if (doc.isBodyVisible(id)) {
             try {
                 const TopoDS_Shape& shape = doc.getBody(id);
                 if (!shape.IsNull()) {
-                    writer.AddShape(shape);
+                    TopoDS_Shape outShape = shape;
+                    try {
+                        BRepBuilderAPI_Transform xf(shape, yUpToZUp, /*copy=*/true);
+                        if (xf.IsDone() && !xf.Shape().IsNull()) outShape = xf.Shape();
+                    } catch (...) {}
+                    writer.AddShape(outShape);
                     ++bodyCount;
                 }
             } catch (const std::exception& e) {
