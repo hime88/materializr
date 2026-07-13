@@ -3,11 +3,12 @@
 **Open-source parametric 3D CAD for makers** — constraint sketches, solid
 modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 
-> **📱 Now on Android (1.0.0+):** Materializr runs on Android (arm64-v8a),
+> **📱 Now on Android and iPad:** Materializr runs on Android (arm64-v8a) and
+> **iPad — [get it on the App Store](https://apps.apple.com/us/app/materializr/id6787741207)** —
 > reusing the entire geometry codebase via an SDL2 + OpenGL ES 3.0 backend and
 > cross-compiled OpenCASCADE, with a runtime *touch mode* that adapts gestures
 > and hit targets. **Designed for tablets** — a phone screen will be cramped.
-> Grab the APK from the [latest release](https://github.com/materializr-cad/materializr/releases/latest),
+> On Android, grab the APK from the [latest release](https://github.com/materializr-cad/materializr/releases/latest),
 > or see [`android/README.md`](android/README.md) to build it yourself.
 > Also on [F-Droid](https://f-droid.org/packages/com.materializr.app/).
 
@@ -22,6 +23,7 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 | Linux (x86_64 / aarch64) | `Materializr-*.AppImage` | `chmod +x` it and run — no install |
 | Windows | `Materializr-Setup.exe` | run the installer |
 | Windows (portable) | `Materializr-windows-x64.zip` | unzip anywhere, run `materializr.exe` |
+| iPad | [on the App Store](https://apps.apple.com/us/app/materializr/id6787741207) | install from the App Store |
 | Android (F-Droid) | [on F-Droid](https://f-droid.org/packages/com.materializr.app/) | install + auto-update from the F-Droid app; tablets recommended |
 | Android (latest APK) | `Materializr-*-arm64-v8a.apk` | sideload (enable "install unknown apps") for the freshest fixes; tablets recommended |
 | macOS (Apple Silicon) | `Materializr-*-arm64.dmg` | open the `.dmg`, drag **Materializr** to Applications — see the first-launch note below |
@@ -54,6 +56,7 @@ modeling, threads, SVG & text engraving, STL/STEP/SVG export.
 ![CMake](https://img.shields.io/badge/CMake-3.20%2B-blue)
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/BRjzbMGZvE)
+[![App Store](https://img.shields.io/badge/App_Store-iPad-0D96F6?logo=apple&logoColor=white)](https://apps.apple.com/us/app/materializr/id6787741207)
 
 Built on the [OpenCASCADE](https://dev.opencascade.org/) geometry kernel —
 real B-rep solids, not meshes — with a Dear ImGui interface. Sketch on any
