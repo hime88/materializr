@@ -17,6 +17,7 @@
 // → behaviour identical to before this file existed.
 
 #include <TopoDS_Shape.hxx>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,13 @@ void addId(FaceIdMap& m, const TopoDS_Shape& face, int id);
 // input entry: faces the ledger reports as MODIFIED pass their ids to every
 // output face (splits fan out, merges union); faces absent from the ledger
 // that survive IsSame-identical in the result carry through directly.
+// Give EVERY face of `shape` an id: faces already in `m` keep theirs, the
+// rest mint fresh ones via `mint` (deterministic shape order). Full coverage
+// is what lets ops reference ARBITRARY faces (a chamfer's asymmetric
+// reference face, an edge's adjacent faces) by id instead of guessing.
+void complete(FaceIdMap& m, const TopoDS_Shape& shape,
+              const std::function<int()>& mint);
+
 FaceIdMap propagate(
     const std::vector<std::pair<const FaceIdMap*, TopoDS_Shape>>& inputs,
     const GenerationLedger& led, const TopoDS_Shape& result);

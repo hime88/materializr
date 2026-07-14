@@ -86,6 +86,12 @@ private:
     // Stable lineage ids of this chamfer's bevel faces (FaceLineage.h) —
     // minted at first execute, reused on re-execute, serialized (genids=).
     std::vector<int> m_genFaceIds;
+    // Deterministic replay (topo naming, #52): the asymmetric reference
+    // face's lineage id, and each edge named by its two adjacent faces' ids.
+    // Persisted (refid= / edgefaces=); resolved against the input body's
+    // lineage map BEFORE any geometric guessing.
+    int m_refFaceId = -1;
+    std::vector<std::pair<int,int>> m_edgeFaceIdPairs;
 
     // Generative anchors (EdgeAnchor.h) — same scheme as FilletOp.
     int m_sourceSketchId = -1;

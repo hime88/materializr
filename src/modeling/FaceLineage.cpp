@@ -5,6 +5,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 
+#include <TopExp_Explorer.hxx>
 #include <algorithm>
 
 namespace materializr {
@@ -69,3 +70,13 @@ FaceIdMap propagate(
 
 } // namespace topo
 } // namespace materializr
+
+namespace materializr { namespace topo {
+void complete(FaceIdMap& m, const TopoDS_Shape& shape,
+              const std::function<int()>& mint) {
+    if (shape.IsNull()) return;
+    for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next())
+        if (!idsFor(m, ex.Current()))
+            addId(m, ex.Current(), mint());
+}
+} }

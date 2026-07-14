@@ -118,11 +118,59 @@ bool ChamferOp::execute(Document& doc) {
         // Store previous shape for undo
         m_previousShape = doc.getBody(m_bodyId);
 
+        // Input lineage, completed so EVERY face has an id (minting is
+        // deterministic in face order, so a replay that runs the same chain
+        // mints the same ids). This is what edge/reference resolution below
+        // and the post-build recording key off.
+        materializr::topo::FaceIdMap inLineage;
+        if (const auto* im = doc.bodyFaceIds(m_bodyId)) inLineage = *im;
+        materializr::topo::complete(inLineage, m_previousShape,
+                                    [&doc]() { return doc.mintFaceId(); });
+
+        // Lineage-FIRST edge resolution (#52): each edge is named by its two
+        // adjacent faces' ancestry ids — immune to ordinal drift and to the
+        // geometric divergence of a replayed body. All-or-nothing; on miss,
+        // fall through to the classic rebind → anchors → topo-refs chain.
+        bool edgesResolvedByLineage = false;
+        if (!m_edgeFaceIdPairs.empty() &&
+            m_edgeFaceIdPairs.size() == m_edges.size()) {
+            TopTools_IndexedDataMapOfShapeListOfShape efm;
+            TopExp::MapShapesAndAncestors(m_previousShape, TopAbs_EDGE,
+                                          TopAbs_FACE, efm);
+            auto faceHas = [&](const TopoDS_Shape& f, int id) {
+                const auto* ids = materializr::topo::idsFor(inLineage, f);
+                return ids && std::find(ids->begin(), ids->end(), id) != ids->end();
+            };
+            std::vector<TopoDS_Edge> found;
+            for (auto [a, b] : m_edgeFaceIdPairs) {
+                TopoDS_Edge hit;
+                for (int i = 1; i <= efm.Extent(); ++i) {
+                    const TopTools_ListOfShape& fs = efm.FindFromIndex(i);
+                    bool hasA = false, hasB = false;
+                    for (const TopoDS_Shape& f : fs) {
+                        if (faceHas(f, a)) hasA = true;
+                        if (faceHas(f, b)) hasB = true;
+                    }
+                    if (hasA && hasB) {
+                        hit = TopoDS::Edge(efm.FindKey(i));
+                        break;
+                    }
+                }
+                if (hit.IsNull()) { found.clear(); break; }
+                found.push_back(hit);
+            }
+            if (found.size() == m_edges.size()) {
+                m_edges = std::move(found);
+                edgesResolvedByLineage = true;
+            }
+        }
+
         // Re-bind stored edges to the (possibly regenerated) body before
         // chamfering — see FilletOp::execute. Without this, editing an
         // upstream fillet's radius left every chamfer edge stale: the
         // edge-face map silently skipped them all and the chamfer vanished.
-        if (!SubShapeIndex::rebindEdges(m_previousShape, m_edges)) {
+        if (!edgesResolvedByLineage &&
+            !SubShapeIndex::rebindEdges(m_previousShape, m_edges)) {
             // Ordinal/carrier match failed (a sketch dimension edit moved the
             // edges) — re-find them by their sketch feature. See EdgeAnchor.
             if (!resolveAnchors(doc, m_previousShape)) {
@@ -178,7 +226,22 @@ bool ChamferOp::execute(Document& doc) {
         // it exists (always, for a single edge); null = no common face, in which
         // case we fall back to each edge's first face (symmetric is unaffected).
         TopoDS_Face sharedRef;
-        if (m_distance2 > 0.0) sharedRef = sharedReferenceFace(m_previousShape, m_edges);
+        if (m_distance2 > 0.0) {
+            // Persisted reference id wins (deterministic); guess only without it.
+            if (m_refFaceId >= 0) {
+                for (TopExp_Explorer fx(m_previousShape, TopAbs_FACE);
+                     fx.More(); fx.Next()) {
+                    const auto* ids = materializr::topo::idsFor(inLineage, fx.Current());
+                    if (ids && std::find(ids->begin(), ids->end(), m_refFaceId)
+                                   != ids->end()) {
+                        sharedRef = TopoDS::Face(fx.Current());
+                        break;
+                    }
+                }
+            }
+            if (sharedRef.IsNull())
+                sharedRef = sharedReferenceFace(m_previousShape, m_edges);
+        }
 
         // Build with (dAlongRef, dOther). Split into a lambda because the
         // asymmetric reference face is NOT persisted: on a replayed body,
@@ -292,9 +355,31 @@ bool ChamferOp::execute(Document& doc) {
         // Update the body with the chamfered shape (kept on the op too, so
         // serializeParams can index the generated faces against the result).
         m_resultShape = candidate;
-        // Snapshot the INPUT body's lineage before updateBody clears it.
-        materializr::topo::FaceIdMap inLineage;
-        if (const auto* im = doc.bodyFaceIds(m_bodyId)) inLineage = *im;
+        // Record this execute's naming so the NEXT run never guesses:
+        // reference face + each edge as its adjacent faces' lineage ids.
+        if (!sharedRef.IsNull()) {
+            if (const auto* ids = materializr::topo::idsFor(inLineage, sharedRef))
+                if (!ids->empty()) m_refFaceId = ids->front();
+        }
+        {
+            TopTools_IndexedDataMapOfShapeListOfShape efm;
+            TopExp::MapShapesAndAncestors(m_previousShape, TopAbs_EDGE,
+                                          TopAbs_FACE, efm);
+            std::vector<std::pair<int,int>> pairs;
+            for (const auto& e : m_edges) {
+                int a = -1, b = -1;
+                if (efm.Contains(e))
+                    for (const TopoDS_Shape& f : efm.FindFromKey(e)) {
+                        const auto* ids = materializr::topo::idsFor(inLineage, f);
+                        if (!ids || ids->empty()) continue;
+                        if (a < 0) a = ids->front();
+                        else if (b < 0 && ids->front() != a) b = ids->front();
+                    }
+                if (a < 0 || b < 0) { pairs.clear(); break; }
+                pairs.push_back({a, b});
+            }
+            if (pairs.size() == m_edges.size()) m_edgeFaceIdPairs = std::move(pairs);
+        }
         doc.updateBody(m_bodyId, m_resultShape);
         doc.setBodyLedger(m_bodyId, &m_ledger);
 
@@ -312,6 +397,8 @@ bool ChamferOp::execute(Document& doc) {
             }
             for (size_t i = 0; i < m_generatedFaces.size(); ++i)
                 materializr::topo::addId(next, m_generatedFaces[i], m_genFaceIds[i]);
+            materializr::topo::complete(next, m_resultShape,
+                                        [&doc]() { return doc.mintFaceId(); });
             doc.setBodyFaceIds(m_bodyId, std::move(next));
         }
         return true;
@@ -387,6 +474,13 @@ std::string ChamferOp::serializeParams() const {
                                                    TopAbs_FACE);
         if (!idx.empty()) blob += ";gen=" + idx;
     }
+    if (m_refFaceId >= 0) blob += ";refid=" + std::to_string(m_refFaceId);
+    if (!m_edgeFaceIdPairs.empty()) {
+        blob += ";edgefaces=";
+        for (size_t i = 0; i < m_edgeFaceIdPairs.size(); ++i)
+            blob += (i ? "," : "") + std::to_string(m_edgeFaceIdPairs[i].first)
+                  + ":" + std::to_string(m_edgeFaceIdPairs[i].second);
+    }
     if (!m_genFaceIds.empty()) {
         blob += ";genids=";
         for (size_t i = 0; i < m_genFaceIds.size(); ++i)
@@ -444,6 +538,24 @@ bool ChamferOp::deserializeParams(const std::string& blob) {
         else if (key == "edges")    { m_edgeIndices = SubShapeIndex::parse(val); any = true; }
         else if (key == "gen")      { m_genFaceIndices = SubShapeIndex::parse(val); any = true; }
         else if (key == "genids")   { m_genFaceIds = SubShapeIndex::parse(val); any = true; }
+        else if (key == "refid")    { m_refFaceId = std::atoi(val.c_str()); any = true; }
+        else if (key == "edgefaces") {
+            m_edgeFaceIdPairs.clear();
+            size_t q = 0;
+            while (q < val.size()) {
+                size_t c = val.find(',', q);
+                std::string tokp = val.substr(q, c == std::string::npos
+                                                     ? std::string::npos : c - q);
+                size_t col = tokp.find(':');
+                if (col != std::string::npos)
+                    m_edgeFaceIdPairs.push_back(
+                        {std::atoi(tokp.c_str()),
+                         std::atoi(tokp.c_str() + col + 1)});
+                if (c == std::string::npos) break;
+                q = c + 1;
+            }
+            any = true;
+        }
         else if (key == "anchor")   { EdgeAnchor::parse(val, m_edgeAnchors); any = true; }
         pos = end + 1;
     }
