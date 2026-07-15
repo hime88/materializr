@@ -26,6 +26,7 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <ShapeFix_Wireframe.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <GProp_GProps.hxx>
 #include <Geom_TrimmedCurve.hxx>
@@ -1103,12 +1104,32 @@ bool applyFill(const TopoDS_Shape& body, const std::vector<Tool>& tools,
     // hairline steps at the joint). UnifySameDomain is cosmetic-but-correct
     // here; fall back to the un-merged shape if it misbehaves.
     try {
-        ShapeUpgrade_UnifySameDomain unify(res, Standard_True, Standard_True,
+        // The fuse can leave a ZERO-LENGTH edge at a miter's toe junction
+        // (piece overlap/extension collapsing against the body boundary),
+        // and one degenerate edge is enough to make UnifySameDomain refuse
+        // to merge the clip face into the neighbouring bevel — the seam then
+        // shows up in the viewport as an extra facet at the corner. Drop
+        // degenerate edges first, then unify.
+        TopoDS_Shape pre = res;
+        try {
+            ShapeFix_Wireframe wf(pre);
+            wf.SetPrecision(1e-4);
+            wf.SetMaxTolerance(1e-3);
+            wf.ModeDropSmallEdges() = Standard_True;
+            wf.FixSmallEdges();
+            wf.FixWireGaps();
+            if (!wf.Shape().IsNull()) pre = wf.Shape();
+        } catch (...) { pre = res; }
+        ShapeUpgrade_UnifySameDomain unify(pre, Standard_True, Standard_True,
                                            Standard_False);
         unify.Build();
         TopoDS_Shape merged = unify.Shape();
-        if (!merged.IsNull() && BRepCheck_Analyzer(merged).IsValid())
-            res = merged;
+        if (!merged.IsNull() && BRepCheck_Analyzer(merged).IsValid()) {
+            GProp_GProps gr, gm;
+            BRepGProp::VolumeProperties(res, gr);
+            BRepGProp::VolumeProperties(merged, gm);
+            if (std::abs(gm.Mass() - gr.Mass()) < 1e-3) res = merged;
+        }
     } catch (...) {}
 
     // Must have ADDED material, no more than the ramps themselves, and sound.

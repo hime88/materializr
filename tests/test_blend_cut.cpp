@@ -15,6 +15,8 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
@@ -608,6 +610,104 @@ TEST(BlendCut, OutsideCornerGetsFan) {
         EXPECT_EQ(sc.State(), TopAbs_IN)
             << "outside corner has no fan — abrupt end walls";
     }
+}
+
+// The miter's clip face lies exactly IN the neighbour bevel's plane, so after
+// the fuse it must MERGE into the neighbour bevel — one face, no seam. The
+// fuse can leave a zero-length edge at the toe junction (piece extension
+// collapsing against the body boundary when the neighbour's toe lands exactly
+// on the plate edge), and one degenerate edge made UnifySameDomain keep the
+// wedge as a separate coplanar facet: invisible in geometry checks, but the
+// viewport draws its boundary as a "weird blend at the bottom of the corner".
+TEST(BlendCut, MiterWedgeMergesIntoNeighbourBevel) {
+    // Raised block on a plate; the SIDE bevel's setback reaches the plate
+    // edge exactly (toe on the boundary), like the light cover's rim bevels.
+    auto body = []() {
+        TopoDS_Shape plate = BRepPrimAPI_MakeBox(40.0, 30.0, 2.0).Shape();
+        TopoDS_Shape block = BRepPrimAPI_MakeBox(
+            gp_Pnt(0.0, 0.0, 2.0), gp_Pnt(30.0, 20.0, 5.0)).Shape();
+        return BRepAlgoAPI_Fuse(plate, block).Shape();
+    };
+    // Pocket crossing the long ramp's floor so it takes the FILL path.
+    TopoDS_Shape pocket = BRepPrimAPI_MakeBox(
+        gp_Pnt(8.0, 20.5, 1.0), gp_Pnt(14.0, 23.0, 3.0)).Shape();
+    auto findEdge = [](const TopoDS_Shape& s, auto pred) {
+        for (TopExp_Explorer ex(s, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge& e = TopoDS::Edge(ex.Current());
+            if (BRepAdaptor_Curve(e).GetType() != GeomAbs_Line) continue;
+            bool ok = true;
+            int nv = 0;
+            for (TopExp_Explorer vx(e, TopAbs_VERTEX); vx.More();
+                 vx.Next(), ++nv)
+                if (!pred(BRep_Tool::Pnt(TopoDS::Vertex(vx.Current()))))
+                    ok = false;
+            if (ok && nv == 2) return e;
+        }
+        return TopoDS_Edge();
+    };
+
+    Document doc;
+    int id = doc.addBody(BRepAlgoAPI_Cut(body(), pocket).Shape(), "Blk");
+    // Side bevel: block edge x=30, 3 up / 10 out — toe exactly at x=40.
+    {
+        TopoDS_Edge e = findEdge(doc.getBody(id), [](const gp_Pnt& p) {
+            return std::abs(p.X() - 30.0) < 1e-7 &&
+                   std::abs(p.Z() - 2.0) < 1e-7 && p.Y() < 20.0 + 1e-7;
+        });
+        ASSERT_FALSE(e.IsNull());
+        ChamferOp op;
+        op.setBody(id);
+        op.setEdges({e});
+        op.setDistance(3.0);
+        op.setDistance2(10.0);
+        ASSERT_TRUE(op.execute(doc));
+    }
+    // Long ramp: block edge y=20, 3 up / 8 out, crosses the pocket → fill
+    // path with a miter into the side bevel at the (30,20) outside corner.
+    {
+        // After the side fill, its cap base merges coplanar with this wall
+        // base into one longer edge (may run past x=30) — match on y/z only.
+        TopoDS_Edge e = findEdge(doc.getBody(id), [](const gp_Pnt& p) {
+            return std::abs(p.Y() - 20.0) < 1e-7 &&
+                   std::abs(p.Z() - 2.0) < 1e-7;
+        });
+        ASSERT_FALSE(e.IsNull());
+        ChamferOp op;
+        op.setBody(id);
+        op.setEdges({e});
+        op.setDistance(3.0);
+        op.setDistance2(8.0);
+        ASSERT_TRUE(op.execute(doc));
+    }
+    const TopoDS_Shape& out = doc.getBody(id);
+    EXPECT_TRUE(BRepCheck_Analyzer(out).IsValid());
+    // Exactly ONE face on the side bevel's plane (rises 3 over a 10 run in
+    // +x → normal (3,0,10)/√109), covering the full span INCLUDING the
+    // miter corner.
+    int sideFaces = 0;
+    double zMaxTop = -1e9, yMax = -1e9;
+    const gp_Dir want(3.0 / std::sqrt(109.0), 0.0, 10.0 / std::sqrt(109.0));
+    for (TopExp_Explorer fx(out, TopAbs_FACE); fx.More(); fx.Next()) {
+        const TopoDS_Face f = TopoDS::Face(fx.Current());
+        BRepAdaptor_Surface surf(f);
+        if (surf.GetType() != GeomAbs_Plane) continue;
+        gp_Dir n = surf.Plane().Axis().Direction();
+        if (f.Orientation() == TopAbs_REVERSED) n.Reverse();
+        if (n.Angle(want) > 0.01) continue;
+        sideFaces++;
+        Bnd_Box bb;
+        BRepBndLib::Add(f, bb);
+        double x0, y0, z0, x1, y1, z1;
+        bb.Get(x0, y0, z0, x1, y1, z1);
+        zMaxTop = std::max(zMaxTop, z1);
+        yMax = std::max(yMax, y1);
+    }
+    EXPECT_EQ(sideFaces, 1)
+        << "miter clip face left as a separate coplanar facet (visible seam)";
+    // The single face must include the mitered corner wrap (reaches past the
+    // block corner y=20 toward the long ramp's territory).
+    EXPECT_GT(yMax, 20.5);
+    EXPECT_GT(zMaxTop, 4.5);
 }
 
 // A cut can only REMOVE material, so a concave (inside-corner) edge must be
