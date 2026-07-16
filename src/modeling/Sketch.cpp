@@ -1619,6 +1619,14 @@ TopoDS_Shape Sketch::buildProfileShape() const {
     int islands = 0;
     for (size_t i = 0; i < n; ++i) {
         if (depth[i] % 2 != 0) continue; // hole, consumed by its parent
+        // #60: an even-depth island nested >=2 levels deep floats inside
+        // another island's hole — a "plug" (e.g. the inner circle of a
+        // stepped/counterbore hole, which sits inside both the part outline
+        // AND the counterbore circle). Even-odd parity fills it solid, but a
+        // single extruded profile must be connected material: sweeping a
+        // floating plug drops a disconnected lump into the body. Skip it — the
+        // hole stays open, matching the intent of a stepped hole.
+        if (depth[i] >= 2) continue;
         TopoDS_Face outer = wireFace(wires[i]);
         if (outer.IsNull()) continue;
         TopTools_ListOfShape holeFaces;

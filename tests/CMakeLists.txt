@@ -144,6 +144,11 @@ add_executable(test_separate_body test_separate_body.cpp)
 target_link_libraries(test_separate_body PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_separate_body COMMAND test_separate_body)
 
+# test_stepped_hole_profile - #60: stepped hole doesn't extrude a floating plug
+add_executable(test_stepped_hole_profile test_stepped_hole_profile.cpp)
+target_link_libraries(test_stepped_hole_profile PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_stepped_hole_profile COMMAND test_stepped_hole_profile)
+
 # test_section_cap - section-view cross-section cap geometry (issue #15)
 add_executable(test_section_cap test_section_cap.cpp)
 target_link_libraries(test_section_cap PRIVATE materializr_core gtest gtest_main)
