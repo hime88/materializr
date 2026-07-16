@@ -318,7 +318,7 @@ void ShellOp::renderProperties() {
     ImGui::Text("Shell");
     ImGui::Separator();
 
-    ImGui::InputDouble("Thickness", &m_thickness, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Thickness", &m_thickness, 0.1, 1.0, "%g");
 
     int faceCount = m_facesToRemove.Size();
     ImGui::Text("Open faces: %d selected", faceCount);

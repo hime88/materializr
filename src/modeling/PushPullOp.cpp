@@ -538,7 +538,7 @@ std::string PushPullOp::description() const {
 void PushPullOp::renderProperties() {
     ImGui::Text("Push/Pull");
     ImGui::Separator();
-    ImGui::InputDouble("Distance", &m_distance, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Distance", &m_distance, 0.1, 1.0, "%g");
     ImGui::Text("Regions: %zu", m_targets.size());
 }
 

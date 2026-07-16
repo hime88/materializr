@@ -276,15 +276,15 @@ void RevolveOp::renderProperties() {
 
     ImGui::Separator();
     ImGui::Text("Axis Origin");
-    ImGui::InputDouble("Origin X", &m_axisOriginX, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Origin Y", &m_axisOriginY, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Origin Z", &m_axisOriginZ, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Origin X", &m_axisOriginX, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Origin Y", &m_axisOriginY, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Origin Z", &m_axisOriginZ, 0.1, 1.0, "%g");
 
     ImGui::Separator();
     ImGui::Text("Axis Direction");
-    ImGui::InputDouble("Dir X", &m_axisDirX, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Dir Y", &m_axisDirY, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Dir Z", &m_axisDirZ, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Dir X", &m_axisDirX, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Dir Y", &m_axisDirY, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Dir Z", &m_axisDirZ, 0.1, 1.0, "%g");
 
     ImGui::Separator();
     const char* modeItems[] = { "New Body", "Union", "Subtract", "Intersect" };

@@ -56,9 +56,22 @@ ImTextureID logoTexture() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // Pin the unpack state before the upload. This texture is created
+        // lazily on the first frame it's drawn, inheriting whatever GL pixel-
+        // store state the prior frame left set — if some earlier texture upload
+        // left GL_UNPACK_ROW_LENGTH non-zero (or a non-4 alignment), the logo
+        // reads its rows at the wrong stride and comes out garbled, and since
+        // the texture is static that corruption sticks for the whole session.
+        GLint prevRowLen = 0, prevAlign = 4;
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &prevRowLen);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &prevAlign);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, materializr::kLogoTexW,
                      materializr::kLogoTexH, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      materializr::kLogoTexRGBA);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, prevRowLen);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, prevAlign);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
     return (ImTextureID)(intptr_t)tex;

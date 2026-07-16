@@ -1,3 +1,4 @@
+#include "../core/NumFormat.h"
 #include "ExtrudeOp.h"
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
@@ -670,7 +671,7 @@ bool ExtrudeOp::rehydrateFromReload(const ReloadState& state, Document& doc) {
 }
 
 std::string ExtrudeOp::description() const {
-    std::string desc = "Extrude " + std::to_string(m_distance) + "mm";
+    std::string desc = "Extrude " + materializr::numStr(m_distance) + "mm";
     switch (m_mode) {
         case ExtrudeMode::NewBody:   desc += " (New Body)"; break;
         case ExtrudeMode::Union:     desc += " (Union)"; break;
@@ -684,7 +685,7 @@ void ExtrudeOp::renderProperties() {
     ImGui::Text("Extrude");
     ImGui::Separator();
 
-    ImGui::InputDouble("Distance", &m_distance, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Distance", &m_distance, 0.1, 1.0, "%g");
 
     const char* modeItems[] = { "New Body", "Union", "Subtract", "Intersect" };
     int modeIndex = static_cast<int>(m_mode);

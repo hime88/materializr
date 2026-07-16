@@ -1,3 +1,4 @@
+#include "../core/NumFormat.h"
 #include "FilletOp.h"
 #include "BlendCut.h"
 #include "SubShapeIndex.h"
@@ -394,7 +395,7 @@ bool FilletOp::undo(Document& doc) {
 }
 
 std::string FilletOp::description() const {
-    return "Fillet R" + std::to_string(m_radius) + " on " +
+    return "Fillet R" + materializr::numStr(m_radius) + " on " +
            std::to_string(m_edges.size()) + " edge(s)";
 }
 
@@ -402,7 +403,7 @@ void FilletOp::renderProperties() {
     ImGui::Text("Fillet");
     ImGui::Separator();
 
-    ImGui::InputDouble("Radius", &m_radius, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Radius", &m_radius, 0.1, 1.0, "%g");
 
     ImGui::Text("Edges: %d selected", static_cast<int>(m_edges.size()));
     ImGui::Text("Body ID: %d", m_bodyId);

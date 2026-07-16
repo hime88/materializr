@@ -201,8 +201,16 @@ bool PropertiesPanel::renderContent() {
             ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", op->description().c_str());
             ImGui::Spacing();
 
-            // Render the operation's parameter controls
+            // Render the operation's parameter controls. Size the input for
+            // ~7 digits plus the -/+ step buttons so a labelled InputInt/Double
+            // neither runs its right-hand label off the panel nor clips the
+            // value — see HistoryPanel.
+            ImGui::PushItemWidth(
+                ImGui::CalcTextSize("0000000").x +
+                2.0f * (ImGui::GetFrameHeight() +
+                        ImGui::GetStyle().ItemInnerSpacing.x));
             const_cast<Operation*>(op)->renderProperties();
+            ImGui::PopItemWidth();
 
             // Enter commits the edit directly — the Apply button stays as the
             // mouse-driven alternative.

@@ -134,32 +134,32 @@ void PrimitiveOp::renderProperties() {
     ImGui::Separator();
     switch (m_kind) {
         case Kind::Box:
-            ImGui::InputDouble("Width (X)",  &m_x, 0.1, 1.0, "%.3f");
-            ImGui::InputDouble("Depth (Y)",  &m_y, 0.1, 1.0, "%.3f");
-            ImGui::InputDouble("Height (Z)", &m_z, 0.1, 1.0, "%.3f");
+            ImGui::InputDouble("Width (X)",  &m_x, 0.1, 1.0, "%g");
+            ImGui::InputDouble("Depth (Y)",  &m_y, 0.1, 1.0, "%g");
+            ImGui::InputDouble("Height (Z)", &m_z, 0.1, 1.0, "%g");
             break;
         case Kind::Cylinder:
-            ImGui::InputDouble("Radius",     &m_radius, 0.1, 1.0, "%.3f");
-            ImGui::InputDouble("Height",     &m_height, 0.1, 1.0, "%.3f");
+            ImGui::InputDouble("Radius",     &m_radius, 0.1, 1.0, "%g");
+            ImGui::InputDouble("Height",     &m_height, 0.1, 1.0, "%g");
             break;
         case Kind::Sphere:
-            ImGui::InputDouble("Radius",     &m_radius, 0.1, 1.0, "%.3f");
+            ImGui::InputDouble("Radius",     &m_radius, 0.1, 1.0, "%g");
             break;
         case Kind::Cone:
-            ImGui::InputDouble("Bottom radius", &m_radius,    0.1, 1.0, "%.3f");
-            ImGui::InputDouble("Top radius",    &m_topRadius, 0.1, 1.0, "%.3f");
-            ImGui::InputDouble("Height",        &m_height,    0.1, 1.0, "%.3f");
+            ImGui::InputDouble("Bottom radius", &m_radius,    0.1, 1.0, "%g");
+            ImGui::InputDouble("Top radius",    &m_topRadius, 0.1, 1.0, "%g");
+            ImGui::InputDouble("Height",        &m_height,    0.1, 1.0, "%g");
             break;
         case Kind::Torus:
-            ImGui::InputDouble("Major radius",  &m_radius,      0.1, 1.0, "%.3f");
-            ImGui::InputDouble("Minor radius",  &m_minorRadius, 0.1, 1.0, "%.3f");
+            ImGui::InputDouble("Major radius",  &m_radius,      0.1, 1.0, "%g");
+            ImGui::InputDouble("Minor radius",  &m_minorRadius, 0.1, 1.0, "%g");
             break;
     }
     ImGui::Spacing();
     ImGui::Text("Origin");
-    ImGui::InputDouble("X", &m_ox, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Y", &m_oy, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Z", &m_oz, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("X", &m_ox, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Y", &m_oy, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Z", &m_oz, 0.1, 1.0, "%g");
     ImGui::Text("Body ID: %d", m_createdBodyId);
 
     // Same validation feedback the create popup shows — Apply Changes runs

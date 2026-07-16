@@ -355,12 +355,26 @@ void SketchEditOp::renderProperties() {
     auto& cs = m_after->getMutableConstraints();
     for (size_t i = 0; i < cs.size(); ++i) {
         Constraint& c = cs[i];
+        // Show only what THIS step introduced or changed. m_after is a FULL
+        // snapshot, so iterating it raw re-lists every dimension the sketch has
+        // ever gained — every later step then showed all four circle diameters
+        // regardless of whether it drew a line, a rectangle, or removed
+        // something. Same before/after delta the row description() already
+        // uses: skip a constraint that existed UNCHANGED before this step.
+        if (m_before) {
+            const Constraint* prev = nullptr;
+            for (const auto& b : m_before->getConstraints())
+                if (b.id == c.id) { prev = &b; break; }
+            if (prev && std::abs(prev->value - c.value) < 1e-9 &&
+                        std::abs(prev->valueY - c.valueY) < 1e-9)
+                continue;
+        }
         ImGui::PushID(static_cast<int>(i));
         switch (c.type) {
             case ConstraintType::Distance: {
                 anyDim = true;
                 double v = c.value;
-                if (ImGui::InputDouble("Distance (mm)", &v, 0.0, 0.0, "%.3f",
+                if (ImGui::InputDouble("Distance (mm)", &v, 0.0, 0.0, "%g",
                                        ImGuiInputTextFlags_EnterReturnsTrue)) {
                     c.value = v;
                     resolveAfter();
@@ -372,7 +386,7 @@ void SketchEditOp::renderProperties() {
                 // Stored as radius; show as diameter to match the in-sketch
                 // popup ("Ø ..." in descriptions and dimensions).
                 double dia = c.value * 2.0;
-                if (ImGui::InputDouble("\xC3\x98 (mm)", &dia, 0.0, 0.0, "%.3f",
+                if (ImGui::InputDouble("\xC3\x98 (mm)", &dia, 0.0, 0.0, "%g",
                                        ImGuiInputTextFlags_EnterReturnsTrue)) {
                     c.value = std::max(dia, 1e-6) * 0.5;
                     resolveAfter();
@@ -426,7 +440,7 @@ void SketchEditOp::renderProperties() {
                 if (c.id == cid) { r = c.radius; break; }
             double dia = r * 2.0;
             ImGui::PushID(cid + 1000000);   // keep clear of the constraint-row ids
-            if (ImGui::InputDouble("Diameter (mm)", &dia, 0.0, 0.0, "%.3f",
+            if (ImGui::InputDouble("Diameter (mm)", &dia, 0.0, 0.0, "%g",
                                    ImGuiInputTextFlags_EnterReturnsTrue)) {
                 // Writes the after-snapshot AND records the edit so Apply can
                 // carry the new radius into later snapshots — otherwise the next

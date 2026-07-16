@@ -218,13 +218,13 @@ void PatternOp::renderProperties() {
     ImGui::Text("Body ID: %d", m_bodyId);
 
     if (m_type == PatternType::Linear) {
-        ImGui::InputDouble("Spacing X", &m_spacingX, 0.1, 1.0, "%.3f");
-        ImGui::InputDouble("Spacing Y", &m_spacingY, 0.1, 1.0, "%.3f");
-        ImGui::InputDouble("Spacing Z", &m_spacingZ, 0.1, 1.0, "%.3f");
+        ImGui::InputDouble("Spacing X", &m_spacingX, 0.1, 1.0, "%g");
+        ImGui::InputDouble("Spacing Y", &m_spacingY, 0.1, 1.0, "%g");
+        ImGui::InputDouble("Spacing Z", &m_spacingZ, 0.1, 1.0, "%g");
     } else {
-        ImGui::InputDouble("Axis X", &m_axisX, 0.1, 1.0, "%.3f");
-        ImGui::InputDouble("Axis Y", &m_axisY, 0.1, 1.0, "%.3f");
-        ImGui::InputDouble("Axis Z", &m_axisZ, 0.1, 1.0, "%.3f");
+        ImGui::InputDouble("Axis X", &m_axisX, 0.1, 1.0, "%g");
+        ImGui::InputDouble("Axis Y", &m_axisY, 0.1, 1.0, "%g");
+        ImGui::InputDouble("Axis Z", &m_axisZ, 0.1, 1.0, "%g");
         ImGui::InputDouble("Total Angle", &m_totalAngle, 1.0, 15.0, "%.1f");
     }
 

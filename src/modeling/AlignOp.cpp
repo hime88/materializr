@@ -79,16 +79,16 @@ void AlignOp::renderProperties() {
     double tx = m_target.X(), ty = m_target.Y(), tz = m_target.Z();
 
     ImGui::Text("Source Point");
-    if (ImGui::InputDouble("Src X", &sx, 0.1, 1.0, "%.3f") ||
-        ImGui::InputDouble("Src Y", &sy, 0.1, 1.0, "%.3f") ||
-        ImGui::InputDouble("Src Z", &sz, 0.1, 1.0, "%.3f")) {
+    if (ImGui::InputDouble("Src X", &sx, 0.1, 1.0, "%g") ||
+        ImGui::InputDouble("Src Y", &sy, 0.1, 1.0, "%g") ||
+        ImGui::InputDouble("Src Z", &sz, 0.1, 1.0, "%g")) {
         m_source.SetCoord(sx, sy, sz);
     }
 
     ImGui::Text("Target Point");
-    if (ImGui::InputDouble("Tgt X", &tx, 0.1, 1.0, "%.3f") ||
-        ImGui::InputDouble("Tgt Y", &ty, 0.1, 1.0, "%.3f") ||
-        ImGui::InputDouble("Tgt Z", &tz, 0.1, 1.0, "%.3f")) {
+    if (ImGui::InputDouble("Tgt X", &tx, 0.1, 1.0, "%g") ||
+        ImGui::InputDouble("Tgt Y", &ty, 0.1, 1.0, "%g") ||
+        ImGui::InputDouble("Tgt Z", &tz, 0.1, 1.0, "%g")) {
         m_target.SetCoord(tx, ty, tz);
     }
 

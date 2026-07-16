@@ -73,9 +73,9 @@ void CopyOp::renderProperties() {
     ImGui::InputInt("Source Body ID", &m_sourceBodyId);
 
     ImGui::Text("Offset");
-    ImGui::InputDouble("X", &m_dx, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Y", &m_dy, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Z", &m_dz, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("X", &m_dx, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Y", &m_dy, 0.1, 1.0, "%g");
+    ImGui::InputDouble("Z", &m_dz, 0.1, 1.0, "%g");
 
     if (m_createdBodyId >= 0) {
         ImGui::Text("Created body ID: %d", m_createdBodyId);

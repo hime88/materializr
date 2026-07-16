@@ -63,6 +63,11 @@ private:
     int m_hoveredStep = -1;   // step row under the cursor this frame (hover preview)
     int m_enableFailStep = -1; // re-enabled step that still can't compute (#54)
     bool m_showProperties = false;
+    // Measured height of the inline step-properties content last frame, so the
+    // block sizes to the op's fields (a two-distance chamfer needs more than a
+    // plain extrude) instead of a fixed box that scrolls when a selection is
+    // field-heavy. Capped when rendered so it can't swallow the step list.
+    float m_stepPropsH = 0.0f;
     bool m_deleteConflict = false; // last delete was blocked by a dependent step
     // Steps with same typeId in a row collapse into a single expandable group
     // header. The set holds the START step index of each group the user has

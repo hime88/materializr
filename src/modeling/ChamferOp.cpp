@@ -1,3 +1,4 @@
+#include "../core/NumFormat.h"
 #include "ChamferOp.h"
 #include "BlendCut.h"
 #include "SubShapeIndex.h"
@@ -606,10 +607,10 @@ bool ChamferOp::undo(Document& doc) {
 
 std::string ChamferOp::description() const {
     if (m_distance2 > 0.0)
-        return "Chamfer D" + std::to_string(m_distance) + "/" +
-               std::to_string(m_distance2) + " on " +
+        return "Chamfer D" + materializr::numStr(m_distance) + "/" +
+               materializr::numStr(m_distance2) + " on " +
                std::to_string(m_edges.size()) + " edge(s)";
-    return "Chamfer D" + std::to_string(m_distance) + " on " +
+    return "Chamfer D" + materializr::numStr(m_distance) + " on " +
            std::to_string(m_edges.size()) + " edge(s)";
 }
 
@@ -617,12 +618,12 @@ void ChamferOp::renderProperties() {
     ImGui::Text("Chamfer");
     ImGui::Separator();
 
-    ImGui::InputDouble("Distance", &m_distance, 0.1, 1.0, "%.3f");
+    ImGui::InputDouble("Distance", &m_distance, 0.1, 1.0, "%g");
     bool asym = (m_distance2 > 0.0);
     if (ImGui::Checkbox("Two distances", &asym))
         m_distance2 = asym ? m_distance : -1.0;
     if (m_distance2 > 0.0)
-        ImGui::InputDouble("Distance 2", &m_distance2, 0.1, 1.0, "%.3f");
+        ImGui::InputDouble("Distance 2", &m_distance2, 0.1, 1.0, "%g");
 
     ImGui::Text("Edges: %d selected", static_cast<int>(m_edges.size()));
     ImGui::Text("Body ID: %d", m_bodyId);

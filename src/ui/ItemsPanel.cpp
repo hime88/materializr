@@ -632,6 +632,12 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
     float nameW = ImGui::GetContentRegionAvail().x - swatchW -
                   ImGui::GetStyle().ItemSpacing.x;
     std::string name = m_document->getBodyName(id);
+    // Show the kernel body id alongside the display name — it's the id that
+    // Boolean/Separate/etc. properties reference ("Target Body ID: 22"), so
+    // this is the only way to tell which body in the list a step operated on.
+    // The Selectable keeps a stable widget id via the enclosing PushID(id), so
+    // decorating the visible label is safe.
+    std::string label = name + "  \xC2\xB7 b" + std::to_string(id);
     // Auto-scroll into view ONLY when this is the lone selected body and it's
     // newly selected (typically a viewport pick changing selection). With
     // multi-select every selected row would otherwise re-issue SetScrollHereY,
@@ -640,7 +646,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
         m_selection && m_selection->selectedBodyCount() == 1) {
         ImGui::SetScrollHereY(0.5f);
     }
-    if (ImGui::Selectable(name.c_str(), isSelected, 0,
+    if (ImGui::Selectable(label.c_str(), isSelected, 0,
                           ImVec2(nameW > 1.0f ? nameW : 0.0f, 0.0f))) {
         if (m_selection) {
             ImGuiIO& io = ImGui::GetIO();

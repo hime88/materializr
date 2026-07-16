@@ -8,6 +8,7 @@
 #include "../modeling/SketchEditOp.h"
 #include "../modeling/SketchTransformOp.h"
 #include <imgui.h>
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <cstdio>
@@ -109,7 +110,21 @@ bool HistoryPanel::renderContent() {
     const bool propsOpen =
         m_showProperties && m_editingStep >= 0 && m_editingStep < stepCount &&
         m_history->getStep(m_editingStep) != nullptr;
-    const float propsBlockH = propsOpen ? 210.0f : 0.0f;
+    // The properties block SIZES TO THE OP'S FIELDS (measured last frame) plus
+    // the fixed chrome (separator + header + Apply button). A fixed box made a
+    // two-distance chamfer — one field taller than a plain op — scroll. Capped
+    // so the step list keeps a usable floor; past the cap the props child
+    // scrolls internally (Apply stays pinned) rather than growing further.
+    const float kPropsChrome = 66.0f;
+    float propsBlockH = 0.0f;
+    if (propsOpen) {
+        const float panelH = ImGui::GetContentRegionAvail().y;
+        const float wanted =
+            (m_stepPropsH > 1.0f ? m_stepPropsH : 150.0f) + kPropsChrome;
+        const float maxBlock = std::max(
+            panelH - 60.0f - ImGui::GetFrameHeightWithSpacing() * 4.0f, 120.0f);
+        propsBlockH = std::min(std::max(wanted, 96.0f), maxBlock);
+    }
     ImGui::BeginChild("StepList", ImVec2(0, -(60.0f + propsBlockH)), true);
 
     int deleteIndex = -1; // set by the context menu, applied after the loop
@@ -324,9 +339,13 @@ bool HistoryPanel::renderContent() {
                            dateLabel(bucket, today, yest).c_str(),
                            runLen, runLen == 1 ? "" : "s");
         if (!isCollapsed) {
-            ImGui::Indent();
+            // A modest indent (not the full default ~21px) — enough to nest the
+            // steps under their date header without stranding the numbers in a
+            // wide empty left margin.
+            const float stepIndent = ImGui::GetFontSize() * 0.6f;
+            ImGui::Indent(stepIndent);
             for (int k = i; k <= runEnd; ++k) renderOneStep(k);
-            ImGui::Unindent();
+            ImGui::Unindent(stepIndent);
         }
         i = runEnd + 1;
     }
@@ -369,8 +388,29 @@ bool HistoryPanel::renderContent() {
             ImGui::Separator();
             ImGui::TextColored(materializr::accentText(), "Properties: %s",
                                op->name().c_str());
-            ImGui::BeginChild("StepProps", ImVec2(0, propsBlockH - 60.0f), true);
+            ImGui::BeginChild("StepProps",
+                              ImVec2(0, propsBlockH - kPropsChrome), true);
+            const float propsTop = ImGui::GetCursorPosY();
+            // Ops render "InputInt/InputDouble" with a LABEL on the right; the
+            // default item width eats most of the row, so the field is
+            // absurdly wide for a 2-3 digit id and the label runs off the
+            // panel edge. Size the input for ~7 digits PLUS the -/+ step
+            // buttons (which InputDouble carves out of the item width — a flat
+            // char count left "12.500"-style values clipped). Ops wanting a
+            // full-width control still PushItemWidth themselves inside.
+            ImGui::PushItemWidth(
+                ImGui::CalcTextSize("0000000").x +
+                2.0f * (ImGui::GetFrameHeight() +
+                        ImGui::GetStyle().ItemInnerSpacing.x));
             const_cast<Operation*>(op)->renderProperties();
+            ImGui::PopItemWidth();
+            // Measure the fields so next frame's block sizes to them. In a
+            // scrolling child the cursor tracks the full content, so this is
+            // right whether the content fit or overflowed. Add the child's
+            // top+bottom WindowPadding (the content region is inset by it) plus
+            // a couple px, or the last field clips by ~15px.
+            m_stepPropsH = (ImGui::GetCursorPosY() - propsTop) +
+                           ImGui::GetStyle().WindowPadding.y * 2.0f + 4.0f;
             bool enterInProps =
                 ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
                 (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||

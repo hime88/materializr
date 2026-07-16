@@ -1104,7 +1104,12 @@ void Application::renderImTouchLayout() {
                         // the desktop History panel's Properties section.
                         ImGui::BeginChild("##props", ImVec2(0.0f, 200.0f * s),
                                           true);
+                        ImGui::PushItemWidth(
+                            ImGui::CalcTextSize("0000000").x +
+                            2.0f * (ImGui::GetFrameHeight() +
+                                    ImGui::GetStyle().ItemInnerSpacing.x));
                         const_cast<Operation*>(op)->renderProperties();
+                        ImGui::PopItemWidth();
                         ImGui::EndChild();
                         ImGui::BeginDisabled(histLocked);
                         if (ImGui::Button("Apply Changes",
