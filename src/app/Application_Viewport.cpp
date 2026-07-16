@@ -65,6 +65,7 @@
 #include "modeling/FilletOp.h"
 #include "modeling/ChamferOp.h"
 #include "modeling/DeleteOp.h"
+#include "modeling/SeparateBodyOp.h"
 #include "modeling/SketchEditOp.h"
 #include "io/StepIO.h"
 #include "io/StlExport.h"
@@ -6394,6 +6395,22 @@ void Application::renderViewport() {
                 // body to one file; this pulls a single part out on its own.
                 exportBodyAsStl(bid);
                 m_contextMenuFace.Nullify();
+            }
+            // Separate: only when the body actually holds more than one
+            // disconnected solid (air-gapped lumps fused into one body).
+            // Mirrors the Items-panel entry — splits them into individual
+            // bodies, largest keeping this one.
+            TopoDS_Shape bshape;
+            try { bshape = m_document->getBody(bid); } catch (...) {}
+            if (m_history && SeparateBodyOp::solidCount(bshape) > 1) {
+                if (ImGui::MenuItem("Separate")) {
+                    auto op = std::make_unique<SeparateBodyOp>();
+                    op->setBody(bid);
+                    m_history->pushOperation(std::move(op), *m_document);
+                    markDirty();
+                    m_meshesDirty = true;
+                    m_contextMenuFace.Nullify();
+                }
             }
         };
 

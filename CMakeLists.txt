@@ -253,6 +253,7 @@ add_executable(materializr
     src/modeling/DefeatureOp.cpp
     src/modeling/ProjectSketchOp.cpp
     src/modeling/SplitBodyOp.cpp
+    src/modeling/SeparateBodyOp.cpp
     src/modeling/MirrorOp.cpp
     src/modeling/PatternOp.cpp
     src/modeling/RevolveOp.cpp

@@ -5,6 +5,7 @@
 #include "../core/History.h"
 #include "../core/SelectionManager.h"
 #include "../modeling/DeleteOp.h"
+#include "../modeling/SeparateBodyOp.h"
 #include <imgui.h>
 #include <glm/glm.hpp>
 #include <cstring>
@@ -727,6 +728,19 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
                 m_document->setBodyVisible(otherId, true);
             }
             colorChanged = true;
+        }
+        // Separate: only when the body actually holds more than one
+        // disconnected solid (air-gapped lumps fused into one body). Splits
+        // them into individual bodies — the largest keeps this one, the rest
+        // become new bodies the user can inspect or delete.
+        if (!deleted && m_history &&
+            SeparateBodyOp::solidCount(m_document->getBody(id)) > 1) {
+            if (ImGui::MenuItem("Separate")) {
+                auto op = std::make_unique<SeparateBodyOp>();
+                op->setBody(id);
+                m_history->pushOperation(std::move(op), *m_document);
+                if (m_markDirty) m_markDirty();
+            }
         }
         // Per-body STL export: dumps only this body's mesh to a file the
         // user picks. Default filename = the body's current name (see

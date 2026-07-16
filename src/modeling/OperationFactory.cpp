@@ -6,6 +6,7 @@
 #include "BoundaryFillOp.h"
 #include "SketchTransformOp.h"
 #include "SplitBodyOp.h"
+#include "SeparateBodyOp.h"
 #include "MirrorOp.h"
 #include "CopyOp.h"
 #include "AlignOp.h"
@@ -71,6 +72,7 @@ std::unique_ptr<Operation> create(const std::string& typeId) {
     if (typeId == "copy")            return std::make_unique<CopyOp>();
     if (typeId == "mirror")          return std::make_unique<MirrorOp>();
     if (typeId == "split_body")      return std::make_unique<SplitBodyOp>();
+    if (typeId == "separate_body")   return std::make_unique<SeparateBodyOp>();
     if (typeId == "sketchtransform") return std::make_unique<materializr::SketchTransformOp>();
     if (typeId == "loft")            return std::make_unique<LoftOp>();
     if (typeId == "guided_loft")     return std::make_unique<GuidedLoftOp>();

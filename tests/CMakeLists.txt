@@ -47,6 +47,7 @@ add_library(materializr_core STATIC
     ${CMAKE_SOURCE_DIR}/src/modeling/AlignOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/MirrorOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/SplitBodyOp.cpp
+    ${CMAKE_SOURCE_DIR}/src/modeling/SeparateBodyOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/SketchTransformOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/LoftOp.cpp
     ${CMAKE_SOURCE_DIR}/src/modeling/GuidedLoftOp.cpp
@@ -137,6 +138,11 @@ target_link_libraries(materializr_core PUBLIC
 add_executable(test_document test_document.cpp)
 target_link_libraries(test_document PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_document COMMAND test_document)
+
+# test_separate_body - Separate op splits disconnected solids into bodies
+add_executable(test_separate_body test_separate_body.cpp)
+target_link_libraries(test_separate_body PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_separate_body COMMAND test_separate_body)
 
 # test_section_cap - section-view cross-section cap geometry (issue #15)
 add_executable(test_section_cap test_section_cap.cpp)
