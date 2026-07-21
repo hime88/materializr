@@ -8,7 +8,8 @@ modeling, threads, SVG & text engraving, STEP/STL/SVG/DXF/OBJ/3MF exchange.
 > reusing the entire geometry codebase via an SDL2 + OpenGL ES 3.0 backend and
 > cross-compiled OpenCASCADE, with a runtime *touch mode* that adapts gestures
 > and hit targets. **Designed for tablets** — a phone screen will be cramped.
-> On Android, grab the APK from the [latest release](https://github.com/materializr-cad/materializr/releases/latest),
+> On Android, get it on **[Google Play](https://play.google.com/store/apps/details?id=org.ravenhold.materializr)**,
+> grab the APK from the [latest release](https://github.com/materializr-cad/materializr/releases/latest),
 > or see [`android/README.md`](android/README.md) to build it yourself.
 > Also on [F-Droid](https://f-droid.org/packages/com.materializr.app/).
 
@@ -24,6 +25,7 @@ modeling, threads, SVG & text engraving, STEP/STL/SVG/DXF/OBJ/3MF exchange.
 | Windows | `Materializr-Setup.exe` | run the installer |
 | Windows (portable) | `Materializr-windows-x64.zip` | unzip anywhere, run `materializr.exe` |
 | iPad | [on the App Store](https://apps.apple.com/us/app/materializr/id6787741207) | install from the App Store |
+| Android (Google Play) | [on Google Play](https://play.google.com/store/apps/details?id=org.ravenhold.materializr) | install + auto-update from the Play Store; tablets recommended |
 | Android (F-Droid) | [on F-Droid](https://f-droid.org/packages/com.materializr.app/) | install + auto-update from the F-Droid app; tablets recommended |
 | Android (latest APK) | `Materializr-*-arm64-v8a.apk` | sideload (enable "install unknown apps") for the freshest fixes; tablets recommended |
 | macOS (Apple Silicon) | `Materializr-*-arm64.dmg` | open the `.dmg`, drag **Materializr** to Applications — see the first-launch note below |
@@ -57,6 +59,7 @@ modeling, threads, SVG & text engraving, STEP/STL/SVG/DXF/OBJ/3MF exchange.
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/BRjzbMGZvE)
 [![App Store](https://img.shields.io/badge/App_Store-iPad-0D96F6?logo=apple&logoColor=white)](https://apps.apple.com/us/app/materializr/id6787741207)
+[![Google Play](https://img.shields.io/badge/Google_Play-Android-414141?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=org.ravenhold.materializr)
 
 Built on the [OpenCASCADE](https://dev.opencascade.org/) geometry kernel —
 real B-rep solids, not meshes — with a Dear ImGui interface. Sketch on any
