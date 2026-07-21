@@ -160,6 +160,12 @@ add_executable(test_topo_contract test_topo_contract.cpp)
 target_link_libraries(test_topo_contract PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_topo_contract COMMAND test_topo_contract)
 
+# test_thread_profiles - generalized thread cross-sections build valid solids
+# (external + internal) + the fit-clearance path.
+add_executable(test_thread_profiles test_thread_profiles.cpp)
+target_link_libraries(test_thread_profiles PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_thread_profiles COMMAND test_thread_profiles)
+
 # test_sketch_edit_cascade - editing a sketch drives a hole through a chamfer
 add_executable(test_sketch_edit_cascade test_sketch_edit_cascade.cpp)
 target_link_libraries(test_sketch_edit_cascade PRIVATE materializr_core gtest gtest_main)
@@ -433,3 +439,4 @@ add_test(NAME test_audit_hardening COMMAND test_audit_hardening)
 add_executable(test_brepio_dos test_brepio_dos.cpp)
 target_link_libraries(test_brepio_dos PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_brepio_dos COMMAND test_brepio_dos)
+

@@ -1621,11 +1621,17 @@ void Application::renderThreadPanel() {
                                        ImGuiWindowFlags_AlwaysAutoResize |
                                        ImGuiWindowFlags_NoMove)) {
                 int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
-                ImGui::Text("Sweeping the helical groove%.*s", dots, "...");
+                ImGui::Text("Cutting the helical groove%.*s", dots, "...");
                 ImGui::Spacing();
                 drawIndeterminateBar();
                 ImGui::Spacing();
-                ImGui::TextDisabled("A few seconds for typical threads.");
+                // Standard sweeps in ~200ms; the maker profiles cut per-turn,
+                // so a long thread is a genuinely heavy op — set expectations.
+                if (m_threadProfile != 0)
+                    ImGui::TextDisabled("Shaped profiles cut per-turn \xE2\x80\x94 "
+                                        "a long thread can take up to a minute.");
+                else
+                    ImGui::TextDisabled("A few seconds for typical threads.");
                 ImGui::EndPopup();
             }
             return; // suppress the parameter popup while computing
@@ -1693,6 +1699,26 @@ void Application::renderThreadPanel() {
                           m_threadDepth);
         }
         ImGui::TextDisabled("Depth caps at 0.65 \xC3\x97 pitch.");
+    }
+
+    // Cross-section profile. Standard is the fast shipped V-thread; the others
+    // are the maker/printing set — clean, but a boolean cut per turn, so a long
+    // thread is slow (the progress bar on Apply shows it working).
+    {
+        const char* kProfiles[] = {"Standard (V)", "Trapezoidal (ACME)",
+                                   "Square", "Buttress", "Rounded (print)"};
+        ImGui::SetNextItemWidth(uiSz(180, 0).x);
+        ImGui::Combo("Profile", &m_threadProfile, kProfiles,
+                     IM_ARRAYSIZE(kProfiles));
+        if (m_threadProfile != 0) {
+            ImGui::Text("Fit clearance"); ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputFloat("##thrClr", &m_threadClearance, 0.05f, 0.1f, "%.2f");
+            if (m_threadClearance < 0.0f) m_threadClearance = 0.0f;
+            ImGui::SameLine(); ImGui::Text("mm");
+            ImGui::SetItemTooltip("Radial gap so a PRINTED thread fits its mate "
+                                  "(0.2\xE2\x80\x930.4mm typical). 0 = exact.");
+        }
     }
 
     ImGui::Checkbox("Right-handed", &m_threadRightHanded);

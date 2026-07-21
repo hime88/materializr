@@ -14,6 +14,17 @@
 // on. The thread is pure derived geometry (axis + radius + extent + pitch +
 // depth), no sub-shape references, so reloaded steps rehydrate fully
 // editable: pitch / depth / handedness recompute via editStep.
+// Cross-section family swept along the helix. Standard is the shipped,
+// validated profile (untouched — the "reference part" option). The others are
+// the maker/printing generalization: coarser, printer-friendly, or custom.
+enum class ThreadProfile {
+    Standard = 0,    // current arc profile — bit-identical shipped behaviour
+    Trapezoidal,     // ACME/leadscrew: straight flanks, flat crest+root
+    Square,          // near-vertical walls, equal land/groove
+    Buttress,        // asymmetric: one steep flank, one shallow (high axial load)
+    Rounded,         // sinusoidal-ish, easiest to print / strongest crest
+};
+
 class ThreadOp : public Operation {
 public:
     ThreadOp();
@@ -31,6 +42,18 @@ public:
     void setDepth(double d) { m_depth = d; }
     void setIsHole(bool h) { m_isHole = h; }
     void setRightHanded(bool rh) { m_rightHanded = rh; }
+
+    // Generalized-thread knobs (experiment). Profile picks the cross-section
+    // family; clearance is the radial fit gap for PRINTED threads (crest
+    // pulled IN on external / OUT on internal so a printed bolt+nut actually
+    // assemble — nozzle over-extrusion means a geometrically-exact thread
+    // binds); starts is the number of interleaved helical starts (bottle
+    // caps / quarter-turn closures are multi-start). All default to the
+    // shipped single-start Standard behaviour.
+    void setProfile(ThreadProfile p) { m_profile = p; }
+    ThreadProfile getProfile() const { return m_profile; }
+    void setClearance(double c) { m_clearance = c; }
+    void setStarts(int n) { m_starts = n < 1 ? 1 : n; }
 
     // Topological name of the target cylindrical face. When set, execute()
     // re-resolves it against the CURRENT body and re-derives axis + radius from
@@ -94,6 +117,9 @@ private:
     double m_depth = 0.6;
     bool m_isHole = false;     // false: external (boss), true: internal (hole)
     bool m_rightHanded = true;
+    ThreadProfile m_profile = ThreadProfile::Standard;
+    double m_clearance = 0.0;   // radial fit gap (mm); 0 = geometrically exact
+    int m_starts = 1;           // interleaved helical starts
 
     TopoDS_Shape m_previousShape; // for undo
     TopoDS_Shape m_precomputed;   // see setPrecomputedResult()
