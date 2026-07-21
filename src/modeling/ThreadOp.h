@@ -7,6 +7,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <atomic>
 
 // Cuts a helical V-groove screw thread into a cylindrical face — external
 // (boss/bolt: groove cut inward from the surface) or internal (hole/nut:
@@ -54,6 +55,14 @@ public:
     ThreadProfile getProfile() const { return m_profile; }
     void setClearance(double c) { m_clearance = c; }
     void setStarts(int n) { m_starts = n < 1 ? 1 : n; }
+
+    // Cooperative cancel for background workers: buildResult checks the token
+    // between turns/chunks and wires it into the boolean cuts as an OCCT
+    // UserBreak, so even a single long boolean aborts. Set a FRESH token per
+    // job (the token is not serialized and never set on history-owned ops).
+    void setCancelToken(std::shared_ptr<std::atomic<bool>> t) {
+        m_cancelTok = std::move(t);
+    }
 
     // Topological name of the target cylindrical face. When set, execute()
     // re-resolves it against the CURRENT body and re-derives axis + radius from
@@ -120,6 +129,7 @@ private:
     ThreadProfile m_profile = ThreadProfile::Standard;
     double m_clearance = 0.0;   // radial fit gap (mm); 0 = geometrically exact
     int m_starts = 1;           // interleaved helical starts
+    std::shared_ptr<std::atomic<bool>> m_cancelTok; // per-job, not serialized
 
     TopoDS_Shape m_previousShape; // for undo
     TopoDS_Shape m_precomputed;   // see setPrecomputedResult()

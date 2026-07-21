@@ -2,6 +2,7 @@
 #include "../platform_defs.h"
 
 #include <memory>
+#include <atomic>
 #include <future>
 #include <vector>
 #include <functional>
@@ -1160,6 +1161,7 @@ private:
     // face-edit case they're equal.
     bool m_resizeCylActive = false;
     bool m_resizeCylPreviewFailed = false; // last preview produced no valid body
+    bool m_resizeCylDeferredPreview = false; // threaded body: no live preview, applies on OK
     int  m_resizeCylBodyId = -1;
     bool m_resizeCylIsHole = true; // true: hole (normal toward axis), false: solid boundary
     // Axis anchored at the V_min end of the affected cylindrical region.
@@ -1223,6 +1225,7 @@ private:
         TopoDS_Shape launchedFrom;   // doc body at launch — stale-guard
         std::future<TopoDS_Shape> fut;
         int attempts = 1;            // relaunch-on-stale counter (cap 3)
+        std::shared_ptr<std::atomic<bool>> cancel; // per-job worker token
     };
     std::vector<PendingThreadRecut> m_threadRecuts;
     void installThreadRecutHook();
@@ -1230,6 +1233,14 @@ private:
     bool launchThreadRecut(ThreadOp& op, int attempts);
     void pollThreadRecuts();   // per-frame: apply/relaunch/discard results
     void flushThreadRecuts();  // block until drained (save path)
+    // Cancel button on the re-cut modal: signal every worker, suspend the
+    // affected Thread steps (body is sitting pre-thread), abandon futures.
+    void cancelThreadRecuts();
+    // Cancel token for the initial-Apply worker (m_threadFuture).
+    std::shared_ptr<std::atomic<bool>> m_threadApplyCancel;
+    // Abandoned std::async futures (their destructor BLOCKS): parked here and
+    // reaped by pollThreadRecuts once the (cancelled) worker actually exits.
+    std::vector<std::future<TopoDS_Shape>> m_threadZombies;
 
     // Section View — render-only clipping of the scene by a plane so the
     // user can inspect interiors (thread profiles, wall thickness) without

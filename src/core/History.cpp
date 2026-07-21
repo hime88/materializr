@@ -16,23 +16,32 @@ bool History::pushOperation(std::unique_ptr<Operation> op, Document& doc) {
         return false;
     }
 
-    // THREADS ARE A FINISHING PASS — by user discipline, not by automatic
-    // reflow. The reflow machinery (reflowInsertionIndex +
-    // insertStepAndReplay, kept below for the future hybrid) silently
-    // re-ran a full validated per-turn thread recompute on the main thread
-    // for EVERY op touching a threaded body — Steve: "it is too resource
-    // intensive to just artificially shuffle to the end". An op that
-    // targets a thread-modified body is now REFUSED with guidance instead:
-    // delete the Thread step, make the change, re-thread (the thread step
-    // is parametric and cheap to re-apply).
+    // THREADS ARE A FINISHING PASS — enforced by REFLOW: an op targeting a
+    // thread-modified body is reordered beneath the thread(s) via
+    // insertStepAndReplay (non-thread steps replay first, then the op
+    // against clean geometry, then the threads re-cut parametrically on the
+    // result). Between 2026-06 and 2026-07 this was a hard refusal
+    // ("threads-last discipline") because the re-cut ran a ~minute per-turn
+    // recompute synchronously on the main thread. Two things removed that
+    // cost: ThreadOp's async recut hook (the re-cut lands from a worker;
+    // the body shows unthreaded for a moment) and the swept-profile fast
+    // path (~200ms for Standard/Rounded). If the reflow can't land (baked
+    // reload snapshot on the body / a step failed to replay — state is
+    // restored inside insertStepAndReplay), fall back to the old refusal
+    // with guidance rather than running the op directly against the
+    // thread's helicoid faces (kernel garbage).
     {
         int at = reflowInsertionIndex(*op);
         if (at >= 0) {
-            std::fprintf(stderr, "[History] '%s' declined: this body has "
-                                 "Thread steps. Threads must be applied "
-                                 "LAST — delete the Thread step, make this "
-                                 "change, then re-apply the thread.\n",
-                         op->name().c_str());
+            const std::string nm = op->name();
+            std::fprintf(stderr, "[History] reflowing '%s' beneath the "
+                                 "Thread at step %d (threads re-cut last)\n",
+                         nm.c_str(), at);
+            if (insertStepAndReplay(at, std::move(op), doc)) return true;
+            std::fprintf(stderr, "[History] '%s' declined: reflow beneath "
+                                 "the Thread step failed. Delete the Thread "
+                                 "step, make this change, then re-apply the "
+                                 "thread.\n", nm.c_str());
             if (m_threadsLastDecline) m_threadsLastDecline();
             return false;
         }

@@ -1406,11 +1406,17 @@ void SketchRenderer::renderFaceGrid(const Sketch* sketch, float faceExtent, floa
 
     glm::mat4 vp = projection * view;
 
-    // Centre the grid on the host face's centroid in sketch-plane 2D — otherwise
-    // a face that doesn't straddle the sketch origin gets a grid that runs off
-    // to one side (it's still aligned to the ground grid, just not over the face).
+    // Centre the grid over the host face (its centroid), but QUANTIZED onto
+    // the snap lattice: snap-to-grid rounds sketch coordinates to multiples
+    // of the step from the PLANE ORIGIN, so the drawn lines must sit on that
+    // same lattice. Anchoring at the raw centroid drew a grid offset by
+    // (centroid mod step) from where clicks actually land — glaring on a
+    // threaded rod's cap, whose centroid shifts off-axis (the groove-runout
+    // bite makes the face asymmetric).
     glm::vec2 c{0.0f};
     sketch->getSourceFaceCentroid(c);
+    c.x = std::round(c.x / gridStep) * gridStep;
+    c.y = std::round(c.y / gridStep) * gridStep;
 
     // Split lines into minor and every-10th major so the major lines read clearly.
     std::vector<float> minorVerts, majorVerts;

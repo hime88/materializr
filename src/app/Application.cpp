@@ -777,8 +777,10 @@ void Application::setupCommands() {
 }
 
 void Application::showThreadsLastToast() {
-    m_toastText = "Threads are applied LAST. Delete the Thread step, make "
-                  "this change, then re-thread.";
+    // Fallback only: the normal path REFLOWS the op beneath the Thread step
+    // (History::pushOperation) — this fires when that reflow can't land.
+    m_toastText = "Couldn't reorder this change beneath the Thread step. "
+                  "Delete the Thread step, make the change, then re-thread.";
     m_toastExpiry = ImGui::GetTime() + 5.0;
 }
 
@@ -4092,6 +4094,235 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
         if (found) {
             gp_Ax3 ax(pln.Position().Location(), n, bestX);
             pln = gp_Pln(ax);
+        } else {
+            // No straight edge (a circular cap, a threaded rod's top): the
+            // surface's intrinsic X is arbitrary — a boolean-generated plane
+            // can be rotated any which way, so the sketch grid sat visibly
+            // askew from the ground grid. Align to the projection of a world
+            // axis instead (world X unless it's nearly parallel to the
+            // normal, then world Y).
+            gp_Vec wx(1.0, 0.0, 0.0);
+            if (std::abs(gp_Vec(n).Dot(wx)) > 0.9) wx = gp_Vec(0.0, 1.0, 0.0);
+            gp_Vec proj = wx - gp_Vec(n) * (wx * gp_Vec(n));
+            if (proj.Magnitude() > 1e-9) {
+                gp_Ax3 ax(pln.Position().Location(), n, gp_Dir(proj));
+                pln = gp_Pln(ax);
+            }
+        }
+    }
+
+    // Whether the plane origin below ends up on the face's true centre —
+    // the refs builder then adds (0,0) as a snappable point so the centre
+    // is directly clickable.
+    bool faceCenterAnchored = false;
+
+    // Re-anchor the plane ORIGIN to the face's natural centre. A boolean-
+    // generated plane's origin is arbitrary, and everything hangs off it:
+    // typed coordinates, the snap-to-grid lattice, the drawn face grid. If
+    // the face boundary is dominated by concentric circular edges (a rod
+    // cap — including a threaded one, whose crest arcs survive the groove
+    // runout — or an annulus), their shared centre is the body axis: put
+    // (0,0) there. Faces without a dominant circle keep the surface origin.
+    {
+        const gp_Ax3& ax = pln.Position();
+        const gp_Dir n = ax.Direction();
+        struct Cluster { gp_Pnt center; double sweep = 0.0; };
+        std::vector<Cluster> clusters;
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            BRepAdaptor_Curve c(TopoDS::Edge(ex.Current()));
+            if (c.GetType() != GeomAbs_Circle) continue;
+            gp_Circ circ = c.Circle();
+            // In-plane circles only: axis parallel to the sketch normal and
+            // centre on the plane.
+            if (std::abs(circ.Axis().Direction().Dot(n)) < 0.9999) continue;
+            gp_Pnt cc = circ.Location();
+            gp_Vec toC(ax.Location(), cc);
+            if (std::abs(toC.Dot(gp_Vec(n))) > 1e-3) continue;
+            double sweep = std::abs(c.LastParameter() - c.FirstParameter());
+            bool merged = false;
+            for (auto& cl : clusters) {
+                if (cl.center.Distance(cc) < 1e-4) {
+                    cl.sweep += sweep;
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) clusters.push_back({cc, sweep});
+        }
+        const Cluster* best = nullptr;
+        for (const auto& cl : clusters)
+            if (!best || cl.sweep > best->sweep) best = &cl;
+        if (best && best->sweep >= M_PI) {
+            pln = gp_Pln(gp_Ax3(best->center, n, ax.XDirection()));
+            faceCenterAnchored = true;
+        }
+
+        // Swept / lofted caps defeat the analytic scan: every boundary edge
+        // is a BSPLINE even when geometrically circular (probe_capface: a
+        // swept-thread rod's top face is 4 BSplines with the plane origin
+        // 0.64 mm off-axis). Fit a circle to the OUTER wire instead, then
+        // TRIM to the outermost band — the crest arcs lie exactly on the
+        // body radius while the groove runout dips inward, so the trimmed
+        // refit converges on the true axis.
+        if (!faceCenterAnchored) {
+            const gp_Pnt O = ax.Location();
+            const gp_Dir Xd = ax.XDirection();
+            const gp_Dir Yd = ax.YDirection();
+            std::vector<std::pair<double, double>> pts;
+            try {
+                TopoDS_Wire ow = BRepTools::OuterWire(face);
+                if (!ow.IsNull()) {
+                    for (TopExp_Explorer ex(ow, TopAbs_EDGE); ex.More();
+                         ex.Next()) {
+                        BRepAdaptor_Curve c(TopoDS::Edge(ex.Current()));
+                        const int N = 40;
+                        for (int i = 0; i <= N; ++i) {
+                            double u = c.FirstParameter() +
+                                       (c.LastParameter() -
+                                        c.FirstParameter()) * i / N;
+                            gp_Pnt p = c.Value(u);
+                            gp_Vec v(O, p);
+                            pts.emplace_back(v.Dot(gp_Vec(Xd)),
+                                             v.Dot(gp_Vec(Yd)));
+                        }
+                    }
+                }
+            } catch (...) { pts.clear(); }
+            // Algebraic (Kasa) circle fit: x²+y² = 2ax + 2by + c.
+            auto fit = [](const std::vector<std::pair<double, double>>& q,
+                          double& a, double& b, double& r) -> bool {
+                if (q.size() < 8) return false;
+                double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+                double sz = 0, sxz = 0, syz = 0;
+                const double m = static_cast<double>(q.size());
+                for (const auto& p : q) {
+                    const double x = p.first, y = p.second;
+                    const double z = x * x + y * y;
+                    sx += x; sy += y; sxx += x * x; syy += y * y;
+                    sxy += x * y; sz += z; sxz += x * z; syz += y * z;
+                }
+                // Solve [sxx sxy sx; sxy syy sy; sx sy m]·[A B C]ᵀ =
+                // [sxz syz sz]ᵀ with A=2a, B=2b, C=r²−a²−b².
+                const double d = sxx * (syy * m - sy * sy) -
+                                 sxy * (sxy * m - sy * sx) +
+                                 sx * (sxy * sy - syy * sx);
+                if (std::abs(d) < 1e-12) return false;
+                const double A = (sxz * (syy * m - sy * sy) -
+                                  sxy * (syz * m - sy * sz) +
+                                  sx * (syz * sy - syy * sz)) / d;
+                const double B = (sxx * (syz * m - sz * sy) -
+                                  sxz * (sxy * m - sy * sx) +
+                                  sx * (sxy * sz - syz * sx)) / d;
+                const double C = (sxx * (syy * sz - sy * syz) -
+                                  sxy * (sxy * sz - sx * syz) +
+                                  sxz * (sxy * sy - syy * sx)) / d;
+                a = A * 0.5; b = B * 0.5;
+                const double r2 = C + a * a + b * b;
+                if (r2 <= 0.0) return false;
+                r = std::sqrt(r2);
+                return true;
+            };
+            // RANSAC over LOCAL sample triples. Least-squares-then-trim
+            // converges to the wrong centre here (verified in simulation:
+            // the one-sided groove dip biases the initial fit, and trimming
+            // then keeps the wrong band, landing 0.6 mm off with a
+            // plausible residual). But the boundary CONTAINS exact circular
+            // arcs — the crest flat crosses the top plane as a true arc of
+            // the body radius (and the root flat as a concentric one) — so
+            // circles through nearby sample triples hit the axis exactly.
+            // Best-inlier circle wins at a TIGHT tolerance (the samples are
+            // exact BRep evaluations); Kasa-refit the inliers. Straight
+            // edges produce near-infinite radii — capped against the
+            // boundary size — and sloppy fits die on the tight RMS gate.
+            const size_t np = pts.size();
+            if (np >= 24) {
+                double xLo = 1e300, xHi = -1e300, yLo = 1e300, yHi = -1e300;
+                for (const auto& p : pts) {
+                    xLo = std::min(xLo, p.first);  xHi = std::max(xHi, p.first);
+                    yLo = std::min(yLo, p.second); yHi = std::max(yHi, p.second);
+                }
+                const double diag = std::hypot(xHi - xLo, yHi - yLo);
+                const double tol = 1e-3;
+                size_t bestInl = 0;
+                double bx = 0, by = 0, br = 0;
+                for (size_t k : {size_t(2), size_t(5), size_t(10)}) {
+                    for (size_t i = 0; i < np; ++i) {
+                        const auto& p1 = pts[i];
+                        const auto& p2 = pts[(i + k) % np];
+                        const auto& p3 = pts[(i + 2 * k) % np];
+                        const double d =
+                            2.0 * (p1.first * (p2.second - p3.second) +
+                                   p2.first * (p3.second - p1.second) +
+                                   p3.first * (p1.second - p2.second));
+                        if (std::abs(d) < 1e-12) continue;
+                        const double z1 = p1.first * p1.first +
+                                          p1.second * p1.second;
+                        const double z2 = p2.first * p2.first +
+                                          p2.second * p2.second;
+                        const double z3 = p3.first * p3.first +
+                                          p3.second * p3.second;
+                        const double ux = (z1 * (p2.second - p3.second) +
+                                           z2 * (p3.second - p1.second) +
+                                           z3 * (p1.second - p2.second)) / d;
+                        const double uy = (z1 * (p3.first - p2.first) +
+                                           z2 * (p1.first - p3.first) +
+                                           z3 * (p2.first - p1.first)) / d;
+                        const double r = std::hypot(p1.first - ux,
+                                                    p1.second - uy);
+                        if (r < 0.1 || r > 2.0 * diag) continue;
+                        // Only ENCLOSING circles qualify — no boundary
+                        // sample may lie outside. Steve's real cap carries
+                        // TWO exact arcs: the crest arc on the true axis
+                        // AND a sweep-construction arc (r 7.38, centred
+                        // 0.64 mm off-axis at the surface origin) that WON
+                        // by 44 inliers to 43, anchoring the grid off-
+                        // kilter. The crest circle encloses every sample;
+                        // the impostor leaves the whole crest band outside.
+                        size_t inl = 0;
+                        bool enclosing = true;
+                        for (const auto& p : pts) {
+                            const double d2 = std::hypot(p.first - ux,
+                                                         p.second - uy);
+                            if (std::abs(d2 - r) < tol) ++inl;
+                            if (d2 > r + 0.02) { enclosing = false; break; }
+                        }
+                        if (!enclosing) continue;
+                        if (inl > bestInl) {
+                            bestInl = inl; bx = ux; by = uy; br = r;
+                        }
+                    }
+                }
+                // The winning circle must be a DOMINANT boundary feature,
+                // not an incidental one — a rounded-rectangle face's corner
+                // fillet is a perfect exact arc (12% of samples) whose
+                // centre is NOT where anyone wants the origin. The threaded
+                // cap's crest arc carries ~26% of samples; a plain circular
+                // boundary carries ~all of them.
+                if (bestInl >= 16 && bestInl * 5 >= np) {
+                    std::vector<std::pair<double, double>> inliers;
+                    for (const auto& p : pts)
+                        if (std::abs(std::hypot(p.first - bx,
+                                                p.second - by) - br) < tol)
+                            inliers.push_back(p);
+                    double fa, fb, fr;
+                    if (fit(inliers, fa, fb, fr)) {
+                        double rms = 0.0;
+                        for (const auto& p : inliers) {
+                            const double dr = std::hypot(p.first - fa,
+                                                         p.second - fb) - fr;
+                            rms += dr * dr;
+                        }
+                        rms = std::sqrt(rms / inliers.size());
+                        if (rms <= 1e-3) {
+                            gp_Pnt c3d(O.X() + Xd.X() * fa + Yd.X() * fb,
+                                       O.Y() + Xd.Y() * fa + Yd.Y() * fb,
+                                       O.Z() + Xd.Z() * fa + Yd.Z() * fb);
+                            pln = gp_Pln(gp_Ax3(c3d, n, Xd));
+                            faceCenterAnchored = true;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4338,6 +4569,11 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
 
             // The originating face.
             processFace(face);
+
+            // The re-anchored plane origin IS the face's true centre (the
+            // circular-boundary axis) — make it a snappable point so
+            // "start the circle at the centre" is one click.
+            if (faceCenterAnchored) dedup(refs.points, glm::vec2(0.0f));
 
             // Neighbouring faces: any face sharing one of the host face's edges.
             // Their projected geometry (side-wall edges, bordering faces) becomes
@@ -5205,6 +5441,13 @@ void Application::writeProjectRecoveryIfDue() {
     // Don't cancel a live preview on a background recovery tick — that would
     // revert the user's in-progress drag. The recovery file may then capture a
     // preview, which is acceptable for crash recovery (best-effort snapshot).
+    //
+    // And don't BLOCK on an in-flight async thread re-cut: capture drains
+    // recuts (flushThreadRecuts), which on a background tick reads as the
+    // whole app going "not responding" for the length of a boolean thread
+    // cut. Skip this tick — the body is mid-recompute anyway, and the next
+    // tick lands right after the recut does.
+    if (!m_threadRecuts.empty()) return;
     ProjectHistory hist = captureProjectHistory(/*cancelPreviews=*/false);
     if (materializr::writeProjectRecovery(*m_document, &hist, m_currentProjectPath,
                                           bodies, curStep + 1)) {

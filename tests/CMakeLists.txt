@@ -166,6 +166,12 @@ add_executable(test_thread_profiles test_thread_profiles.cpp)
 target_link_libraries(test_thread_profiles PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_thread_profiles COMMAND test_thread_profiles)
 
+# test_thread_reflow - ops on threaded bodies reflow beneath the Thread step
+# (threads-last by reflow, not refusal) and the thread re-cuts on the result.
+add_executable(test_thread_reflow test_thread_reflow.cpp)
+target_link_libraries(test_thread_reflow PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_thread_reflow COMMAND test_thread_reflow)
+
 # test_sketch_edit_cascade - editing a sketch drives a hole through a chamfer
 add_executable(test_sketch_edit_cascade test_sketch_edit_cascade.cpp)
 target_link_libraries(test_sketch_edit_cascade PRIVATE materializr_core gtest gtest_main)

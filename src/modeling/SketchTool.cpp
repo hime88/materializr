@@ -919,6 +919,17 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
                                         * static_cast<float>(a.radius);
         if (allowSnaps && glm::length(pos - mid) < pointSnapThreshold) return mid;
     }
+    // Centres of face-reference circles (hole rims, and the crest arcs of a
+    // threaded rod's cap): the TRUE axis point. Runs before the centroid
+    // snap below — on an asymmetric face (thread runout bites a chunk out
+    // of a cap) the area centroid sits visibly OFF the axis, and Steve
+    // hunting the cylinder centre kept landing on that shifted point.
+    if (allowSnaps && m_inferenceLevel != InferenceLevel::Off) {
+        for (const auto& fc : m_sketch->getFaceReferences().circles) {
+            if (glm::length(pos - fc.center) < pointSnapThreshold)
+                return fc.center;
+        }
+    }
     // Host face centroid (if sketch was started on a face).
     glm::vec2 faceCenter;
     if (allowSnaps && m_sketch->getSourceFaceCentroid(faceCenter) &&

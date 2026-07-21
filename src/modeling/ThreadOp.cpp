@@ -31,7 +31,11 @@
 #include <Geom2d_TrimmedCurve.hxx>
 #include <GCE2d_MakeSegment.hxx>
 #include <gp_Ax2d.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BOPAlgo_GlueEnum.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
@@ -51,7 +55,27 @@
 #include <gp_Cylinder.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Dir2d.hxx>
+#include <Message_ProgressIndicator.hxx>
+#include <Message_ProgressRange.hxx>
+#include <Message_ProgressScope.hxx>
 #include <imgui.h>
+
+namespace {
+// Turns the per-job cancel token into an OCCT user-break, so a Cancel click
+// aborts a boolean MID-CUT (the O(N²) compound cut is one long boolean —
+// between-turn checks alone would never see the flag).
+class ThreadCancelBreak : public Message_ProgressIndicator {
+public:
+    DEFINE_STANDARD_RTTI_INLINE(ThreadCancelBreak, Message_ProgressIndicator)
+    explicit ThreadCancelBreak(std::shared_ptr<std::atomic<bool>> f)
+        : m_f(std::move(f)) {}
+    Standard_Boolean UserBreak() override { return m_f && m_f->load(); }
+protected:
+    void Show(const Message_ProgressScope&, const Standard_Boolean) override {}
+private:
+    std::shared_ptr<std::atomic<bool>> m_f;
+};
+} // namespace
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -804,10 +828,19 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                 // (Steve watched a 27-turn rod pin ONE of 16 cores for a
                 // minute).
                 cut.SetRunParallel(Standard_True);
-                cut.Build();
+                if (m_cancelTok) {
+                    Handle(ThreadCancelBreak) brk =
+                        new ThreadCancelBreak(m_cancelTok);
+                    cut.Build(brk->Start());
+                } else {
+                    cut.Build();
+                }
                 if (!cut.IsDone()) return {};
                 return cut.Shape();
             } catch (...) { return {}; }
+        };
+        auto cancelRequested = [&]() {
+            return m_cancelTok && m_cancelTok->load();
         };
         auto cutOnce = [&](const TopoDS_Shape& tool) -> TopoDS_Shape {
             return cutOn(body, tool, 1.0e-3);
@@ -1124,6 +1157,11 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                 zones.pop_back();
             }
             for (size_t zi = 0; zi < zones.size(); ++zi) {
+                if (cancelRequested()) {
+                    std::fprintf(stderr, "[Thread] per-turn: cancelled at "
+                                         "turn %zu\n", zi);
+                    return {};
+                }
                 int i = static_cast<int>(zi);
                 double zoneLo = zones[zi].first;
                 double zoneHi = zones[zi].second;
@@ -1293,7 +1331,110 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
         };
 
         TopoDS_Shape result;
-        if (fullCylinder) {
+        // ROUNDED on a body that couldn't take the direct sweep (a cross-
+        // holed / slotted rod — the reflow re-cut case): intersect the body
+        // with the SWEPT threaded rod instead of falling into the rope
+        // groove, whose deep discrete scoops are exactly the "stacked
+        // discs" look the sweep was chosen to avoid (2026-07-21: a hole
+        // cut through a Rounded-threaded rod re-threaded as poker chips).
+        // body ∩ sweptRod ≡ cutting the groove ribbon out of the body, but
+        // the tool is a fat simple solid — a thin helical ribbon's in/out
+        // classification inverts (it removed 5× its own volume in the
+        // probe), the same OCCT failure that killed swept cutters in the
+        // per-turn work. Probe matrix (probe_derived_cutter): Rounded +
+        // exact radius + fuzzy 1e-3 is the ONLY working cell — Standard
+        // collapses to empty (sharp roots), radius bumps and larger fuzz
+        // collapse too. Standard doesn't need this path anyway: the groove-
+        // band tools were built for V profiles and are matrix-proven.
+        // Guards: the body must LIE WITHIN the source cylinder (Common
+        // TRUNCATES anything outside — bbox pre-gate), the removal must sit
+        // inside the analytic groove-volume band, and the result must pass
+        // the analyzer. Any miss falls through to the proven paths below.
+        if (!m_isHole && m_starts <= 1 &&
+            m_profile == ThreadProfile::Rounded) {
+            const char* why = "swept-rod build failed";
+            try {
+                gp_Ax3 segBase(gp_Pnt(loc.X() + zd.X() * vLo,
+                                      loc.Y() + zd.Y() * vLo,
+                                      loc.Z() + zd.Z() * vLo), zd, xd);
+                const double span = vHi - vLo;
+                TopoDS_Shape srcCyl =
+                    BRepPrimAPI_MakeCylinder(
+                        gp_Ax2(segBase.Location(), zd, xd),
+                        m_radius, span).Shape();
+                Bnd_Box cylBox, bodyBox;
+                BRepBndLib::Add(srcCyl, cylBox);
+                BRepBndLib::Add(body, bodyBox);
+                cylBox.Enlarge(1e-3);
+                double cx1, cy1, cz1, cx2, cy2, cz2;
+                double bx1, by1, bz1, bx2, by2, bz2;
+                cylBox.Get(cx1, cy1, cz1, cx2, cy2, cz2);
+                bodyBox.Get(bx1, by1, bz1, bx2, by2, bz2);
+                why = "body extends outside the thread cylinder";
+                if (bx1 >= cx1 && by1 >= cy1 && bz1 >= cz1 &&
+                    bx2 <= cx2 && by2 <= cy2 && bz2 <= cz2) {
+                    why = "swept-rod build failed";
+                    TopoDS_Shape swept = sweptRodThread(segBase, m_radius,
+                                                        span, m_pitch, depth,
+                                                        m_rightHanded,
+                                                        m_profile,
+                                                        m_clearance);
+                    if (!swept.IsNull()) {
+                        why = "common boolean failed";
+                        const double grooveMax =
+                            M_PI * m_radius * m_radius * span -
+                            shapeVol(swept);
+                        // Fuzzy booleans BUMP TOLERANCES on their input
+                        // TShapes — a failed attempt must not pollute `body`
+                        // for the groove-tool fallbacks (it measurably
+                        // changed their cut results). Operate on a deep copy.
+                        TopoDS_Shape bodyCopy =
+                            BRepBuilderAPI_Copy(body).Shape();
+                        BRepAlgoAPI_Common common;
+                        TopTools_ListOfShape cArgs, cTools;
+                        cArgs.Append(bodyCopy);
+                        cTools.Append(swept);
+                        common.SetArguments(cArgs);
+                        common.SetTools(cTools);
+                        common.SetFuzzyValue(1.0e-3);
+                        common.SetRunParallel(Standard_True);
+                        if (m_cancelTok) {
+                            Handle(ThreadCancelBreak) brk =
+                                new ThreadCancelBreak(m_cancelTok);
+                            common.Build(brk->Start());
+                        } else {
+                            common.Build();
+                        }
+                        TopoDS_Shape res = common.IsDone() ? common.Shape()
+                                                           : TopoDS_Shape();
+                        if (!res.IsNull()) {
+                            const double removed = bodyVol - shapeVol(res);
+                            const double minRemoval =
+                                std::max(1e-2, bodyVol * 1e-4);
+                            why = "removed volume out of band";
+                            if (removed >= minRemoval &&
+                                removed <= grooveMax * 1.001 + 1e-6) {
+                                why = "result invalid";
+                                if (!BRepCheck_Analyzer(res).IsValid()) {
+                                    ShapeFix_Shape fixer(res);
+                                    fixer.Perform();
+                                    res = fixer.Shape();
+                                }
+                                if (BRepCheck_Analyzer(res).IsValid())
+                                    result = res;
+                            }
+                        }
+                    }
+                }
+            } catch (...) { result.Nullify(); }
+            if (result.IsNull())
+                std::fprintf(stderr, "[Thread] swept-common re-cut declined "
+                                     "(%s) — falling back to groove tools\n",
+                             why);
+            else if (materializr::isVerbose())
+                std::fprintf(stderr, "[Thread] swept-common re-cut OK\n");
+        }
+        if (result.IsNull() && fullCylinder) {
             if (materializr::isVerbose())
                 std::fprintf(stderr, "[Thread] cutting (span %.2f..%.2f)...\n",
                              vLo, vHi);

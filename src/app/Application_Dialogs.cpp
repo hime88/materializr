@@ -978,6 +978,10 @@ void Application::renderResizeCylindricalPanel() {
                            "Invalid diameter for this feature —\n"
                            "a hole can't exceed the surrounding wall.");
     }
+    if (m_resizeCylDeferredPreview) {
+        ImGui::TextDisabled("Threaded body — applies on OK,\n"
+                            "then the thread re-cuts in background.");
+    }
 
     if (!imTouchActionCorner()) {   // im-touch: corner ✓/✗ FABs instead
         ImGui::Spacing();
@@ -1632,10 +1636,52 @@ void Application::renderThreadPanel() {
                                         "a long thread can take up to a minute.");
                 else
                     ImGui::TextDisabled("A few seconds for typical threads.");
+                ImGui::Spacing();
+                // Escape hatch: signal the worker (it aborts between turns
+                // and mid-boolean via user-break), abandon the future, and
+                // return to the parameter popup so the values can be tweaked
+                // and re-applied.
+                if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
+                    ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    if (m_threadApplyCancel) m_threadApplyCancel->store(true);
+                    m_threadZombies.push_back(std::move(m_threadFuture));
+                    m_threadComputing = false;
+                    ImGui::CloseCurrentPopup();
+                }
                 ImGui::EndPopup();
             }
             return; // suppress the parameter popup while computing
         }
+    }
+
+    // Async thread RE-CUT (reflow / cascade): the worker saturates the cores
+    // and the app reads as "not responding" anyway — draw the same blocking
+    // modal honestly instead of a toast, with the same escape hatch.
+    if (!m_threadRecuts.empty()) {
+        ImGui::OpenPopup("Re-cutting thread…");
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing,
+                                ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Re-cutting thread…", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoMove)) {
+            int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
+            ImGui::Text("Re-cutting the thread on the changed body%.*s",
+                        dots, "...");
+            ImGui::Spacing();
+            drawIndeterminateBar();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Sharp profiles can take a while on long "
+                                "threads.");
+            ImGui::Spacing();
+            if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
+                ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                cancelThreadRecuts();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        return; // suppress the parameter popup while re-cutting
     }
     if (!m_threadActive) return;
 
@@ -1730,12 +1776,11 @@ void Application::renderThreadPanel() {
                            "Too many turns (max 300) — raise the pitch.");
     }
     ImGui::TextDisabled("Computed on Apply — may take a few seconds.");
-    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f),
-                       "Apply threads LAST.");
-    ImGui::TextWrapped("Make all other cuts (holes, slots, splits, chamfers) "
-                       "first — modeling operations on threaded bodies are "
-                       "refused. To change a threaded part: delete the "
-                       "Thread step in History, edit, then re-thread.");
+    ImGui::TextWrapped("Later cuts (holes, slots, chamfers) reorder beneath "
+                       "the thread automatically; the thread then re-cuts in "
+                       "the background. Sharp profiles on long threads can "
+                       "take a while each re-cut, so threading last is still "
+                       "fastest.");
 
     // Apply / Cancel — im-touch hosts them as corner ✓/✗ FABs instead.
     bool applyClicked = false, cancelClicked = false;

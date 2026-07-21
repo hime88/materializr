@@ -1001,6 +1001,10 @@ void Application::commitThread() {
         auto cfg = makeThreadOpFromState();
         *worker = *cfg; // same params; worker only calls const buildResult()
     }
+    // Fresh cancel token: the modal's Cancel button signals it and the
+    // worker aborts (between turns + OCCT user-break mid-boolean).
+    m_threadApplyCancel = std::make_shared<std::atomic<bool>>(false);
+    worker->setCancelToken(m_threadApplyCancel);
     // Pre-mesh on the worker at the CURRENT quality so the renderer's
     // tessellate() reuses the cache — meshing the swept rod's helicoid faces
     // on the main thread froze the app ~10s after the popup closed. Finer
@@ -1035,13 +1039,13 @@ void Application::beginResizeCylindrical() {
     cancelActiveIops();
     m_resizeCylPreviewFailed = false;
     if (m_resizeCylBodyId < 0) return;
-    if (m_history->isBodyThreaded(m_resizeCylBodyId)) {
-        std::fprintf(stderr, "[Resize] declined: body has a Thread step "
-                             "(threads must be applied last)\n");
-        showThreadsLastToast();
-        m_resizeCylBodyId = -1;
-        return;
-    }
+    // Threaded body: the live preview would run the ring boolean against
+    // the thread's helicoid faces on every keystroke. Skip the preview
+    // (fields only, body untouched) and run the real op once on OK —
+    // History::pushOperation reflows it beneath the Thread step and the
+    // thread re-cuts in background at the new radius (ThreadOp re-resolves
+    // its cylinder via its face ref).
+    m_resizeCylDeferredPreview = m_history->isBodyThreaded(m_resizeCylBodyId);
     try {
         m_resizeCylPreviousShape = m_document->getBody(m_resizeCylBodyId);
     } catch (...) { return; }
@@ -1058,6 +1062,7 @@ void Application::beginResizeCylindrical() {
 
 void Application::updateResizeCylindrical() {
     if (!m_resizeCylActive || m_resizeCylBodyId < 0) return;
+    if (m_resizeCylDeferredPreview) return; // threaded body: applies on OK
     m_document->updateBody(m_resizeCylBodyId, m_resizeCylPreviousShape);
     m_meshesDirty = true;
 
@@ -1125,6 +1130,7 @@ void Application::commitResizeCylindrical() {
     m_resizeCylActive = false;
     m_resizeCylBodyId = -1;
     m_resizeCylPreviousShape.Nullify();
+    m_resizeCylDeferredPreview = false;
     m_selection->clear();
     m_meshesDirty = true;
 }
@@ -1136,6 +1142,7 @@ void Application::cancelResizeCylindrical() {
     m_resizeCylActive = false;
     m_resizeCylBodyId = -1;
     m_resizeCylPreviousShape.Nullify();
+    m_resizeCylDeferredPreview = false;
     m_meshesDirty = true;
 }
 
@@ -1174,16 +1181,11 @@ void Application::beginInteractiveExtrude(const TopoDS_Shape& profile,
         }
     }
     cancelActiveIops();
-    // Subtract/Union into a threaded body would boolean against the
-    // thread's thousands of faces every preview frame — refuse up front
-    // (NewBody doesn't touch an existing body, so it's always fine).
-    if (mode != ExtrudeMode::NewBody && targetBody >= 0 &&
-        m_history->isBodyThreaded(targetBody)) {
-        std::fprintf(stderr, "[Extrude] declined: target body has a Thread "
-                             "step (threads must be applied last)\n");
-        showThreadsLastToast();
-        return;
-    }
+    // Threaded target bodies are fine here: the interactive preview is
+    // always a NewBody tool volume (never a per-frame boolean against the
+    // target), and the real Subtract runs once at commit through
+    // History::pushOperation, which reflows the cut beneath the Thread
+    // step and re-cuts the thread in background.
     m_extrudeProfile = profile;
     m_extruding = true;
     m_extrudeMode = mode;
@@ -1662,23 +1664,11 @@ void Application::beginPushPull() {
         return;
     }
 
-    // THREADS ARE A FINISHING PASS. A boolean push/pull against a threaded
-    // body runs the cut over the thread's thousands of faces — and the
-    // interactive preview would do that EVERY frame, freezing the app long
-    // before it reached the commit-time refusal in History::pushOperation.
-    // Refuse up front with guidance instead. (Steve: it "just went
-    // unresponsive".)
-    for (const auto& t : m_pushPullTargets) {
-        if (t.sourceBodyId >= 0 && m_history->isBodyThreaded(t.sourceBodyId)) {
-            std::fprintf(stderr, "[Push/Pull] declined: this body has a "
-                                 "Thread step. Threads must be applied LAST "
-                                 "— delete the Thread, make this change, "
-                                 "then re-thread.\n");
-            m_pushPullTargets.clear();
-            showThreadsLastToast();
-            return;
-        }
-    }
+    // Threaded bodies are no longer refused here: a threaded rod always
+    // exceeds the 250-face heavy-preview threshold below, so the drag shows
+    // the GHOST tool volume (no per-frame boolean over helicoid faces) and
+    // the commit runs once through History::pushOperation, which reflows
+    // the op beneath the Thread step and re-cuts the thread in background.
 
     // Arrow direction at the first target's centre.
     //
@@ -1763,6 +1753,22 @@ void Application::beginPushPull() {
                  fx.More() && nf <= 250; fx.Next()) ++nf;
             if (nf > 250) { m_pushPullHeavyPreview = true; break; }
         } catch (...) {}
+    }
+    // Cut-intersecting push/pulls (a free-space sketch, or any drag that
+    // goes negative mid-gesture) boolean into EVERY visible body in the
+    // tool's path — the source-body face count above never sees those. If
+    // any visible body is threaded, the light path would run that boolean
+    // over the thread's helicoid faces per preview frame ("stacked discs"
+    // + not-responding, 2026-07-21). Ghost preview + one real boolean at
+    // commit, where the thread reflow handles it once.
+    if (!m_pushPullHeavyPreview) {
+        for (int id : m_document->getAllBodyIds()) {
+            if (!m_document->isBodyVisible(id)) continue;
+            if (m_history->isBodyThreaded(id)) {
+                m_pushPullHeavyPreview = true;
+                break;
+            }
+        }
     }
 
     updatePushPull();
@@ -4136,6 +4142,8 @@ bool Application::launchThreadRecut(ThreadOp& op, int attempts) {
     p.bodyId = op.getBodyId();
     p.launchedFrom = live;
     p.attempts = attempts;
+    p.cancel = std::make_shared<std::atomic<bool>>(false);
+    worker->setCancelToken(p.cancel);
     // Pre-mesh at the CURRENT quality so the renderer reuses the cache
     // instead of freezing the main thread on the helicoid faces; finer
     // angular pass (0.3 rad shows facets on threads).
@@ -4169,12 +4177,25 @@ void Application::installThreadRecutHook() {
         for (auto& p : m_threadRecuts)
             if (p.op == &op) { p.attempts = 1; return true; } // re-arm budget
         if (!launchThreadRecut(op, 1)) return false;
-        showToast("Re-cutting thread in the background\xE2\x80\xA6");
+        // No toast: renderThreadPanel draws the blocking re-cut modal (with
+        // Cancel) while m_threadRecuts is non-empty — the app was effectively
+        // unusable during a re-cut anyway, so the modal says so honestly.
         return true;
     });
 }
 
 void Application::pollThreadRecuts() {
+    // Reap abandoned (cancelled) workers: std::async futures BLOCK in their
+    // destructor, so they park in m_threadZombies until actually done.
+    for (size_t i = 0; i < m_threadZombies.size();) {
+        if (m_threadZombies[i].wait_for(std::chrono::milliseconds(0)) ==
+            std::future_status::ready) {
+            m_threadZombies[i].get(); // discard
+            m_threadZombies.erase(m_threadZombies.begin() + i);
+        } else {
+            ++i;
+        }
+    }
     for (size_t i = 0; i < m_threadRecuts.size();) {
         auto& p = m_threadRecuts[i];
         if (p.fut.wait_for(std::chrono::milliseconds(0)) !=
@@ -4219,6 +4240,25 @@ void Application::pollThreadRecuts() {
         }
         m_threadRecuts.erase(m_threadRecuts.begin() + i);
     }
+}
+
+void Application::cancelThreadRecuts() {
+    if (m_threadRecuts.empty()) return;
+    for (auto& p : m_threadRecuts) {
+        if (p.cancel) p.cancel->store(true);
+        // The body is sitting at its pre-thread state with the Thread step
+        // still claiming to be applied — suspend it (same explainer banner
+        // as a failed re-cut) so the history stays honest.
+        int stepIdx = -1;
+        for (int k = 0; k <= m_history->currentStep(); ++k)
+            if (m_history->getStep(k) == p.op) { stepIdx = k; break; }
+        if (stepIdx >= 0) m_history->suspendStep(stepIdx);
+        m_threadZombies.push_back(std::move(p.fut));
+    }
+    m_threadRecuts.clear();
+    m_meshesDirty = true;
+    showToast("Thread re-cut cancelled \xE2\x80\x94 the Thread step is "
+              "suspended; re-enable it in History to re-cut.");
 }
 
 void Application::flushThreadRecuts() {
