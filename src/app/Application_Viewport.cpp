@@ -1842,6 +1842,20 @@ void Application::renderViewport() {
                             }
                         }
                     }
+                } else if (pm == SketchToolMode::Polygon) {
+                    // ps = centre, pe = a vertex (vertex 0 lands under the
+                    // cursor). Show the circumradius (centre→vertex) as a
+                    // radius dimension — the polygon analogue of the circle's
+                    // diameter readout — tagged with the side count.
+                    glm::vec2 rvec = pe - ps;
+                    float r = glm::length(rvec);
+                    if (r > 1e-3f) {
+                        char num[40];
+                        fmtLen(num, sizeof(num), r, "mm");
+                        std::snprintf(dbuf, sizeof(dbuf), "R %s \xC2\xB7 %d-gon",
+                                      num, m_sketchTool->getPolygonSides());
+                        drawDim(sketch2world(ps), sketch2world(pe), dbuf);
+                    }
                 }
             }
 
