@@ -71,6 +71,7 @@ inline void resetFpuForOcct() {
 #include "ui/MeasureTool.h"
 #include "ui/UpdateChecker.h"
 #include "modeling/Sketch.h"
+#include "modeling/ThreadOp.h"
 #include "modeling/CopyOp.h"
 #include "modeling/SketchSolver.h"
 #include "modeling/SketchTool.h"
@@ -3299,7 +3300,16 @@ void Application::ensureSketchSourceFace(int sketchId) {
     // hole wires into its regions).
     if (sk->isDetachedFromBody()) return;
     int bid = sk->getSourceBody();
-    if (bid < 0) return;
+    if (bid < 0) {
+        // Severed link (a pick that failed body attribution saved
+        // sourceBody=-1): try to re-adopt — the body owning a planar face
+        // coplanar with the sketch plane is the host. Heals old files.
+        bid = findBodyUnderRegionlessPlane(sk->getPlane());
+        if (bid < 0) return;
+        sk->setSourceBody(bid);
+        std::fprintf(stderr, "[Sketch] re-adopted severed body link -> %d\n",
+                     bid);
+    }
     TopoDS_Shape body;
     try { body = m_document->getBody(bid); } catch (...) { return; }
     if (body.IsNull()) return;
@@ -3348,6 +3358,33 @@ void Application::ensureSketchSourceFace(int sketchId) {
     TopoDS_Face f = matchPass(/*requireHoles=*/true);
     if (f.IsNull()) f = matchPass(/*requireHoles=*/false);
     if (!f.IsNull()) sk->setSourceFace(f);
+}
+
+// The body owning a planar face coplanar with `pln` (normals parallel,
+// origin on the face plane within 0.05 mm). Used to re-adopt a sketch whose
+// body link was severed. First match wins — coplanar-face ambiguity across
+// bodies is rare and any match beats a dead link.
+int Application::findBodyUnderRegionlessPlane(const gp_Pln& pln) const {
+    if (!m_document) return -1;
+    const gp_Dir sN = pln.Axis().Direction();
+    const gp_Pnt sO = pln.Location();
+    for (int bid : m_document->getAllBodyIds()) {
+        TopoDS_Shape body;
+        try { body = m_document->getBody(bid); } catch (...) { continue; }
+        if (body.IsNull()) continue;
+        for (TopExp_Explorer ex(body, TopAbs_FACE); ex.More(); ex.Next()) {
+            Handle(Geom_Plane) gpln = Handle(Geom_Plane)::DownCast(
+                BRep_Tool::Surface(TopoDS::Face(ex.Current())));
+            if (gpln.IsNull()) continue;
+            const gp_Pln fPln = gpln->Pln();
+            if (std::abs(sN.Dot(fPln.Axis().Direction())) < 0.9999) continue;
+            gp_Vec d(fPln.Location(), sO);
+            if (std::abs(d.Dot(gp_Vec(fPln.Axis().Direction()))) > 0.05)
+                continue;
+            return bid;
+        }
+    }
+    return -1;
 }
 
 int Application::findBodyUnderRegion(const TopoDS_Face& region,
@@ -4000,6 +4037,25 @@ bool Application::faceIsPlanar(const TopoDS_Face& face) const {
 }
 
 void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
+    // A pick that failed body attribution (bodyId -1) severs the sketch-body
+    // link for the sketch's whole life: sourceFace can't rebind after
+    // reload, the centroid/centre snaps die, and Subtract loses its target
+    // (Steve's cap sketch saved with sourceBody=-1 — every centre fix was
+    // inert on it). Recover the link: the body CONTAINING the picked face
+    // is the source.
+    if (sourceBodyId < 0 && m_document) {
+        for (int id : m_document->getAllBodyIds()) {
+            TopoDS_Shape b;
+            try { b = m_document->getBody(id); } catch (...) { continue; }
+            if (b.IsNull()) continue;
+            for (TopExp_Explorer fx(b, TopAbs_FACE); fx.More(); fx.Next()) {
+                if (fx.Current().IsSame(face)) { sourceBodyId = id; break; }
+            }
+            if (sourceBodyId >= 0) break;
+        }
+        std::fprintf(stderr, "[Sketch] on-face pick had no body id — "
+                             "recovered body=%d\n", sourceBodyId);
+    }
     // Sketching needs a FLAT face. A curved face (cylinder / sphere / fillet)
     // has no single plane — we'd otherwise drop the sketch onto a tangent plane
     // at an arbitrary point on the curve, which isn't useful and a construction
@@ -4116,6 +4172,30 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
     // is directly clickable.
     bool faceCenterAnchored = false;
 
+    // THREADED body cap: the Thread step in history knows the TRUE axis
+    // (kept accurate through resize/move/cascade by the face-ref and
+    // coaxial re-resolution), so anchor there DIRECTLY — it outranks any
+    // geometric fitting. Fitting is unreliable on threaded caps: a cap cut
+    // inside the groove span has NO crest arc on its boundary, and the
+    // only exact circle left is the sweep's construction arc, centred at
+    // the surface's parametric origin ~0.3 mm off-axis — the fitted anchor
+    // adopted it and the true centre stopped snapping (2026-07-21
+    // regression, Steve's second poke).
+    {
+        glm::vec2 c2;
+        if (threadAxisCenter2d(sourceBodyId, pln, c2)) {
+            const gp_Ax3& ax = pln.Position();
+            const gp_Pnt& O = ax.Location();
+            const gp_Dir Xd = ax.XDirection();
+            const gp_Dir Yd = ax.YDirection();
+            gp_Pnt p(O.X() + Xd.X() * c2.x + Yd.X() * c2.y,
+                     O.Y() + Xd.Y() * c2.x + Yd.Y() * c2.y,
+                     O.Z() + Xd.Z() * c2.x + Yd.Z() * c2.y);
+            pln = gp_Pln(gp_Ax3(p, ax.Direction(), Xd));
+            faceCenterAnchored = true;
+        }
+    }
+
     // Re-anchor the plane ORIGIN to the face's natural centre. A boolean-
     // generated plane's origin is arbitrary, and everything hangs off it:
     // typed coordinates, the snap-to-grid lattice, the drawn face grid. If
@@ -4123,7 +4203,7 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
     // cap — including a threaded one, whose crest arcs survive the groove
     // runout — or an annulus), their shared centre is the body axis: put
     // (0,0) there. Faces without a dominant circle keep the surface origin.
-    {
+    if (!faceCenterAnchored) {
         const gp_Ax3& ax = pln.Position();
         const gp_Dir n = ax.Direction();
         struct Cluster { gp_Pnt center; double sweep = 0.0; };
@@ -4395,6 +4475,16 @@ void Application::enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId) {
         }
         m_activeSketch->setPlane(pln);
         m_activeSketch->setSourceFace(face);
+        // The plane origin IS the true centre when anchored — publish it as
+        // the sketch's centre snap (outranks + suppresses the area
+        // centroid; see SketchTool).
+        if (faceCenterAnchored)
+            m_activeSketch->setCenterPoint(glm::vec2(0.0f));
+        std::fprintf(stderr, "[Sketch] on-face: body=%d anchored=%d "
+                             "origin=(%.4f, %.4f, %.4f)\n",
+                     sourceBodyId, faceCenterAnchored ? 1 : 0,
+                     pln.Location().X(), pln.Location().Y(),
+                     pln.Location().Z());
 
         // Walk the face's vertices and edges, project them onto the sketch
         // plane in 2D, and stash them on the Sketch as reference geometry.
@@ -4972,6 +5062,44 @@ void Application::frameSelection() {
     }
 }
 
+bool Application::threadAxisCenter2d(int bodyId, const gp_Pln& pln,
+                                     glm::vec2& out) const {
+    if (!m_history) return false;
+    // bodyId < 0 = "any threaded body": a sketch whose body link was severed
+    // (saved with sourceBody=-1) still deserves its centre — among all
+    // thread axes piercing the plane, the one closest to the plane origin
+    // is the host (the sketch was created ON that face).
+    const gp_Ax3& ax = pln.Position();
+    const gp_Dir n = ax.Direction();
+    bool found = false;
+    float bestD = 1e30f;
+    for (int i = 0; i <= m_history->currentStep(); ++i) {
+        const Operation* s = m_history->getStep(i);
+        if (!s || !s->isEnabled() || s->typeId() != "thread") continue;
+        const ThreadOp* th = dynamic_cast<const ThreadOp*>(s);
+        if (!th) continue;
+        if (bodyId >= 0 && th->getBodyId() != bodyId) continue;
+        const gp_Ax2& tax = th->getAxis();
+        if (std::abs(tax.Direction().Dot(n)) < 0.9999)
+            continue; // the axis must pierce the plane squarely (caps)
+        const double denom = gp_Vec(tax.Direction()).Dot(gp_Vec(n));
+        if (std::abs(denom) < 1e-9) continue;
+        const gp_Pnt& O = ax.Location();
+        const gp_Pnt& A = tax.Location();
+        const double t = gp_Vec(A, O).Dot(gp_Vec(n)) / denom;
+        gp_Pnt p(A.X() + tax.Direction().X() * t,
+                 A.Y() + tax.Direction().Y() * t,
+                 A.Z() + tax.Direction().Z() * t);
+        gp_Vec v(O, p);
+        glm::vec2 c(static_cast<float>(v.Dot(gp_Vec(ax.XDirection()))),
+                    static_cast<float>(v.Dot(gp_Vec(ax.YDirection()))));
+        const float d = glm::length(c);
+        if (!found || d < bestD) { found = true; bestD = d; out = c; }
+        if (bodyId >= 0) break; // explicit body: first matching axis wins
+    }
+    return found;
+}
+
 void Application::editSketch(int sketchId) {
     auto sketch = m_document->getSketch(sketchId);
     if (!sketch) return;
@@ -4984,6 +5112,32 @@ void Application::editSketch(int sketchId) {
     m_activeSketch = sketch; // shared ownership - edits go straight to the stored sketch
     m_sketchSolver = std::make_unique<SketchSolver>();
     m_activeSketchId = sketchId;
+
+    // Recompute the host body's TRUE-centre snap for this session. The
+    // centre marker (and face references) aren't serialized, so a RE-EDITED
+    // sketch otherwise only offers the area-centroid snap — off-axis on a
+    // threaded cap, and immune to every fresh-sketch fix ("nothing changed
+    // at all": Steve was re-editing an existing sketch). The stored plane
+    // must NOT be re-anchored (geometry lives in it); the centre lands at
+    // its true 2D coordinates instead of (0,0).
+    sketch->clearCenterPoint();
+    {
+        glm::vec2 c2;
+        // sourceBody may legitimately be -1 (severed link, e.g. a pick
+        // that failed body attribution) — threadAxisCenter2d then matches
+        // any thread axis piercing the plane.
+        if (threadAxisCenter2d(sketch->getSourceBody(), sketch->getPlane(),
+                               c2)) {
+            sketch->setCenterPoint(c2);
+            std::fprintf(stderr, "[Sketch] edit %d: body=%d true centre at "
+                                 "(%.4f, %.4f)\n",
+                         sketchId, sketch->getSourceBody(), c2.x, c2.y);
+        } else {
+            std::fprintf(stderr, "[Sketch] edit %d: body=%d no thread-axis "
+                                 "centre (centroid snap stays)\n",
+                         sketchId, sketch->getSourceBody());
+        }
+    }
 
     m_sketchTool->setSketch(m_activeSketch.get());
     m_sketchTool->setSolver(m_sketchSolver.get());

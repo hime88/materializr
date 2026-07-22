@@ -37,6 +37,10 @@ public:
     void setBody(int id) { m_bodyId = id; }
     int  getBodyId() const { return m_bodyId; }
     void setAxis(const gp_Ax2& axis);
+    // The thread's CURRENT axis — kept accurate through upstream edits by
+    // the face-ref / coaxial re-resolution, so it IS the body's true axis
+    // (sketch-on-cap anchors at it; fitted geometry can't be trusted there).
+    const gp_Ax2& getAxis() const { return m_axis; }
     void setRadius(double r) { m_radius = r; }
     void setLength(double l) { m_length = l; }
     void setPitch(double p) { m_pitch = p; }

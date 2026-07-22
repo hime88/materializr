@@ -3,19 +3,37 @@
 // against clean geometry, the thread re-cuts parametrically on the result)
 // instead of being declined. Guards History::pushOperation's reflow path —
 // the June-2026 "threads-last discipline" refusal is gone.
+//
+// PHASE 2 (ThreadFollows suite): the thread must FOLLOW its cylinder through
+// upstream edits via its minted face ref — resize (new radius), transform
+// (new axis), and a sketch-edit cascade (cylinder moved at the source).
 #include <gtest/gtest.h>
 
 #include "core/Document.h"
 #include "core/History.h"
 #include "modeling/BooleanOp.h"
+#include "modeling/ExtrudeOp.h"
+#include "modeling/ResizeCylindricalOp.h"
+#include "modeling/Sketch.h"
 #include "modeling/ThreadOp.h"
+#include "modeling/TopoName.h"
+#include "modeling/TransformOp.h"
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Pln.hxx>
+#include <cstdio>
 #include <memory>
 
 using namespace materializr;
@@ -176,4 +194,230 @@ TEST(ThreadReflow, UndoRedoAcrossReflowedTimeline) {
     ASSERT_TRUE(hist.redo(doc));
     EXPECT_NEAR(vol(doc.getBody(rodId)), vFinal, 1e-3);
     EXPECT_TRUE(BRepCheck_Analyzer(doc.getBody(rodId)).IsValid());
+}
+
+// ─── Phase 2: ThreadFollows — the thread tracks its cylinder via face ref ────
+
+namespace {
+
+// Rod built through the REAL sketch→extrude pipeline (so topo naming has
+// provenance) and threaded with a MINTED face ref — the app's exact path.
+struct RefRod {
+    int bodyId = -1;
+    int sketchId = -1;
+    int centerPt = -1;
+    int threadStep = -1;
+    std::shared_ptr<Sketch> sk;
+};
+
+int biggestBody(Document& doc) {
+    int best = -1; double bv = -1.0;
+    for (int id : doc.getAllBodyIds()) {
+        double v = vol(doc.getBody(id));
+        if (v > bv) { bv = v; best = id; }
+    }
+    return best;
+}
+
+bool inAt(const TopoDS_Shape& s, double x, double y, double z) {
+    BRepClass3d_SolidClassifier c(s, gp_Pnt(x, y, z), 1e-7);
+    return c.State() == TopAbs_IN;
+}
+
+// Ring sample: how many of 16 points on the circle (r, z) about (cx, cy)
+// are inside the solid. NOTE: bbox is USELESS here — a swept helicoid's
+// BSpline control points bulge far outside the real surface (a correct
+// r=10 threaded rod bboxes at 16).
+int ringHits(const TopoDS_Shape& s, double cx, double cy, double r,
+             double z) {
+    int n = 0;
+    for (int k = 0; k < 16; ++k) {
+        const double a = 2.0 * M_PI * k / 16.0;
+        if (inAt(s, cx + r * std::cos(a), cy + r * std::sin(a), z)) ++n;
+    }
+    return n;
+}
+
+RefRod buildThreadedRefRod(Document& doc, History& hist, double r, double h,
+                           double pitch, double depth) {
+    RefRod out;
+    out.sk = std::make_shared<Sketch>();
+    out.sk->setPlane(gp_Pln(gp_Ax3(gp_Pnt(0,0,0), gp_Dir(0,0,1),
+                                   gp_Dir(1,0,0))));
+    out.centerPt = out.sk->addPoint(glm::vec2(0.0f, 0.0f));
+    out.sk->addCircle(out.centerPt, r);
+    out.sketchId = doc.addSketch(out.sk, "RodSketch");
+    auto e = std::make_unique<ExtrudeOp>();
+    e->setSketchSource(out.sketchId);
+    char params[160];
+    std::snprintf(params, sizeof params,
+                  "sketch=%d;dist=%.3f;dir=0;mode=0;target=-1;draft=0;"
+                  "regions=0.0:0.0", out.sketchId, h);
+    e->deserializeParams(params);
+    if (!e->rebuildProfileFromSketch(doc)) return out;
+    e->setDistance(h);
+    e->setMode(ExtrudeMode::NewBody);
+    if (!hist.pushOperation(std::move(e), doc)) return out;
+    out.bodyId = biggestBody(doc);
+
+    // Mint the cylinder-face ref exactly as beginThread does.
+    TopoDS_Face cyl;
+    for (TopExp_Explorer fx(doc.getBody(out.bodyId), TopAbs_FACE);
+         fx.More(); fx.Next()) {
+        TopoDS_Face f = TopoDS::Face(fx.Current());
+        if (BRepAdaptor_Surface(f).GetType() == GeomAbs_Cylinder) {
+            cyl = f;
+            break;
+        }
+    }
+    if (cyl.IsNull()) { out.bodyId = -1; return out; }
+    materializr::topo::Context ctx;
+    ctx.doc = &doc;
+    ctx.shape = doc.getBody(out.bodyId);
+    ctx.type = TopAbs_FACE;
+    materializr::topo::Ref ref = materializr::topo::mint(cyl, ctx);
+
+    auto t = std::make_unique<ThreadOp>();
+    t->setBody(out.bodyId);
+    t->setAxis(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)));
+    t->setRadius(r);
+    t->setLength(h);
+    t->setPitch(pitch);
+    t->setDepth(depth);
+    t->setIsHole(false);
+    t->setTargetFaceRef(ref);
+    if (!hist.pushOperation(std::move(t), doc)) { out.bodyId = -1; return out; }
+    out.threadStep = hist.currentStep();
+    return out;
+}
+
+// Reference volume: the same thread swept on a plain cylinder of the given
+// radius/height at the origin (position-independent — volume only).
+double refThreadedVol(double r, double h, double pitch, double depth) {
+    ThreadOp t;
+    t.setAxis(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)));
+    t.setRadius(r); t.setLength(h); t.setPitch(pitch); t.setDepth(depth);
+    t.setIsHole(false);
+    TopoDS_Shape res =
+        t.buildResult(BRepPrimAPI_MakeCylinder(r, h).Shape());
+    return vol(res);
+}
+
+} // namespace
+
+TEST(ThreadFollows, ReloadedOpKeepsItsAxis) {
+    // deserializeParams filled the axis COMPONENTS but never rebuilt the
+    // gp_Ax2 — every reloaded op's getAxis() reported a default Z-axis, so
+    // the sketch-on-cap centre concluded "no thread axis pierces this
+    // plane" on ANY loaded project (in-process tests never caught it).
+    ThreadOp a;
+    a.setBody(7);
+    a.setAxis(gp_Ax2(gp_Pnt(1, 2, 3), gp_Dir(0, -1, 0), gp_Dir(1, 0, 0)));
+    a.setRadius(8); a.setLength(20); a.setPitch(2); a.setDepth(1.2);
+    ThreadOp b;
+    ASSERT_TRUE(b.deserializeParams(a.serializeParams()));
+    EXPECT_NEAR(b.getAxis().Location().X(), 1.0, 1e-9);
+    EXPECT_NEAR(b.getAxis().Location().Y(), 2.0, 1e-9);
+    EXPECT_NEAR(b.getAxis().Location().Z(), 3.0, 1e-9);
+    EXPECT_NEAR(b.getAxis().Direction().Y(), -1.0, 1e-9);
+}
+
+TEST(ThreadFollows, ResizeCylinderRethreadsAtNewRadius) {
+    Document doc; History hist;
+    RefRod rod = buildThreadedRefRod(doc, hist, 8.0, 20.0, 3.0, 1.2);
+    ASSERT_GE(rod.bodyId, 0);
+
+    auto rs = std::make_unique<ResizeCylindricalOp>();
+    rs->setBody(rod.bodyId);
+    rs->setAxis(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)));
+    rs->setHeight(20.0);
+    rs->setOldRadii(8.0, 8.0);
+    rs->setNewRadii(10.0, 10.0);
+    rs->setIsHole(false);
+    ASSERT_TRUE(hist.pushOperation(std::move(rs), doc))
+        << "resize on a threaded rod must reflow, not fail";
+
+    EXPECT_EQ(hist.getStep(hist.currentStep())->typeId(), "thread");
+    TopoDS_Shape body = doc.getBody(rod.bodyId);
+    ASSERT_FALSE(body.IsNull());
+    EXPECT_TRUE(BRepCheck_Analyzer(body).IsValid());
+    // The thread must sit at the NEW surface: just inside r=10 the ring is
+    // part crest (solid) and part groove (void), and nothing extends past
+    // r=10. A stale r=8 cut leaves the r=9.9 ring FULLY solid (threads
+    // buried inside the fatter rod).
+    const int near10 = ringHits(body, 0.0, 0.0, 9.9, 10.0);
+    EXPECT_GT(near10, 0) << "crest material at the new radius";
+    EXPECT_LT(near10, 16) << "groove openings at the new surface — a full "
+                             "ring means the thread is buried (stale r=8)";
+    EXPECT_EQ(ringHits(body, 0.0, 0.0, 10.15, 10.0), 0)
+        << "nothing past the new radius";
+    const double vRef = refThreadedVol(10.0, 20.0, 3.0, 1.2);
+    EXPECT_NEAR(vol(body), vRef, 0.01 * vRef)
+        << "thread must re-cut at r=10 (ref-resolved), not stay at r=8";
+}
+
+TEST(ThreadFollows, MovedBodyRethreadsAtNewAxisOnEdit) {
+    Document doc; History hist;
+    RefRod rod = buildThreadedRefRod(doc, hist, 8.0, 20.0, 3.0, 1.2);
+    ASSERT_GE(rod.bodyId, 0);
+    const double vBefore = vol(doc.getBody(rod.bodyId));
+
+    auto tr = std::make_unique<TransformOp>();
+    tr->setBodyId(rod.bodyId);
+    tr->setType(TransformType::Translate);
+    tr->setTranslation(25.0, 0.0, 0.0);
+    ASSERT_TRUE(hist.pushOperation(std::move(tr), doc));
+    EXPECT_NEAR(vol(doc.getBody(rod.bodyId)), vBefore, 1e-3)
+        << "rigid move keeps the thread as-is";
+
+    // Edit the thread's pitch — the recompute must re-cut at the MOVED axis
+    // (face ref), not at the original origin (stale params = null cut).
+    ThreadOp* th = dynamic_cast<ThreadOp*>(
+        const_cast<Operation*>(hist.getStep(rod.threadStep)));
+    ASSERT_NE(th, nullptr);
+    th->setPitch(2.0);
+    ASSERT_TRUE(hist.editStep(rod.threadStep, doc, true))
+        << "pitch edit after a move must re-cut at the moved axis";
+
+    TopoDS_Shape body = doc.getBody(rod.bodyId);
+    ASSERT_FALSE(body.IsNull());
+    EXPECT_TRUE(BRepCheck_Analyzer(body).IsValid());
+    Bnd_Box bb; BRepBndLib::Add(body, bb);
+    double x1,y1,z1,x2,y2,z2; bb.Get(x1,y1,z1,x2,y2,z2);
+    EXPECT_NEAR(0.5 * (x1 + x2), 25.0, 1e-2) << "body stays at the moved spot";
+    const double vRef = refThreadedVol(8.0, 20.0, 2.0, 1.2);
+    EXPECT_NEAR(vol(body), vRef, 0.01 * vRef);
+}
+
+TEST(ThreadFollows, SketchMovedCircleCascadesThreadToNewSpot) {
+    Document doc; History hist;
+    RefRod rod = buildThreadedRefRod(doc, hist, 8.0, 20.0, 3.0, 1.2);
+    ASSERT_GE(rod.bodyId, 0);
+
+    // Move the rod's circle in the source sketch and cascade from the extrude.
+    rod.sk->movePoint(rod.centerPt, glm::vec2(15.0f, 0.0f));
+    int extrudeIdx = -1;
+    for (int i = 0; i <= hist.currentStep(); ++i) {
+        Operation* op = const_cast<Operation*>(hist.getStep(i));
+        if (auto* e = dynamic_cast<ExtrudeOp*>(op)) {
+            if (e->getSketchId() == rod.sketchId &&
+                e->rebuildProfileFromSketch(doc)) { extrudeIdx = i; break; }
+        }
+    }
+    ASSERT_GE(extrudeIdx, 0);
+    if (auto s2 = doc.getSketch(rod.sketchId))
+        doc.setCascadeSketchOverride(rod.sketchId,
+                                     std::make_shared<Sketch>(*s2));
+    ASSERT_TRUE(hist.editStep(extrudeIdx, doc, true))
+        << "sketch-move cascade through the thread must succeed";
+
+    TopoDS_Shape body = doc.getBody(biggestBody(doc));
+    ASSERT_FALSE(body.IsNull());
+    EXPECT_TRUE(BRepCheck_Analyzer(body).IsValid());
+    Bnd_Box bb; BRepBndLib::Add(body, bb);
+    double x1,y1,z1,x2,y2,z2; bb.Get(x1,y1,z1,x2,y2,z2);
+    EXPECT_NEAR(0.5 * (x1 + x2), 15.0, 1e-2) << "rod rebuilt at the new spot";
+    const double vRef = refThreadedVol(8.0, 20.0, 3.0, 1.2);
+    EXPECT_NEAR(vol(body), vRef, 0.01 * vRef)
+        << "thread must follow the moved cylinder, not vanish or misplace";
 }

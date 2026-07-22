@@ -123,6 +123,10 @@ std::uint64_t SketchRenderer::contentSignature(const Sketch* sketch) const {
     const bool hasCentroid = sketch->getSourceFaceCentroid(centroid);
     mixI(hasCentroid ? 1 : 0);
     if (hasCentroid) { mixF(centroid.x); mixF(centroid.y); }
+    glm::vec2 trueCenter;
+    const bool hasCenter = sketch->getCenterPoint(trueCenter);
+    mixI(hasCenter ? 1 : 0);
+    if (hasCenter) { mixF(trueCenter.x); mixF(trueCenter.y); }
 
     for (const auto& p : sketch->getPoints()) {
         mixI(p.id); mixF(p.pos.x); mixF(p.pos.y);
@@ -658,9 +662,15 @@ void SketchRenderer::drawMidpointDots(const Sketch* sketch, const glm::mat4& vp)
         pushWorld(toWorld(sketch, mid));
     }
 
-    // Centroid of the host face (skipped for freestanding-plane sketches).
+    // Centre dot: the host body's TRUE centre when known (thread axis —
+    // mirrors the snap, which suppresses the centroid then), else the face
+    // centroid (skipped for freestanding-plane sketches). Drawing BOTH put
+    // two green dots 0.3mm apart on a threaded cap and the wrong one was
+    // the one being aimed at.
     glm::vec2 centroid;
-    if (sketch->getSourceFaceCentroid(centroid)) {
+    if (sketch->getCenterPoint(centroid)) {
+        pushWorld(toWorld(sketch, centroid));
+    } else if (sketch->getSourceFaceCentroid(centroid)) {
         pushWorld(toWorld(sketch, centroid));
     }
 

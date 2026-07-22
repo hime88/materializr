@@ -194,6 +194,19 @@ public:
     // 2D. Returns false if there is no source face. Computed once and cached.
     bool getSourceFaceCentroid(glm::vec2& out) const;
 
+    // The host body's TRUE centre in sketch-plane 2D (e.g. the Thread step's
+    // axis piercing the plane). NOT serialized — recomputed on every sketch
+    // entry (new AND re-edit) by the app. While set, it outranks and
+    // SUPPRESSES the area-centroid snap: on a threaded cap the centroid sits
+    // just off-axis, and with both live the snap flip-flopped between them.
+    void setCenterPoint(glm::vec2 c) { m_centerPoint = c; m_hasCenterPoint = true; }
+    void clearCenterPoint() { m_hasCenterPoint = false; }
+    bool getCenterPoint(glm::vec2& out) const {
+        if (!m_hasCenterPoint) return false;
+        out = m_centerPoint;
+        return true;
+    }
+
     // Reference geometry pulled from the source face on sketch entry — the
     // face's corner vertices, edge endpoints, edge midpoints, and straight
     // edges (start/end pairs) projected into sketch-plane 2D. The inference
@@ -317,6 +330,8 @@ private:
     int m_sourceBodyId = -1;
     bool m_detached = false;   // link to driven body deliberately broken
     TopoDS_Face m_sourceFace;
+    glm::vec2 m_centerPoint{0.0f};      // host body's true centre (2D); see
+    bool m_hasCenterPoint = false;      // setCenterPoint — session-only
 
     std::vector<SketchPoint> m_points;
     std::vector<SketchLine> m_lines;

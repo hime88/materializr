@@ -930,9 +930,23 @@ glm::vec2 SketchTool::snap(glm::vec2 pos) const {
                 return fc.center;
         }
     }
-    // Host face centroid (if sketch was started on a face).
+    // The host body's TRUE centre (thread axis ∩ sketch plane, recomputed on
+    // every sketch entry — new AND re-edit). It outranks the area centroid,
+    // and while it exists the centroid snap is suppressed ENTIRELY: on a
+    // threaded cap the centroid sits ~0.3mm off-axis, and with both points
+    // live the snap flip-flopped between them ("face center vs object
+    // center"), grabbing the wrong one whenever the cursor leaned its way.
+    glm::vec2 trueCenter;
+    const bool hasTrueCenter = m_sketch->getCenterPoint(trueCenter);
+    if (allowSnaps && hasTrueCenter &&
+        glm::length(pos - trueCenter) < pointSnapThreshold) {
+        return trueCenter;
+    }
+    // Host face centroid (if sketch was started on a face) — only when no
+    // true centre is known.
     glm::vec2 faceCenter;
-    if (allowSnaps && m_sketch->getSourceFaceCentroid(faceCenter) &&
+    if (allowSnaps && !hasTrueCenter &&
+        m_sketch->getSourceFaceCentroid(faceCenter) &&
         glm::length(pos - faceCenter) < pointSnapThreshold) {
         return faceCenter;
     }

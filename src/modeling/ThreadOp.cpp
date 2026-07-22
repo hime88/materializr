@@ -1326,6 +1326,15 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                 ShapeFix_Shape fixer(cur);
                 fixer.Perform();
                 cur = fixer.Shape();
+                // Still broken after healing = garbage (a stale-radius cut
+                // into a resized rod landed an invalid protruding body that
+                // passed the volume gates). Fail honestly — the recut path
+                // suspends the step instead of shipping the junk.
+                if (!BRepCheck_Analyzer(cur).IsValid()) {
+                    std::fprintf(stderr, "[Thread] per-turn: result invalid "
+                                         "after heal — rejecting\n");
+                    return {};
+                }
             }
             return cur;
         };
@@ -1499,12 +1508,60 @@ bool ThreadOp::execute(Document& doc) {
             ctx.type = TopAbs_FACE;
             ctx.crossRebuild = true;   // body may have been rebuilt upstream
             TopoDS_Shape f;
+            bool adopted = false;
             if (materializr::topo::resolve(m_faceRef, ctx, f) &&
                 !f.IsNull() && f.ShapeType() == TopAbs_FACE) {
                 gp_Ax2 ax2; double r = 0.0;
                 if (cylFaceToThread(TopoDS::Face(f), ax2, r) && r > 1e-6) {
                     setAxis(ax2);   // updates m_axis + serialized components
                     m_radius = r;
+                    adopted = true;
+                    if (materializr::isVerbose())
+                        std::fprintf(stderr, "[Thread] face ref resolved: "
+                                             "r=%.4f\n", r);
+                }
+            }
+            if (!adopted) {
+                // GEOMETRIC FALLBACK: the ref dies when an op that doesn't
+                // publish lineage rebuilds the body (Resize's ring-fuse —
+                // the r8 thread then per-turn-cut GARBAGE into the r10 rod,
+                // and it passed the volume gates). The thread's AXIS almost
+                // always survives such edits — only the radius changed — so
+                // adopt the coaxial cylindrical face whose radius is CLOSEST
+                // to the stored one (closest disambiguates the outer wall
+                // from a coaxial bore, for external and internal threads
+                // alike). No-op whenever the stored-radius face still
+                // exists: closest is then the stored radius itself.
+                gp_Pnt axLoc(m_axOX, m_axOY, m_axOZ);
+                gp_Dir axDir(m_axDX, m_axDY, m_axDZ);
+                double bestR = -1.0, bestD = 1e300;
+                for (TopExp_Explorer fx(m_previousShape, TopAbs_FACE);
+                     fx.More(); fx.Next()) {
+                    Handle(Geom_CylindricalSurface) cs =
+                        Handle(Geom_CylindricalSurface)::DownCast(
+                            BRep_Tool::Surface(TopoDS::Face(fx.Current())));
+                    if (cs.IsNull()) continue;
+                    gp_Cylinder cyl = cs->Cylinder();
+                    if (std::abs(cyl.Position().Direction().Dot(axDir)) <
+                        0.9999)
+                        continue;
+                    gp_Vec d(axLoc, cyl.Position().Location());
+                    if (d.Magnitude() > 1e-6 &&
+                        d.Crossed(gp_Vec(axDir)).Magnitude() > 1e-3)
+                        continue;
+                    const double dist = std::abs(cyl.Radius() - m_radius);
+                    if (dist < bestD) { bestD = dist; bestR = cyl.Radius(); }
+                }
+                if (bestR > 1e-6 && bestD > 1e-6) {
+                    std::fprintf(stderr, "[Thread] face ref did not resolve "
+                                         "— coaxial fallback adopts r=%.4f "
+                                         "(was %.4f)\n", bestR, m_radius);
+                    m_radius = bestR;
+                } else if (bestR <= 1e-6) {
+                    std::fprintf(stderr, "[Thread] face ref did NOT resolve "
+                                         "and no coaxial cylinder — keeping "
+                                         "stored axis/radius %.4f\n",
+                                 m_radius);
                 }
             }
         }
@@ -1649,6 +1706,17 @@ bool ThreadOp::deserializeParams(const std::string& blob) {
         else if (key == "xz") { m_axXZ = d; any = true; }
         pos = end + 1;
     }
+    // Rebuild the gp_Ax2 from the serialized components. buildResult reads
+    // the components directly, so threads WORKED on reloaded files — but
+    // getAxis() consumers (the sketch-on-cap true centre) silently got a
+    // default Z-axis on every reloaded op and concluded "no thread axis
+    // pierces this plane". Guarded: a degenerate/absent axis (old files)
+    // throws inside gp and keeps the default.
+    try {
+        m_axis = gp_Ax2(gp_Pnt(m_axOX, m_axOY, m_axOZ),
+                        gp_Dir(m_axDX, m_axDY, m_axDZ),
+                        gp_Dir(m_axXX, m_axXY, m_axXZ));
+    } catch (...) {}
     return any;
 }
 

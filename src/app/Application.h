@@ -277,6 +277,14 @@ private:
     void enterSketchOnPlane(const gp_Pln& plane);
     void enterSketchOnFace(const TopoDS_Face& face, int sourceBodyId = -1);
     void editSketch(int sketchId);
+    // True centre of a threaded host body on `pln` (the Thread step's axis
+    // piercing the plane), in the plane's 2D frame. False when the body has
+    // no enabled Thread step whose axis is perpendicular to the plane.
+    bool threadAxisCenter2d(int bodyId, const gp_Pln& pln,
+                            glm::vec2& out) const;
+    // Body owning a planar face coplanar with pln — re-adopts a severed
+    // sketch-body link (sourceBody saved as -1).
+    int findBodyUnderRegionlessPlane(const gp_Pln& pln) const;
     void extrudeSketchById(int sketchId, ExtrudeMode mode = ExtrudeMode::NewBody);
     // Interactive subtract of a single sketch region from the body the sketch
     // was drawn on (red preview). Used by the region toolbar where viewport
