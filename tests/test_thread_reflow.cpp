@@ -467,3 +467,58 @@ TEST(ThreadFollows, SketchMovedCircleCascadesThreadToNewSpot) {
     EXPECT_NEAR(vol(body), vRef, 0.01 * vRef)
         << "thread must follow the moved cylinder, not vanish or misplace";
 }
+
+TEST(ThreadFollows, InternalRoundedRingSplice) {
+    // The nut side of the Rounded pair: internal thread built by the ring
+    // splice (bore to major + constructed thread ring + GLUED plain-seam
+    // fuse), not the flat-topped rope grooves. Two proportion regimes: the
+    // fat/short tube AND Steve's 10x20mm hole (r=5, 20 deep, ~10 turns) —
+    // the plain fuse INVERTED on the latter (fused vol -409 vs +1994)
+    // until the seam went to glue mode.
+    struct Cfg { double rOut, rBore, len, pitch; };
+    for (const Cfg& c : {Cfg{16.0, 10.0, 9.0, 3.0},
+                         Cfg{10.0, 5.0, 20.0, 2.0}}) {
+        SCOPED_TRACE(::testing::Message()
+                     << "rOut=" << c.rOut << " rBore=" << c.rBore
+                     << " len=" << c.len << " pitch=" << c.pitch);
+        TopoDS_Shape tube;
+        {
+            TopoDS_Shape solid =
+                BRepPrimAPI_MakeCylinder(c.rOut, c.len).Shape();
+            TopoDS_Shape boreC =
+                BRepPrimAPI_MakeCylinder(c.rBore, c.len).Shape();
+            tube = BRepAlgoAPI_Cut(solid, boreC).Shape();
+        }
+        ASSERT_FALSE(tube.IsNull());
+        const double minor = c.rBore, depth = 1.2, major = minor + depth;
+        const double vBoredMajor =
+            vol(BRepAlgoAPI_Cut(
+                    BRepPrimAPI_MakeCylinder(c.rOut, c.len).Shape(),
+                    BRepPrimAPI_MakeCylinder(major, c.len).Shape())
+                    .Shape());
+        const double vTube = vol(tube);
+
+        ThreadOp t;
+        t.setAxis(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1),
+                         gp_Dir(1, 0, 0)));
+        t.setRadius(minor);
+        t.setLength(c.len);
+        t.setPitch(c.pitch);
+        t.setDepth(depth);
+        t.setIsHole(true);
+        t.setProfile(ThreadProfile::Rounded);
+        TopoDS_Shape res = t.buildResult(tube);
+        ASSERT_FALSE(res.IsNull());
+        EXPECT_TRUE(BRepCheck_Analyzer(res).IsValid());
+        // Between "bored clean to major" and the full tube (ridges added).
+        EXPECT_GT(vol(res), vBoredMajor + 1.0);
+        EXPECT_LT(vol(res), vTube - 1.0);
+        // Bore open; mid-thread ring part ridge, part groove.
+        EXPECT_EQ(ringHits(res, 0.0, 0.0, minor * 0.5, c.len * 0.5), 0)
+            << "bore filled";
+        const int mid =
+            ringHits(res, 0.0, 0.0, 0.5 * (minor + major), c.len * 0.5);
+        EXPECT_GT(mid, 0) << "no thread ridge material";
+        EXPECT_LT(mid, 16) << "solid ring - thread grooves missing";
+    }
+}

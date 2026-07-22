@@ -1340,74 +1340,195 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
         };
 
         TopoDS_Shape result;
-        // INTERNAL ROUNDED: the nut's VOID is itself a swept threaded rod —
-        // crest at (hole radius + depth), grooves dipping back to the hole
-        // surface — so sweep that rod and CUT it out of the body. A fat
-        // smooth solid tool booleans cleanly; the banded groove tools it
-        // replaces carved the flat-topped rope rings ("that exact same
-        // shape has re-emerged", internal edition). Clearance widens the
-        // void (crest out AND root out) so a printed nut fits its bolt.
+        // INTERNAL ROUNDED — SLAB-WISE RING SPLICE. Probe-mapped OCCT
+        // reality (probe_ring_splice): the flush ring-splice unit works up
+        // to ~4-5 turns and FAILS beyond (6+ turns: the seam fuse loses the
+        // body / fills the bore / inverts, in every fuse mode) — and a ring
+        // ending MID-bore breaks the fuse at any length. So slice the
+        // CLEARED body into <=4-turn slabs at whole-pitch boundaries
+        // (planar Common, plain tool), splice each slab's SHORT FLUSH ring
+        // (the proven unit), and glue the threaded slabs back at their
+        // identical planar interfaces (the swept-rod chunking trick at
+        // body level). Silhouette-verified continuous sine at 10 and 20
+        // turns, exact volumes. A fuse can still coin-flip on some slab
+        // splits (a 3-turn tail did once), so the whole construction
+        // retries at 4, 3, then 5 turns per slab.
         if (m_isHole && m_starts <= 1 &&
             m_profile == ThreadProfile::Rounded) {
-            const char* why = "void-rod sweep failed";
+            const char* why = "no slab attempt succeeded";
             try {
-                gp_Ax3 segBase(gp_Pnt(loc.X() + zd.X() * vLo,
-                                      loc.Y() + zd.Y() * vLo,
-                                      loc.Z() + zd.Z() * vLo), zd, xd);
-                const double span = vHi - vLo;
-                TopoDS_Shape voidRod = sweptRodThread(
-                    segBase, m_radius + depth + m_clearance, span, m_pitch,
-                    depth, m_rightHanded, m_profile, 0.0);
-                if (!voidRod.IsNull()) {
-                    why = "void cut failed";
-                    const double voidVol = shapeVol(voidRod);
-                    const double minRemoval = std::max(1e-2, bodyVol * 1e-4);
-                    // The cut can remove at most the tool's own volume and
-                    // must remove something real — outside that band the
-                    // classification INVERTED (a swept solid used as a CUT
-                    // tool is the historically-inverting configuration), so
-                    // retry once with the reversed tool, same as tryCut.
-                    auto attempt = [&](const TopoDS_Shape& tool)
-                        -> TopoDS_Shape {
-                        TopoDS_Shape r = cutOn(
-                            BRepBuilderAPI_Copy(body).Shape(), tool, 1.0e-3);
-                        if (r.IsNull()) return {};
-                        const double rem = bodyVol - shapeVol(r);
-                        if (rem < minRemoval ||
-                            rem > voidVol * 1.001 + 1e-6) {
-                            std::fprintf(stderr, "[Thread] swept-void: "
-                                                 "removed %.3f of void %.3f "
-                                                 "(body %.3f)\n",
-                                         rem, voidVol, bodyVol);
-                            return {};
-                        }
-                        return r;
-                    };
-                    TopoDS_Shape res = attempt(voidRod);
-                    if (res.IsNull()) {
-                        TopoDS_Shape rev = voidRod;
-                        rev.Reverse();
-                        res = attempt(rev);
+                const double minor = m_radius + std::max(0.0, m_clearance);
+                const double major = minor + depth;
+                double hMin = 1e300, hMax = -1e300;
+                for (TopExp_Explorer vx(body, TopAbs_VERTEX); vx.More();
+                     vx.Next()) {
+                    gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vx.Current()));
+                    double h = gp_Vec(loc, p).Dot(gp_Vec(zd));
+                    hMin = std::min(hMin, h);
+                    hMax = std::max(hMax, h);
+                }
+                const double sLo = std::max(vLo, hMin);
+                const double sHi = std::min(vHi, hMax);
+                auto axAt = [&](double v) {
+                    return gp_Ax2(gp_Pnt(loc.X() + zd.X() * v,
+                                         loc.Y() + zd.Y() * v,
+                                         loc.Z() + zd.Z() * v), zd, xd);
+                };
+                auto fuseGlued = [&](const TopoDS_Shape& a,
+                                     const TopoDS_Shape& b,
+                                     BOPAlgo_GlueEnum glue,
+                                     double fuzz) -> TopoDS_Shape {
+                    BRepAlgoAPI_Fuse f;
+                    TopTools_ListOfShape fa, ft;
+                    fa.Append(a);
+                    ft.Append(b);
+                    f.SetArguments(fa);
+                    f.SetTools(ft);
+                    if (fuzz > 0.0) f.SetFuzzyValue(fuzz);
+                    f.SetGlue(glue);
+                    f.SetRunParallel(Standard_True);
+                    if (m_cancelTok) {
+                        Handle(ThreadCancelBreak) brk =
+                            new ThreadCancelBreak(m_cancelTok);
+                        f.Build(brk->Start());
+                    } else {
+                        f.Build();
                     }
-                    why = "removed volume out of band (both orientations)";
-                    if (!res.IsNull()) {
-                        why = "result invalid";
-                        if (!BRepCheck_Analyzer(res).IsValid()) {
-                            ShapeFix_Shape fixer(res);
-                            fixer.Perform();
-                            res = fixer.Shape();
+                    return f.IsDone() ? f.Shape() : TopoDS_Shape();
+                };
+                // Rough radial bound of the body for the slab-slicing tool.
+                double rBig = major * 2.0 + 10.0;
+                {
+                    Bnd_Box bb;
+                    BRepBndLib::Add(body, bb);
+                    if (!bb.IsVoid()) {
+                        double x1, y1, z1, x2, y2, z2;
+                        bb.Get(x1, y1, z1, x2, y2, z2);
+                        rBig = std::hypot(std::hypot(x2 - x1, y2 - y1),
+                                          z2 - z1) + major;
+                    }
+                }
+                if (sHi - sLo > 0.1 * m_pitch) {
+                    // Bore the whole body to major once (padded plain tool).
+                    TopoDS_Shape cleared = cutOn(
+                        BRepBuilderAPI_Copy(body).Shape(),
+                        BRepPrimAPI_MakeCylinder(axAt(sLo - 1.0), major,
+                                                 (sHi - sLo) + 2.0).Shape(),
+                        1.0e-3);
+                    if (!cleared.IsNull()) {
+                        for (double slabTurns : {4.0, 3.0, 5.0}) {
+                            if (cancelRequested()) break;
+                            const double slabLen = slabTurns * m_pitch;
+                            bool ok = true;
+                            TopoDS_Shape acc;
+                            double partsVol = 0.0;
+                            for (double z0 = sLo;
+                                 z0 < sHi - 1e-9 && ok;) {
+                                if (cancelRequested()) { ok = false; break; }
+                                double z1 = std::min(sHi, z0 + slabLen);
+                                if (z1 < sHi - 1e-9)
+                                    z1 = sLo + m_pitch *
+                                         std::floor((z1 - sLo) / m_pitch +
+                                                    1e-9);
+                                if (z1 - z0 < 0.1 * m_pitch) break;
+                                // Cleared slab (plain tool Common).
+                                BRepAlgoAPI_Common com;
+                                TopTools_ListOfShape ca, ct;
+                                ca.Append(cleared);
+                                ct.Append(BRepPrimAPI_MakeCylinder(
+                                              axAt(z0), rBig,
+                                              z1 - z0).Shape());
+                                com.SetArguments(ca);
+                                com.SetTools(ct);
+                                com.SetRunParallel(Standard_True);
+                                com.Build();
+                                TopoDS_Shape slab =
+                                    com.IsDone() ? com.Shape()
+                                                 : TopoDS_Shape();
+                                if (slab.IsNull() || shapeVol(slab) < 1e-6) {
+                                    ok = false;
+                                    break;
+                                }
+                                // Short flush ring for this slab: plain
+                                // cylinder ARGUMENT minus the segment's
+                                // swept void rod (phase 0 at each whole-
+                                // pitch base = identical interfaces).
+                                gp_Ax3 segBase(axAt(z0).Location(), zd, xd);
+                                TopoDS_Shape rod = sweptRodThread(
+                                    segBase, major, z1 - z0, m_pitch, depth,
+                                    m_rightHanded, m_profile, 0.0);
+                                TopoDS_Shape ring =
+                                    rod.IsNull()
+                                        ? TopoDS_Shape()
+                                        : cutOn(BRepPrimAPI_MakeCylinder(
+                                                    axAt(z0), major,
+                                                    z1 - z0).Shape(),
+                                                rod, 1.0e-3);
+                                if (ring.IsNull() ||
+                                    shapeVol(ring) < 1e-6 ||
+                                    !BRepCheck_Analyzer(ring).IsValid()) {
+                                    ok = false;
+                                    break;
+                                }
+                                // Splice, with a per-slab fuse ladder.
+                                const double expect =
+                                    shapeVol(slab) + shapeVol(ring);
+                                TopoDS_Shape ts;
+                                for (int mode = 0; mode < 2; ++mode) {
+                                    TopoDS_Shape f =
+                                        mode == 0
+                                            ? fuseGlued(slab, ring,
+                                                        BOPAlgo_GlueShift,
+                                                        0.0)
+                                            : fuseGlued(slab, ring,
+                                                        BOPAlgo_GlueOff,
+                                                        1.0e-3);
+                                    if (!f.IsNull() &&
+                                        std::abs(shapeVol(f) - expect) <=
+                                            0.01 * expect &&
+                                        BRepCheck_Analyzer(f).IsValid()) {
+                                        ts = f;
+                                        break;
+                                    }
+                                }
+                                if (ts.IsNull()) { ok = false; break; }
+                                partsVol += shapeVol(ts);
+                                acc = acc.IsNull()
+                                          ? ts
+                                          : fuseGlued(acc, ts,
+                                                      BOPAlgo_GlueFull, 0.0);
+                                if (acc.IsNull()) { ok = false; break; }
+                                z0 = z1;
+                            }
+                            if (ok && !acc.IsNull()) {
+                                why = "result volume off";
+                                if (std::abs(shapeVol(acc) - partsVol) <=
+                                    std::max(0.01 * partsVol, 1e-2)) {
+                                    why = "result invalid";
+                                    if (!BRepCheck_Analyzer(acc).IsValid()) {
+                                        ShapeFix_Shape fixer(acc);
+                                        fixer.Perform();
+                                        acc = fixer.Shape();
+                                    }
+                                    if (BRepCheck_Analyzer(acc).IsValid()) {
+                                        result = acc;
+                                        break;
+                                    }
+                                }
+                            }
+                            std::fprintf(stderr, "[Thread] slab splice at "
+                                                 "%.0f turns/slab declined "
+                                                 "— retrying\n", slabTurns);
                         }
-                        if (BRepCheck_Analyzer(res).IsValid())
-                            result = res;
                     }
                 }
             } catch (...) { result.Nullify(); }
             if (result.IsNull())
-                std::fprintf(stderr, "[Thread] internal swept-void cut "
-                                     "declined (%s) — falling back to "
-                                     "groove tools\n", why);
+                std::fprintf(stderr, "[Thread] internal ring splice declined "
+                                     "(%s) — falling back to groove tools\n",
+                             why);
             else if (materializr::isVerbose())
-                std::fprintf(stderr, "[Thread] internal swept-void cut OK\n");
+                std::fprintf(stderr, "[Thread] internal ring splice OK\n");
         }
         // ROUNDED on a body that couldn't take the direct sweep (a cross-
         // holed / slotted rod — the reflow re-cut case): intersect the body
