@@ -68,6 +68,16 @@ public:
         m_cancelTok = std::move(t);
     }
 
+    // Recursion guard: the external-thread GRAFT fallback threads a clean
+    // synthetic cylinder via a nested ThreadOp, which must take the direct
+    // cut path and never graft again. Set false on the nested op.
+    void setAllowGraft(bool a) { m_allowGraft = a; }
+    // TEST hook: skip the direct/per-turn cut so the graft path always runs
+    // (the real-world trigger — a body the union rebuilt so the helical cut
+    // inverts — is hard to synthesize; this gives the graft deterministic
+    // coverage). No effect in production, where nothing sets it.
+    void setForceGraft(bool f) { m_forceGraft = f; }
+
     // Topological name of the target cylindrical face. When set, execute()
     // re-resolves it against the CURRENT body and re-derives axis + radius from
     // the cylinder's new geometry — so the thread FOLLOWS an upstream edit
@@ -133,6 +143,8 @@ private:
     ThreadProfile m_profile = ThreadProfile::Standard;
     double m_clearance = 0.0;   // radial fit gap (mm); 0 = geometrically exact
     int m_starts = 1;           // interleaved helical starts
+    bool m_allowGraft = true;   // false on the nested op the graft spawns
+    bool m_forceGraft = false;  // test-only: skip the direct cut, always graft
     std::shared_ptr<std::atomic<bool>> m_cancelTok; // per-job, not serialized
 
     TopoDS_Shape m_previousShape; // for undo

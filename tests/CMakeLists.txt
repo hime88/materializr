@@ -172,6 +172,12 @@ add_executable(test_thread_reflow test_thread_reflow.cpp)
 target_link_libraries(test_thread_reflow PRIVATE materializr_core gtest gtest_main)
 add_test(NAME test_thread_reflow COMMAND test_thread_reflow)
 
+# test_resize_cylindrical - Edit Diameter confines its change to the resized
+# segment (shrinking one step of a stepped rod must not hollow the neighbour).
+add_executable(test_resize_cylindrical test_resize_cylindrical.cpp)
+target_link_libraries(test_resize_cylindrical PRIVATE materializr_core gtest gtest_main)
+add_test(NAME test_resize_cylindrical COMMAND test_resize_cylindrical)
+
 # test_sketch_edit_cascade - editing a sketch drives a hole through a chamfer
 add_executable(test_sketch_edit_cascade test_sketch_edit_cascade.cpp)
 target_link_libraries(test_sketch_edit_cascade PRIVATE materializr_core gtest gtest_main)

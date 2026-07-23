@@ -60,7 +60,7 @@ const char* stepIcon(const std::string& t) {
     if (t == "scale_face" || t == "resize_cylindrical" || t == "taper")
                                            return MZ_ICON_SCALE;
     if (t == "primitive")                  return MZ_ICON_PRIMITIVE;
-    if (t == "thread")                     return MZ_ICON_ROTATE;
+    if (t == "thread")                     return MZ_ICON_THREAD;
     if (t == "construction_plane" || t == "construction_axis")
                                            return MZ_ICON_AXES;
     if (t == "sketchedit" || t == "combine_sketches" || t == "project_sketch")

@@ -94,6 +94,35 @@ void drawIconCentered(ImDrawList* dl, const ImVec2& center, float size,
                         col, 0.0f, 0, th);
         return;
     }
+    // MZ_ICON_THREAD sentinel (U+E005): a side-on flat-head screw with a
+    // threaded shaft tapering to a point — reads as "cut threads", where the
+    // old refresh-arrows glyph read as "reload".
+    if (std::strcmp(icon, "\xee\x80\x85") == 0) {
+        const float th   = std::max(1.5f, size * 0.075f);
+        const float hw   = size * 0.32f;              // flat-head half-width
+        const float sw   = size * 0.15f;              // shaft half-width
+        const float topY = center.y - size * 0.44f;   // top of head
+        const float neck = center.y - size * 0.28f;   // head/shaft join
+        const float botY = center.y + size * 0.26f;   // shaft end / tip start
+        const float tipY = center.y + size * 0.46f;   // point
+        // Flat head.
+        dl->AddRectFilled(ImVec2(center.x - hw, topY),
+                          ImVec2(center.x + hw, neck), col, 1.0f);
+        // Shaft sides + pointed tip.
+        dl->AddLine(ImVec2(center.x - sw, neck), ImVec2(center.x - sw, botY), col, th);
+        dl->AddLine(ImVec2(center.x + sw, neck), ImVec2(center.x + sw, botY), col, th);
+        dl->AddLine(ImVec2(center.x - sw, botY), ImVec2(center.x, tipY), col, th);
+        dl->AddLine(ImVec2(center.x + sw, botY), ImVec2(center.x, tipY), col, th);
+        // Diagonal thread hatches across the shaft.
+        const int nT = 4;
+        const float dy = size * 0.045f;
+        for (int i = 0; i < nT; ++i) {
+            float y = neck + (botY - neck) * (i + 0.5f) / nT;
+            dl->AddLine(ImVec2(center.x - sw, y + dy),
+                        ImVec2(center.x + sw, y - dy), col, th * 0.9f);
+        }
+        return;
+    }
     ImFont* font = ImGui::GetFont();
     const ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, icon);
     dl->AddText(font, size, ImVec2(center.x - ts.x * 0.5f, center.y - ts.y * 0.5f),

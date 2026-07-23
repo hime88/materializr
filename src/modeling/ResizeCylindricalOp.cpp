@@ -3,6 +3,7 @@
 
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -234,14 +235,42 @@ bool ResizeCylindricalOp::execute(Document& doc) {
                 if (!bb.IsVoid()) {
                     double x1,y1,z1,x2,y2,z2; bb.Get(x1,y1,z1,x2,y2,z2);
                     double dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
-                    // Diagonal is a safe upper bound on the body's extent in
-                    // any direction; pad each end by it so the ring always
-                    // pokes well past the bbox along the axis.
                     double diag = std::sqrt(dx*dx + dy*dy + dz*dz);
                     double pad  = diag + 1.0;
-                    ringAxis.SetLocation(m_axis.Location().Translated(
-                        gp_Vec(m_axis.Direction()) * -pad));
-                    height = m_height + 2.0 * pad;
+                    // Pad the cut ring PAST the caps so a curved/angular cap's
+                    // sliver of old-radius geometry gets removed — but ONLY
+                    // past a FREE end. Padding past an end that butts a LARGER
+                    // coaxial neighbour (a 13mm section next to a resized 11mm
+                    // one) carves the [newR,oldR] shell out of that neighbour,
+                    // turning it into a tube (Steve's bug). Sample the shell
+                    // radius from just past each end out to the bbox extent;
+                    // an end is free only when no body material sits there.
+                    const gp_Dir ad = m_axis.Direction();
+                    const gp_Dir xd = m_axis.XDirection();
+                    const gp_Pnt base = m_axis.Location();
+                    const double rMidBot = 0.5 * (m_newBottomR + paddedOldBot);
+                    const double rMidTop = 0.5 * (m_newTopR    + paddedOldTop);
+                    auto solidAt = [&](double v, double rr) {
+                        gp_Pnt p(base.X() + ad.X()*v + xd.X()*rr,
+                                 base.Y() + ad.Y()*v + xd.Y()*rr,
+                                 base.Z() + ad.Z()*v + xd.Z()*rr);
+                        try {
+                            BRepClass3d_SolidClassifier c(m_previousShape, p, 1e-6);
+                            return c.State() == TopAbs_IN;
+                        } catch (...) { return true; }
+                    };
+                    auto endFree = [&](bool topEnd, double rr) {
+                        for (int k = 1; k <= 24; ++k) {
+                            const double d = pad * k / 24.0;
+                            const double v = topEnd ? (m_height + d) : -d;
+                            if (solidAt(v, rr)) return false;
+                        }
+                        return true;
+                    };
+                    const double padBot = endFree(false, rMidBot) ? pad : 0.0;
+                    const double padTop = endFree(true,  rMidTop) ? pad : 0.0;
+                    ringAxis.SetLocation(base.Translated(gp_Vec(ad) * -padBot));
+                    height = m_height + padBot + padTop;
                 }
             } catch (...) { /* fall through with original m_height */ }
         }

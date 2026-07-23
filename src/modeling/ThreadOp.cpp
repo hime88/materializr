@@ -586,6 +586,60 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
         double vLo = endIsFree(-0.6 * m_pitch) ? -0.5 * m_pitch : 0.0;
         double vHi = m_length +
                      (endIsFree(m_length + 0.6 * m_pitch) ? 0.5 * m_pitch : 0.0);
+
+        // ---- Thread THROUGH a chamfer/taper. If a coaxial CONE adjoins an
+        // end (a bevelled tip), run the thread over it: the groove tool keeps
+        // cutting at the cylinder radius and the taper truncates the crests,
+        // so the thread runs OUT along the chamfer like a real bolt lead-in
+        // instead of stopping dead at the cylinder edge and leaving a smooth
+        // bevel (Steve). Detected geometrically — past the end the body's
+        // boundary radius drops smoothly from ~R (a taper), vs vanishing
+        // (flat cap) or growing (a bigger coaxial neighbour). External only;
+        // a hole's chamfer is a countersink, handled by its own runout.
+        if (!m_isHole) {
+            auto solidVR = [&](double dz, double rad) {
+                try {
+                    BRepClass3d_SolidClassifier c(body, pt(rad, dz), 1e-6);
+                    return c.State() == TopAbs_IN;
+                } catch (...) { return false; }
+            };
+            auto boundaryR = [&](double dz) -> double {   // max solid r, or -1
+                if (!solidVR(dz, 0.05)) return -1.0;
+                double lo = 0.0, hi = m_radius + 0.5;
+                for (int it = 0; it < 18; ++it) {
+                    double mid = 0.5 * (lo + hi);
+                    if (solidVR(dz, mid)) lo = mid; else hi = mid;
+                }
+                return lo;
+            };
+            auto chamferRun = [&](bool topEnd) -> double {
+                const double dir = topEnd ? 1.0 : -1.0;
+                const double v0  = topEnd ? m_length : 0.0;
+                const double step = 0.2 * m_pitch, maxRun = 4.0 * m_pitch;
+                // Must START as a taper: reduced radius just past the end.
+                const double brNear = boundaryR(v0 + dir * step);
+                if (brNear < 0.0 || brNear > m_radius - 0.02) return 0.0;
+                double prevR = m_radius, run = step;
+                for (double d = 2.0 * step; d <= maxRun; d += step) {
+                    const double br = boundaryR(v0 + dir * d);
+                    if (br < 0.0) break;               // past the tip
+                    if (br > m_radius + 0.02) break;   // bigger neighbour
+                    if (br > prevR + 1e-3) break;      // radius grew
+                    run = d; prevR = br;
+                    if (br < m_radius - depth) break;  // no thread material past
+                }
+                return run;
+            };
+            const double topRun = chamferRun(true);
+            const double botRun = chamferRun(false);
+            if (topRun > 0.0) vHi = std::max(vHi, m_length + topRun + 0.3 * m_pitch);
+            if (botRun > 0.0) vLo = std::min(vLo, -(botRun + 0.3 * m_pitch));
+            if ((topRun > 0.0 || botRun > 0.0) && materializr::isVerbose())
+                std::fprintf(stderr, "[Thread] chamfer run-through: top=%.2f "
+                                     "bot=%.2f (vLo=%.2f vHi=%.2f)\n",
+                             topRun, botRun, vLo, vHi);
+        }
+
         turns = (vHi - vLo) / m_pitch;
         if (materializr::isVerbose())
             std::fprintf(stderr, "[Thread] runout: vLo=%.3f vHi=%.3f turns=%.1f\n",
@@ -1692,6 +1746,102 @@ TopoDS_Shape ThreadOp::buildResult(const TopoDS_Shape& body) const {
                          fullCylinder ? "compound cut failed"
                                       : "partial/interrupted cylinder");
             result = perTurnCut();
+        }
+        // GRAFT (external thread on a COMPLEX body). The direct helical cut
+        // inverts against a body rebuilt by an upstream boolean (e.g. a union
+        // of a lofted head onto the shank) even though the body is boolean-
+        // healthy for plain cuts and the SAME cylinder threads fine
+        // standalone — OCCT misclassifies the helical cut against the rebuilt
+        // shape, and no heal (copy / unify / shapefix) recovers it. So thread
+        // a CLEAN synthetic segment and splice it in at the shoulder:
+        //   bodyMinus = body − C(plain segment);  result = bodyMinus ∪ T.
+        // The helical faces never meet a boolean vs the complex body. A ROOTED
+        // end gets a collar that OVERLAPS the parent, so the fuse is a robust
+        // volumetric union (not a fragile coincident-face seam); a FREE end
+        // keeps its runout (a real threaded bolt tip). The threaded segment
+        // becomes a clean cylinder — any tip chamfer on it is flattened.
+        if (m_forceGraft) result.Nullify();   // test hook
+        if (result.IsNull() && !m_isHole && m_allowGraft && m_length > 1e-3) {
+            std::fprintf(stderr, "[Thread] direct cut failed — GRAFT "
+                                 "(clean segment spliced at the shoulder)\n");
+            try {
+                const bool botFree = vLo < -1e-9;
+                const bool topFree = vHi > m_length + 1e-9;
+                const double collar = std::max(1.0 * m_pitch, 1.0);
+                const double srcLo = botFree ? 0.0 : -collar;
+                const double srcHi = topFree ? m_length : m_length + collar;
+                auto axPt = [&](double v) {
+                    return gp_Pnt(loc.X() + zd.X() * v, loc.Y() + zd.Y() * v,
+                                  loc.Z() + zd.Z() * v);
+                };
+                // Clean source cylinder [srcLo, srcHi] with the rooting collar.
+                TopoDS_Shape srcCyl = BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(axPt(srcLo), zd, xd), m_radius,
+                    srcHi - srcLo).Shape();
+                // Thread just the segment [0, m_length] on the clean source —
+                // direct cut (no graft recursion). Collars root the non-free
+                // ends to flat caps; the free end keeps runout.
+                ThreadOp seg(*this);
+                seg.setAllowGraft(false);
+                seg.setForceGraft(false);   // nested op cuts directly
+                seg.setTargetFaceRef(materializr::topo::Ref{});
+                seg.setAxis(gp_Ax2(loc, zd, xd));
+                seg.setLength(m_length);
+                TopoDS_Shape T = seg.buildResult(srcCyl);
+                if (!T.IsNull()) {
+                    TopoDS_Shape C = BRepPrimAPI_MakeCylinder(
+                        gp_Ax2(loc, zd, xd), m_radius, m_length).Shape();
+                    TopoDS_Shape bodyMinus =
+                        cutOn(BRepBuilderAPI_Copy(body).Shape(), C, 1.0e-3);
+                    if (!bodyMinus.IsNull() && shapeVol(bodyMinus) > 1e-6) {
+                        BRepAlgoAPI_Fuse fuse;
+                        TopTools_ListOfShape fa, ft;
+                        fa.Append(bodyMinus);
+                        ft.Append(T);
+                        fuse.SetArguments(fa);
+                        fuse.SetTools(ft);
+                        fuse.SetFuzzyValue(1.0e-3);
+                        fuse.SetRunParallel(Standard_True);
+                        if (m_cancelTok) {
+                            Handle(ThreadCancelBreak) brk =
+                                new ThreadCancelBreak(m_cancelTok);
+                            fuse.Build(brk->Start());
+                        } else {
+                            fuse.Build();
+                        }
+                        TopoDS_Shape g =
+                            fuse.IsDone() ? fuse.Shape() : TopoDS_Shape();
+                        // Gate: valid single solid whose volume is sane (a
+                        // fuse inversion balloons it). The threaded segment
+                        // removed grooves but a flattened tip can add a
+                        // little, so allow a generous band around the body.
+                        if (!g.IsNull()) {
+                            if (!BRepCheck_Analyzer(g).IsValid()) {
+                                ShapeFix_Shape fx(g);
+                                fx.Perform();
+                                g = fx.Shape();
+                            }
+                            int ns = 0;
+                            for (TopExp_Explorer sx(g, TopAbs_SOLID);
+                                 sx.More(); sx.Next()) ++ns;
+                            const double gv = shapeVol(g);
+                            if (ns == 1 && BRepCheck_Analyzer(g).IsValid() &&
+                                gv > 0.7 * bodyVol && gv < 1.15 * bodyVol) {
+                                result = g;
+                                if (materializr::isVerbose())
+                                    std::fprintf(stderr,
+                                                 "[Thread] graft OK\n");
+                            } else {
+                                std::fprintf(stderr, "[Thread] graft "
+                                             "rejected (solids=%d vol=%.1f "
+                                             "body=%.1f)\n", ns, gv, bodyVol);
+                            }
+                        }
+                    }
+                }
+            } catch (...) {
+                std::fprintf(stderr, "[Thread] graft threw\n");
+            }
         }
         if (result.IsNull()) {
             std::fprintf(stderr, "[Thread] boolean cut FAILED\n");

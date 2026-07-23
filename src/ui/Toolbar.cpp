@@ -271,7 +271,7 @@ std::vector<Toolbar::RailTool> Toolbar::railTools() const {
         if (m_canEditDiameter) {
             add(MZ_ICON_CIRCLE, "Diameter", ToolAction::EditDiameter, false,
                 "Set the hole or boss to an exact diameter.");
-            add(MZ_ICON_ROTATE, "Thread", ToolAction::Thread, false,
+            add(MZ_ICON_THREAD, "Thread", ToolAction::Thread, false,
                 "Cut a helical screw thread into the picked cylindrical face — "
                 "external on a boss, internal in a hole.");
         }

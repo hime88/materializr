@@ -49,6 +49,10 @@
 #define MZ_ICON_CHAMFER    "\xee\x80\x80"
 #define MZ_ICON_MOVE       ICON_IC_DRAG
 #define MZ_ICON_ROTATE     ICON_IC_REFRESH
+// Thread tool — sentinel (PUA U+E005): a hand-drawn flat-head screw with a
+// threaded shaft (drawn in drawIconCentered). Iconoir has no screw/bolt glyph,
+// and the old MZ_ICON_ROTATE (refresh arrows) read as "reload", not "threads".
+#define MZ_ICON_THREAD     "\xee\x80\x85"
 #define MZ_ICON_SCALE      ICON_IC_SCALE_FRAME_ENLARGE
 #define MZ_ICON_MIRROR     ICON_IC_MIRROR
 #define MZ_ICON_MEASURE    ICON_IC_RULER

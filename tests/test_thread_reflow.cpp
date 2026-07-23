@@ -21,9 +21,11 @@
 
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -33,6 +35,7 @@
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 
@@ -42,6 +45,25 @@ namespace {
 
 double vol(const TopoDS_Shape& s) {
     GProp_GProps g; BRepGProp::VolumeProperties(s, g); return g.Mass();
+}
+
+bool inAt(const TopoDS_Shape& s, double x, double y, double z) {
+    BRepClass3d_SolidClassifier c(s, gp_Pnt(x, y, z), 1e-7);
+    return c.State() == TopAbs_IN;
+}
+
+// Ring sample: how many of 16 points on the circle (r, z) about (cx, cy)
+// are inside the solid. NOTE: bbox is USELESS here — a swept helicoid's
+// BSpline control points bulge far outside the real surface (a correct
+// r=10 threaded rod bboxes at 16).
+int ringHits(const TopoDS_Shape& s, double cx, double cy, double r,
+             double z) {
+    int n = 0;
+    for (int k = 0; k < 16; ++k) {
+        const double a = 2.0 * M_PI * k / 16.0;
+        if (inAt(s, cx + r * std::cos(a), cy + r * std::sin(a), z)) ++n;
+    }
+    return n;
 }
 
 constexpr double R = 10.0, L = 9.0; // 3 coarse turns — fast
@@ -211,6 +233,112 @@ TEST(ThreadReflow, RoundedRecutOnCoaxialBoreKeepsSweptGeometry) {
     EXPECT_NEAR(vol(res), vExpected, 0.01 * vExpected);
 }
 
+TEST(ThreadReflow, ExternalThreadOnUnionedBoltGrafts) {
+    // gift box regression: an external (buttress) thread on a cylinder that is
+    // part of a body rebuilt by an upstream UNION. The direct helical cut can
+    // invert against the rebuilt TShape even though plain cuts are fine and the
+    // same cylinder threads standalone — ThreadOp's graft fallback threads a
+    // clean segment and splices it at the shoulder. Whichever path runs, the
+    // thread must apply: valid single solid with real grooves on the end.
+    // (The exact gift-box body that inverts is exercised by
+    // wip-tests/probe_giftbox; here we guard external threading on a complex
+    // unioned bolt generally.)
+    const double rEnd = 5.4, rShank = 6.5, rHead = 12.0;
+    const double zEnd0 = 40.0, endLen = 8.0;
+    // shank [0,40] + threaded end [40,48] + wide head [-6,0], all unioned.
+    TopoDS_Shape shank = BRepPrimAPI_MakeCylinder(rShank, zEnd0).Shape();
+    TopoDS_Shape end = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, zEnd0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)),
+        rEnd, endLen).Shape();
+    TopoDS_Shape head = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, -6.0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)),
+        rHead, 6.0).Shape();
+    TopoDS_Shape bolt = BRepAlgoAPI_Fuse(
+        BRepAlgoAPI_Fuse(shank, end).Shape(), head).Shape();
+    ASSERT_TRUE(BRepCheck_Analyzer(bolt).IsValid());
+
+    ThreadOp t;
+    t.setAxis(gp_Ax2(gp_Pnt(0, 0, zEnd0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)));
+    t.setRadius(rEnd);
+    t.setLength(endLen);
+    t.setPitch(1.5);
+    t.setDepth(0.5);
+    t.setIsHole(false);
+    t.setProfile(ThreadProfile::Buttress);
+    TopoDS_Shape res = t.buildResult(bolt);
+    ASSERT_FALSE(res.IsNull()) << "external thread must apply on a unioned bolt";
+    EXPECT_TRUE(BRepCheck_Analyzer(res).IsValid());
+    int ns = 0;
+    for (TopExp_Explorer sx(res, TopAbs_SOLID); sx.More(); sx.Next()) ++ns;
+    EXPECT_EQ(ns, 1) << "result must be a single solid";
+    // Real grooves on the end: mid-groove ring is part crest (solid), part
+    // valley (void). A plain cylinder would be fully solid there.
+    const double zMid = zEnd0 + endLen * 0.5, rMid = rEnd - 0.25;
+    const int hits = ringHits(res, 0.0, 0.0, rMid, zMid);
+    EXPECT_GT(hits, 0) << "no crest material — end not threaded";
+    EXPECT_LT(hits, 16) << "no groove voids — end not threaded";
+    // The threaded end must not have vanished or ballooned.
+    EXPECT_GT(vol(res), 0.6 * vol(bolt));
+    EXPECT_LT(vol(res), 1.1 * vol(bolt));
+
+    // Force the graft path (the synthetic bolt above may not invert) so the
+    // graft itself is covered: it must also produce a valid, single-solid,
+    // genuinely-threaded end.
+    ThreadOp g;
+    g.setAxis(gp_Ax2(gp_Pnt(0, 0, zEnd0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)));
+    g.setRadius(rEnd); g.setLength(endLen); g.setPitch(1.5); g.setDepth(0.5);
+    g.setIsHole(false); g.setProfile(ThreadProfile::Buttress);
+    g.setForceGraft(true);
+    TopoDS_Shape gr = g.buildResult(bolt);
+    ASSERT_FALSE(gr.IsNull()) << "graft path must produce a threaded end";
+    EXPECT_TRUE(BRepCheck_Analyzer(gr).IsValid());
+    int gs = 0;
+    for (TopExp_Explorer sx(gr, TopAbs_SOLID); sx.More(); sx.Next()) ++gs;
+    EXPECT_EQ(gs, 1);
+    const int ghits = ringHits(gr, 0.0, 0.0, rMid, zMid);
+    EXPECT_GT(ghits, 0);
+    EXPECT_LT(ghits, 16);
+}
+
+TEST(ThreadReflow, ThreadRunsThroughEndChamfer) {
+    // A threaded rod whose end is TAPERED (chamfer/cone) must run the thread
+    // THROUGH the taper — grooves continue, crests truncated by the cone (a
+    // real bolt lead-in) — instead of stopping at the cylinder/chamfer edge
+    // and leaving a smooth bevel.
+    const double rCyl = 5.0, zCyl = 20.0, depth = 0.6;
+    TopoDS_Shape cyl = BRepPrimAPI_MakeCylinder(rCyl, zCyl).Shape();
+    TopoDS_Shape cone = BRepPrimAPI_MakeCone(
+        gp_Ax2(gp_Pnt(0, 0, zCyl), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)),
+        5.0, 4.0, 4.0).Shape();          // gentle taper r5->r4 over 4mm
+    TopoDS_Shape rod = BRepAlgoAPI_Fuse(cyl, cone).Shape();
+
+    ThreadOp t;
+    t.setAxis(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)));
+    t.setRadius(rCyl);
+    t.setLength(zCyl);                   // the CYLINDER span (stops at z=20)
+    t.setPitch(1.5);
+    t.setDepth(depth);
+    t.setIsHole(false);
+    t.setProfile(ThreadProfile::Buttress);
+    TopoDS_Shape res = t.buildResult(rod);
+    ASSERT_FALSE(res.IsNull());
+    EXPECT_TRUE(BRepCheck_Analyzer(res).IsValid());
+
+    // ON THE TAPER (z=21, surface r≈4.75): the thread must be present — a ring
+    // between the valley (r=4.4) and the taper surface is part crest, part
+    // groove. Without run-through this region is a smooth cone (fully solid
+    // below the surface, so a ring at r=4.6 would be all-solid).
+    const int taper = ringHits(res, 0.0, 0.0, 4.6, 21.0);
+    EXPECT_GT(taper, 0) << "no crest on the taper";
+    EXPECT_LT(taper, 16) << "no grooves on the taper — thread stopped at the edge";
+    // The cylinder body below is still fully threaded.
+    const int barrel = ringHits(res, 0.0, 0.0, rCyl - 0.5 * depth, 10.0);
+    EXPECT_GT(barrel, 0);
+    EXPECT_LT(barrel, 16);
+    // Core intact (not hollowed).
+    EXPECT_TRUE(inAt(res, 0.0, 0.0, 21.0));
+}
+
 TEST(ThreadReflow, UndoRedoAcrossReflowedTimeline) {
     Document doc;
     History hist;
@@ -263,25 +391,6 @@ int biggestBody(Document& doc) {
         if (v > bv) { bv = v; best = id; }
     }
     return best;
-}
-
-bool inAt(const TopoDS_Shape& s, double x, double y, double z) {
-    BRepClass3d_SolidClassifier c(s, gp_Pnt(x, y, z), 1e-7);
-    return c.State() == TopAbs_IN;
-}
-
-// Ring sample: how many of 16 points on the circle (r, z) about (cx, cy)
-// are inside the solid. NOTE: bbox is USELESS here — a swept helicoid's
-// BSpline control points bulge far outside the real surface (a correct
-// r=10 threaded rod bboxes at 16).
-int ringHits(const TopoDS_Shape& s, double cx, double cy, double r,
-             double z) {
-    int n = 0;
-    for (int k = 0; k < 16; ++k) {
-        const double a = 2.0 * M_PI * k / 16.0;
-        if (inAt(s, cx + r * std::cos(a), cy + r * std::sin(a), z)) ++n;
-    }
-    return n;
 }
 
 RefRod buildThreadedRefRod(Document& doc, History& hist, double r, double h,
