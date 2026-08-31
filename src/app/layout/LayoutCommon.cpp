@@ -48,6 +48,11 @@
 #include <string>
 #include <vector>
 #include <algorithm>   // std::max — tab-row width reservation
+#include "../../i18n.h"
+#include "../../i18n.h"
+#include "../../i18n.h"
+#include "../../i18n.h"
+#include "../../i18n.h"
 
 namespace materializr {
 
@@ -184,7 +189,7 @@ bool Application::bodyExists(int bodyId) const {
 }
 
 std::string Application::sessionDisplayLabel(size_t i) const {
-    if (i >= m_sessions.size()) return "Untitled";
+    if (i >= m_sessions.size()) return std::string(materializr::tr("Untitled"));
     // Same fallback chain as projectDisplayName(): explicit name → file
     // basename → Untitled. The active tab reads the LIVE working copies;
     // inactive tabs read their stashed ones.
@@ -194,7 +199,7 @@ std::string Application::sessionDisplayLabel(size_t i) const {
                                                      : m_sessions[i]->projectPath;
     if (!name.empty()) return name;
     if (!path.empty()) return std::filesystem::path(path).filename().string();
-    return "Untitled";
+    return std::string(materializr::tr("Untitled"));
 }
 
 bool Application::sessionDirty(size_t i) const {
@@ -212,14 +217,14 @@ bool Application::activateTabFor(size_t i) {
 void Application::renderTabMenuItems(size_t i) {
     // Actions on a non-active tab activate it first; a refused switch
     // (mid-sketch etc.) already toasted, so the action just doesn't happen.
-    if (ImGui::MenuItem("Save")) {
+    if (ImGui::MenuItem(materializr::tr("Save"))) {
         if (activateTabFor(i)) saveProjectQuick();
     }
-    if (ImGui::MenuItem("Save As...")) {
+    if (ImGui::MenuItem(materializr::tr("Save As..."))) {
         if (activateTabFor(i)) saveProject();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Close Tab")) {
+    if (ImGui::MenuItem(materializr::tr("Close Tab"))) {
         if (activateTabFor(i))
             guardedOpen([this]() { closeSession(m_activeSession); });
     }
@@ -233,13 +238,13 @@ bool Application::openNewTab() {
 }
 
 void Application::renderNewTabMenuBody() {
-    if (ImGui::MenuItem("New Project")) openNewTab();
+    if (ImGui::MenuItem(materializr::tr("New Project"))) openNewTab();
     // The open flavors land IN the new tab. Cancelling the picker leaves an
     // empty tab behind (browser-style about:blank) — one click to close.
-    if (ImGui::MenuItem("Open Project...")) {
+    if (ImGui::MenuItem(materializr::tr("Open Project..."))) {
         if (openNewTab()) loadProject();
     }
-    if (ImGui::BeginMenu("Open Recent", !m_recentProjects.empty())) {
+    if (ImGui::BeginMenu(materializr::tr("Open Recent"), !m_recentProjects.empty())) {
         // Snapshot: openRecentProject() mutates m_recentProjects.
         std::vector<AppSettings::RecentProject> snapshot = m_recentProjects;
         for (size_t i = 0; i < snapshot.size(); ++i) {
@@ -319,7 +324,7 @@ void Application::renderTouchTabsSheet() {
     // each row's ⋮ opens the shared Save / Save As / Close menu; the last
     // row starts a fresh tab.
     if (!ImGui::BeginPopup("##TouchTabs")) return;
-    ImGui::TextColored(materializr::accentText(), "Open projects");
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Open projects"));
     ImGui::Separator();
     for (size_t i = 0; i < m_sessions.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
@@ -359,10 +364,10 @@ void Application::renderTouchTabsSheet() {
 // The four menu bodies, shared by classic's menu bar and the modern/im-touch
 // overflow popup — one item list each, so the layouts cannot drift.
 void Application::renderFileMenuItems(bool withSettings) {
-    if (ImGui::MenuItem("Home Screen")) goToHomeScreen();
-    if (ImGui::MenuItem("Open Project...", "Ctrl+O")) loadProject();
+    if (ImGui::MenuItem(materializr::tr("Home Screen"))) goToHomeScreen();
+    if (ImGui::MenuItem(materializr::tr("Open Project..."), "Ctrl+O")) loadProject();
     // Open Recent — persisted, most-recent-first. Greyed when empty.
-    if (ImGui::BeginMenu("Open Recent", !m_recentProjects.empty())) {
+    if (ImGui::BeginMenu(materializr::tr("Open Recent"), !m_recentProjects.empty())) {
         // Snapshot: openRecentProject() mutates m_recentProjects.
         std::vector<AppSettings::RecentProject> snapshot = m_recentProjects;
         for (size_t i = 0; i < snapshot.size(); ++i) {
@@ -374,23 +379,23 @@ void Application::renderFileMenuItems(bool withSettings) {
             ImGui::PopID();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Clear Recent")) {
+        if (ImGui::MenuItem(materializr::tr("Clear Recent"))) {
             m_recentProjects.clear();
             saveAppSettings();
         }
         ImGui::EndMenu();
     }
-    if (ImGui::MenuItem("Save Project", "Ctrl+S")) saveProjectQuick();
-    if (ImGui::MenuItem("Save Project As...")) saveProject();
+    if (ImGui::MenuItem(materializr::tr("Save Project"), "Ctrl+S")) saveProjectQuick();
+    if (ImGui::MenuItem(materializr::tr("Save Project As..."))) saveProject();
     // A new project opens in its own tab (non-destructive — the current
     // project keeps its tab); the landing page's New Project tile still
     // resets in place, where the leaving-home guard has already run.
-    if (ImGui::MenuItem("New Project")) {
+    if (ImGui::MenuItem(materializr::tr("New Project"))) {
         if (m_landingPage) m_landingPage->setVisible(false);
         openNewTab();
     }
     ImGui::Separator();
-    if (ImGui::BeginMenu("Tabs", m_sessions.size() > 1)) {
+    if (ImGui::BeginMenu(materializr::tr("Tabs"), m_sessions.size() > 1)) {
         for (size_t i = 0; i < m_sessions.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
             if (ImGui::MenuItem(sessionDisplayLabel(i).c_str(),
@@ -401,7 +406,7 @@ void Application::renderFileMenuItems(bool withSettings) {
         }
         ImGui::EndMenu();
     }
-    if (ImGui::MenuItem("Close Tab")) {
+    if (ImGui::MenuItem(materializr::tr("Close Tab"))) {
         // Same prompt-then-act path as every destructive project action.
         guardedOpen([this]() { closeSession(m_activeSession); });
     }
@@ -411,7 +416,7 @@ void Application::renderFileMenuItems(bool withSettings) {
     auto& formats = PluginRegistry::instance().ioFormats();
     bool hasImporters = false;
     for (auto& fmt : formats) { if (fmt.canImport) { hasImporters = true; break; } }
-    if (hasImporters && ImGui::BeginMenu("Import")) {
+    if (hasImporters && ImGui::BeginMenu(materializr::tr("Import"))) {
         for (size_t i = 0; i < formats.size(); ++i) {
             auto& fmt = formats[i];
             if (!fmt.canImport || !fmt.importFn) continue;
@@ -425,7 +430,7 @@ void Application::renderFileMenuItems(bool withSettings) {
         ImGui::Separator();
         // Cross-project parts: pick another project file, then choose which
         // of its bodies/sketches to copy in (baked, non-parametric).
-        if (ImGui::MenuItem("From Project...")) {
+        if (ImGui::MenuItem(materializr::tr("From Project..."))) {
             FileDialogs::openFile("Import from Project",
                 {{"Materializr Projects", "*.mzr *.materializr"}},
                 [this](const std::string& p) {
@@ -441,7 +446,7 @@ void Application::renderFileMenuItems(bool withSettings) {
     // Build Export submenu from IOFormat contributions
     bool hasExporters = false;
     for (auto& fmt : formats) { if (fmt.canExport) { hasExporters = true; break; } }
-    if (hasExporters && ImGui::BeginMenu("Export")) {
+    if (hasExporters && ImGui::BeginMenu(materializr::tr("Export"))) {
         for (size_t i = 0; i < formats.size(); ++i) {
             auto& fmt = formats[i];
             if (!fmt.canExport || !fmt.exportFn) continue;
@@ -457,7 +462,7 @@ void Application::renderFileMenuItems(bool withSettings) {
 
     if (withSettings) {
         ImGui::Separator();
-        if (ImGui::MenuItem("Settings...")) {
+        if (ImGui::MenuItem(materializr::tr("Settings..."))) {
             // Stage the current bindings so the dialog can Cancel cleanly.
             m_settingsOrbitButton = m_orbitButton;
             m_settingsPanButton = m_panButton;
@@ -466,7 +471,7 @@ void Application::renderFileMenuItems(bool withSettings) {
         }
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Exit", "Alt+F4")) m_window->requestClose(true);
+    if (ImGui::MenuItem(materializr::tr("Exit"), "Alt+F4")) m_window->requestClose(true);
 }
 
 void Application::renderEditMenuItems() {
@@ -477,11 +482,11 @@ void Application::renderEditMenuItems() {
     // the preview pushes over the redo tail. (How "pull, confirm,
     // pull the other way" ate the first body.)
     const bool histLocked = anyInteractivePreviewActive();
-    if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
+    if (ImGui::MenuItem(materializr::tr("Undo"), "Ctrl+Z", false,
                         !histLocked && m_history->canUndo())) {
         undoWithCascade();
     }
-    if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
+    if (ImGui::MenuItem(materializr::tr("Redo"), "Ctrl+Y", false,
                         !histLocked && m_history->canRedo())) {
         redoWithCascade();
     }
@@ -526,24 +531,24 @@ void Application::renderConstructionMenuItems() {
     // always available, selection or not), then the modes derived FROM the
     // selection; with nothing suitable selected the derived section explains
     // what to pick instead of vanishing.
-    if (ImGui::BeginMenu("Plane")) {
-        if (m_pluginContext && ImGui::MenuItem("New Plane..."))
+    if (ImGui::BeginMenu(materializr::tr("Plane"))) {
+        if (m_pluginContext && ImGui::MenuItem(materializr::tr("New Plane...")))
             m_pluginContext->requestInteractiveOp(InteractiveOp::ConstructionPlane);
         ImGui::Separator();
         if (!anyPlane) {
-            ImGui::MenuItem("Select what to derive from:", nullptr, false, false);
-            ImGui::MenuItem("2 flat faces/planes  - midplane", nullptr, false, false);
-            ImGui::MenuItem("a cylinder  - tangent / normal", nullptr, false, false);
-            ImGui::MenuItem("an edge or axis  - normal plane", nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("Select what to derive from:"), nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("2 flat faces/planes  - midplane"), nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("a cylinder  - tangent / normal"), nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("an edge or axis  - normal plane"), nullptr, false, false);
         } else {
-            if (midplane && ImGui::MenuItem("Midplane (between the 2 selected)"))
+            if (midplane && ImGui::MenuItem(materializr::tr("Midplane (between the 2 selected)")))
                 m_pluginContext->requestInteractiveOp(InteractiveOp::Midplane);
             if (haveCyl) {
-                if (ImGui::MenuItem("Tangent to cylinder"))
+                if (ImGui::MenuItem(materializr::tr("Tangent to cylinder")))
                     m_pluginContext->requestInteractiveOp(InteractiveOp::TangentPlane);
-                if (ImGui::MenuItem("Perpendicular to cylinder axis"))
+                if (ImGui::MenuItem(materializr::tr("Perpendicular to cylinder axis")))
                     m_pluginContext->requestInteractiveOp(InteractiveOp::PlaneNormalToAxis);
-                if (ImGui::MenuItem("Through cylinder axis (longitudinal)"))
+                if (ImGui::MenuItem(materializr::tr("Through cylinder axis (longitudinal)")))
                     m_pluginContext->requestInteractiveOp(InteractiveOp::PlaneThroughAxis);
             } else if (haveAxis || straightEdge) {
                 if (ImGui::MenuItem(straightEdge ? "Normal to edge" : "Normal to axis"))
@@ -552,24 +557,24 @@ void Application::renderConstructionMenuItems() {
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Axis")) {
-        if (m_pluginContext && ImGui::MenuItem("New Axis..."))
+    if (ImGui::BeginMenu(materializr::tr("Axis"))) {
+        if (m_pluginContext && ImGui::MenuItem(materializr::tr("New Axis...")))
             m_pluginContext->requestInteractiveOp(InteractiveOp::ConstructionAxis);
         ImGui::Separator();
         if (!anyAxis) {
-            ImGui::MenuItem("Select what to derive from:", nullptr, false, false);
-            ImGui::MenuItem("a cylinder or straight edge", nullptr, false, false);
-            ImGui::MenuItem("2 vertices / a flat face / 2 planes", nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("Select what to derive from:"), nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("a cylinder or straight edge"), nullptr, false, false);
+            ImGui::MenuItem(materializr::tr("2 vertices / a flat face / 2 planes"), nullptr, false, false);
         } else {
-            if (haveCyl && ImGui::MenuItem("From cylinder axis"))
+            if (haveCyl && ImGui::MenuItem(materializr::tr("From cylinder axis")))
                 m_pluginContext->requestInteractiveOp(InteractiveOp::AxisFromCylinder);
-            if (straightEdge && ImGui::MenuItem("Along edge"))
+            if (straightEdge && ImGui::MenuItem(materializr::tr("Along edge")))
                 m_pluginContext->requestInteractiveOp(InteractiveOp::AxisAlongEdge);
-            if (twoVerts && ImGui::MenuItem("Through two vertices"))
+            if (twoVerts && ImGui::MenuItem(materializr::tr("Through two vertices")))
                 m_pluginContext->requestInteractiveOp(InteractiveOp::AxisTwoPoints);
-            if (faceNormal && ImGui::MenuItem("Normal to face"))
+            if (faceNormal && ImGui::MenuItem(materializr::tr("Normal to face")))
                 m_pluginContext->requestInteractiveOp(InteractiveOp::AxisNormalToFace);
-            if (midplane && ImGui::MenuItem("Intersection of two planes"))
+            if (midplane && ImGui::MenuItem(materializr::tr("Intersection of two planes")))
                 m_pluginContext->requestInteractiveOp(InteractiveOp::AxisTwoPlanes);
         }
         ImGui::EndMenu();
@@ -577,16 +582,16 @@ void Application::renderConstructionMenuItems() {
 }
 
 void Application::renderViewMenuItems() {
-    if (ImGui::MenuItem("Reset Camera", "Home")) m_viewport->getCamera().reset();
+    if (ImGui::MenuItem(materializr::tr("Reset Camera"), "Home")) m_viewport->getCamera().reset();
     // The F shortcut's menu twin — and the only way to frame on touch.
-    if (ImGui::MenuItem("Frame Selection", "F")) frameSelection();
+    if (ImGui::MenuItem(materializr::tr("Frame Selection"), "F")) frameSelection();
     // Measure lives here now — one home for it across layouts instead of a
     // toolbar/rail button duplicated per context. Drops the user at the
     // measure mode picker (Object / Edge / Point-to-Point).
-    if (ImGui::MenuItem("Measure...")) {
+    if (ImGui::MenuItem(materializr::tr("Measure..."))) {
         if (m_measureTool) m_measureTool->setMode(MeasureMode::PickMode);
     }
-    if (ImGui::MenuItem("Section View", nullptr, &m_sectionEnabled)) {
+    if (ImGui::MenuItem(materializr::tr("Section View"), nullptr, &m_sectionEnabled)) {
         m_sectionDirty = true;
         if (m_sectionEnabled) {
             // Aim the plane through the middle of the visible
@@ -618,7 +623,7 @@ void Application::renderViewMenuItems() {
     // back on toggle. F9 on a keyboard; touch gets edge tabs. This menu
     // item hides/shows BOTH columns at once; the checkmark = both hidden.
     bool bothHidden = m_leftPanelHidden && m_rightPanelHidden;
-    if (ImGui::MenuItem("Hide Panels", "F9", bothHidden)) {
+    if (ImGui::MenuItem(materializr::tr("Hide Panels"), "F9", bothHidden)) {
         bool hide = !bothHidden;
         m_leftPanelHidden = m_rightPanelHidden = hide;
         saveAppSettings();
@@ -630,10 +635,10 @@ void Application::renderViewMenuItems() {
 }
 
 void Application::renderHelpMenuItems() {
-    if (ImGui::MenuItem("User Guide")) m_helpPanel->setVisible(true);
-    if (ImGui::MenuItem("Keyboard Shortcuts")) m_shortcutsPanel->setVisible(true);
+    if (ImGui::MenuItem(materializr::tr("User Guide"))) m_helpPanel->setVisible(true);
+    if (ImGui::MenuItem(materializr::tr("Keyboard Shortcuts"))) m_shortcutsPanel->setVisible(true);
     ImGui::Separator();
-    if (ImGui::MenuItem("Check for Updates...")) {
+    if (ImGui::MenuItem(materializr::tr("Check for Updates..."))) {
         m_showUpdatePopup = true;
         m_updateChecked = false; // run the network call when the popup opens
     }
@@ -642,7 +647,7 @@ void Application::renderHelpMenuItems() {
     // knowing about it. See renderPluginMenuItems.
     renderPluginMenuItems("Help");
     ImGui::Separator();
-    if (ImGui::MenuItem("About Materializr...")) m_aboutDialog->setVisible(true);
+    if (ImGui::MenuItem(materializr::tr("About Materializr..."))) m_aboutDialog->setVisible(true);
 }
 
 void Application::renderPluginMenuItems(const char* menuName) {
@@ -672,24 +677,32 @@ void Application::renderPluginMenuItems(const char* menuName) {
 // OpenPopup("##TouchOverflow") on its trigger button.
 void Application::renderTouchOverflowPopup() {
     if (!ImGui::BeginPopup("##TouchOverflow")) return;
-    if (ImGui::BeginMenu(MZ_ICON_OPEN "  File")) {
+    // The icon macro concatenates into the label, so these cannot be plain
+    // literals for tr(); build icon + translated word + a ###pin so the menu's
+    // ImGui identity survives a live language switch.
+    auto menuLbl = [](const char* icon, const char* en) {
+        static std::string buf;   // valid until the next call within this frame
+        buf = std::string(icon) + "  " + materializr::tr(en) + "###" + en;
+        return buf.c_str();
+    };
+    if (ImGui::BeginMenu(menuLbl(MZ_ICON_OPEN, "File"))) {
         renderFileMenuItems(false);   // Settings is exposed at the bottom instead
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu(MZ_ICON_UNDO "  Edit")) {
+    if (ImGui::BeginMenu(menuLbl(MZ_ICON_UNDO, "Edit"))) {
         renderEditMenuItems();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu(MZ_ICON_FOCUS "  View")) {
+    if (ImGui::BeginMenu(menuLbl(MZ_ICON_FOCUS, "View"))) {
         renderViewMenuItems();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu(MZ_ICON_ABOUT "  Help")) {
+    if (ImGui::BeginMenu(menuLbl(MZ_ICON_ABOUT, "Help"))) {
         renderHelpMenuItems();
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem(MZ_ICON_SETTINGS "  Settings...")) {
+    if (ImGui::MenuItem(menuLbl(MZ_ICON_SETTINGS, "Settings..."))) {
         m_settingsOrbitButton = m_orbitButton;
         m_settingsPanButton   = m_panButton;
         m_showSettings = true;
@@ -709,7 +722,7 @@ void Application::renderRailPolygonSidesPopup(bool clicked) {
             {"Triangle (3)", 3}, {"Square (4)", 4}, {"Pentagon (5)", 5},
             {"Hexagon (6)", 6}, {"Heptagon (7)", 7}, {"Octagon (8)", 8}};
         for (const auto& c : choices)
-            if (ImGui::MenuItem(c.name)) {
+            if (ImGui::MenuItem(materializr::tr(c.name))) {
                 m_toolbar->setRequestedPolygonSides(c.sides);
                 handleToolAction(static_cast<int>(ToolAction::Polygon));
             }

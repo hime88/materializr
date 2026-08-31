@@ -80,6 +80,7 @@ private:
     void drawPolygons(const Sketch* sketch, const glm::mat4& vp);
     void drawPreview(const Sketch* sketch, const SketchTool* tool, const glm::mat4& vp);
     void drawSvgGhost(const Sketch* sketch, const SketchTool* tool, const glm::mat4& vp);
+    void drawAirfoilGhost(const Sketch* sketch, const SketchTool* tool, const glm::mat4& vp);
     void drawTrimHover(const Sketch* sketch, const SketchTool* tool, const glm::mat4& vp);
     void drawMidpointDots(const Sketch* sketch, const glm::mat4& vp);
     void drawConstraints(const Sketch* sketch, const SketchSolver* solver, const glm::mat4& vp);

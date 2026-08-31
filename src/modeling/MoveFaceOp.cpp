@@ -44,6 +44,7 @@
 #include <Standard_ErrorHandler.hxx>
 #include <Standard_Failure.hxx>
 #include <algorithm>
+#include "../i18n.h"
 
 namespace {
 // The far cross-section of the feature attached to `face`: the edge LOOPS where
@@ -578,10 +579,10 @@ std::string MoveFaceOp::description() const {
 }
 
 void MoveFaceOp::renderProperties() {
-    ImGui::Text("Move Face");
+    ImGui::Text("%s", materializr::tr("Move Face"));
     ImGui::Separator();
-    ImGui::Text("Body ID: %d", m_bodyId);
-    ImGui::Text("Move: (%.2f, %.2f, %.2f) mm", m_move.X(), m_move.Y(), m_move.Z());
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
+    ImGui::Text(materializr::tr("Move: (%.2f, %.2f, %.2f) mm"), m_move.X(), m_move.Y(), m_move.Z());
 }
 
 OperationDiff MoveFaceOp::captureDiff() const {

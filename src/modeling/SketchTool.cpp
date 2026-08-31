@@ -132,6 +132,9 @@ void SketchTool::onMouseDown(glm::vec2 pos, bool addToSel) {
         case SketchToolMode::Svg:
             handleSvgTool(snapped);
             break;
+        case SketchToolMode::Airfoil:
+            handleAirfoilTool(snapped);
+            break;
         case SketchToolMode::Dimension:
             handleDimensionTool(snapped);
             break;
@@ -3363,6 +3366,21 @@ void SketchTool::handleTextTool(glm::vec2 pos) {
     recordStamp(p0, l0);
 }
 
+void SketchTool::handleAirfoilTool(glm::vec2 pos) {
+    // Single-click stamp like Text/SVG, but the click is the LEADING EDGE, not
+    // a bounding-box centre: that is the datum a wing's chord and twist are
+    // measured from, so stations stacked for a loft line up on it.
+    if (m_airfoil.empty()) return;
+    const size_t p0 = m_sketch->getPoints().size();
+    const size_t l0 = m_sketch->getLines().size();
+    const size_t s0 = m_sketch->getSplines().size();
+    if (AirfoilImport::place(m_sketch, m_airfoil, pos, m_airfoilChord,
+                             static_cast<float>(m_textAngle),
+                             m_airfoilAnchor) > 0) {
+        recordStamp(p0, l0, s0);
+    }
+}
+
 void SketchTool::handleSvgTool(glm::vec2 pos) {
     // Same single-click stamp as Text; the click point is the artwork's
     // bounding-box centre.
@@ -3374,10 +3392,19 @@ void SketchTool::handleSvgTool(glm::vec2 pos) {
     }
 }
 
-void SketchTool::recordStamp(size_t pointsBefore, size_t linesBefore) {
+void SketchTool::recordStamp(size_t pointsBefore, size_t linesBefore,
+                             size_t splinesBefore) {
     std::vector<int> ids;
     const auto& lns = m_sketch->getLines();
     const auto& pts = m_sketch->getPoints();
+    const auto& spl = m_sketch->getSplines();
+    // Splines are captured too: a stamp that lays down curves (an airfoil
+    // section is two of them) would otherwise leave them behind when the
+    // placement is undone, and only its stray points would disappear.
+    // The default sentinel means "this stamp made no splines" -- Text and SVG
+    // emit line loops only, and must not sweep up pre-existing curves.
+    if (splinesBefore != static_cast<size_t>(-1))
+        for (size_t i = splinesBefore; i < spl.size(); ++i) ids.push_back(spl[i].id);
     for (size_t i = linesBefore; i < lns.size(); ++i) ids.push_back(lns[i].id);
     for (size_t i = pointsBefore; i < pts.size(); ++i) ids.push_back(pts[i].id);
     if (!ids.empty()) m_stampStack.push_back(std::move(ids)); // push, don't overwrite
@@ -3389,6 +3416,7 @@ void SketchTool::commitStamp() {
     // button; desktop stamps directly on click via onMouseDown.
     if (m_mode == SketchToolMode::Text)     handleTextTool(m_currentPos);
     else if (m_mode == SketchToolMode::Svg) handleSvgTool(m_currentPos);
+    else if (m_mode == SketchToolMode::Airfoil) handleAirfoilTool(m_currentPos);
 }
 
 // --- Interactive Mirror ----------------------------------------------------

@@ -12,6 +12,9 @@
 #include <imgui.h>
 #include <cmath>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -268,29 +271,29 @@ std::string RevolveOp::description() const {
 }
 
 void RevolveOp::renderProperties() {
-    ImGui::Text("Lathe");
+    ImGui::Text("%s", materializr::tr("Lathe"));
     ImGui::Separator();
 
-    materializr::inputNumber("Angle (deg)", &m_angle, 1.0, 10.0, "%.1f");
+    materializr::inputNumber(materializr::tr("Angle (deg)"), &m_angle, 1.0, 10.0, "%.1f");
     if (m_angle < 0.0) m_angle = 0.0;
     if (m_angle > 360.0) m_angle = 360.0;
 
     ImGui::Separator();
-    ImGui::Text("Axis Origin");
-    materializr::inputNumber("Origin X", &m_axisOriginX, 0.1, 1.0, "%g");
-    materializr::inputNumber("Origin Y", &m_axisOriginY, 0.1, 1.0, "%g");
-    materializr::inputNumber("Origin Z", &m_axisOriginZ, 0.1, 1.0, "%g");
+    ImGui::Text("%s", materializr::tr("Axis Origin"));
+    materializr::inputNumber(materializr::tr("Origin X"), &m_axisOriginX, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Origin Y"), &m_axisOriginY, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Origin Z"), &m_axisOriginZ, 0.1, 1.0, "%g");
 
     ImGui::Separator();
-    ImGui::Text("Axis Direction");
-    materializr::inputNumber("Dir X", &m_axisDirX, 0.1, 1.0, "%g");
-    materializr::inputNumber("Dir Y", &m_axisDirY, 0.1, 1.0, "%g");
-    materializr::inputNumber("Dir Z", &m_axisDirZ, 0.1, 1.0, "%g");
+    ImGui::Text("%s", materializr::tr("Axis Direction"));
+    materializr::inputNumber(materializr::tr("Dir X"), &m_axisDirX, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Dir Y"), &m_axisDirY, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Dir Z"), &m_axisDirZ, 0.1, 1.0, "%g");
 
     ImGui::Separator();
     const char* modeItems[] = { "New Body", "Union", "Subtract", "Intersect" };
     int modeIndex = static_cast<int>(m_mode);
-    if (ImGui::Combo("Mode", &modeIndex, modeItems, 4)) {
+    if (ImGui::Combo(materializr::tr("Mode"), &modeIndex, modeItems, 4)) {
         m_mode = static_cast<RevolveMode>(modeIndex);
     }
 

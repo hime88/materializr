@@ -184,6 +184,13 @@ struct AppSettings {
     // direction to multiples of this from the segment anchor. Default 15.
     int  angleSnapDeg = 15;
 
+    // --- Language ---
+    // UI language index; mirrors materializr::Lang (0 = English, then Spanish,
+    // Portuguese, French, German, Italian, Chinese). Kept as an int so this does
+    // not depend on i18n.h. -1 means "never chosen", which is what makes the
+    // setup wizard ask on first run.
+    int  language = -1;
+
     // --- STL import ---
     // Default fidelity for STL import, 0..1 (coarse/fast .. faithful/slow). Pre-
     // fills the import dialog's accuracy slider. See StlIO::import.

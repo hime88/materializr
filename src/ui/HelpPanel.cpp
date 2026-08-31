@@ -1,7 +1,9 @@
 #include "UiTheme.h"
+#include "../i18n.h"
 #include "ui_scale.h"
 #include "HelpPanel.h"
 #include <imgui.h>
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -10,9 +12,9 @@ namespace {
 // One section heading + a wrapped paragraph below it. Keeps the layout uniform.
 void section(const char* title, const char* body) {
     ImGui::Spacing();
-    ImGui::TextColored(materializr::accentText(), "%s", title);
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr(title));
     ImGui::Separator();
-    ImGui::TextWrapped("%s", body);
+    ImGui::TextWrapped("%s", materializr::tr(body));
     ImGui::Spacing();
 }
 
@@ -26,12 +28,9 @@ void HelpPanel::render() {
         ImGui::SetNextWindowFocus();
         m_raise = false;
     }
-    if (!ImGui::Begin("User Guide", &m_visible)) { ImGui::End(); return; }
+    if (!ImGui::Begin(materializr::tr("User Guide"), &m_visible)) { ImGui::End(); return; }
 
-    ImGui::TextWrapped(
-        "Welcome to Materializr — a parametric 3D CAD app. This guide covers "
-        "the basics so you can get something on screen quickly. Camera controls "
-        "and key bindings can be changed in File → Settings.");
+    ImGui::TextWrapped("%s", materializr::tr("Welcome to Materializr — a parametric 3D CAD app. This guide covers the basics so you can get something on screen quickly. Camera controls and key bindings can be changed in File → Settings."));
 
     section("Navigating the viewport",
         "Drag the middle mouse button to orbit, the right button to pan, and "
@@ -89,9 +88,7 @@ void HelpPanel::render() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextDisabled(
-        "Tip: press Esc to cancel any in-progress operation. Ctrl+Z / Ctrl+Y "
-        "undo and redo history steps.");
+    ImGui::TextDisabled("%s", materializr::tr("Tip: press Esc to cancel any in-progress operation. Ctrl+Z / Ctrl+Y undo and redo history steps."));
 
     ImGui::End();
 }

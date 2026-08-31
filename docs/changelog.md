@@ -5,6 +5,71 @@ All notable changes to Materializr are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Simplified Chinese interface.** Chinese (简体中文) joins the language list
+  on the first-run language page and in Settings → Appearance, covering the
+  same 1152 strings as the other languages against a CAD glossary: 拉伸 for
+  Extrude, 放样 for Loft, 抽壳 for Shell, 拔模 for Draft, 圆角/倒角 for
+  Fillet/Chamfer. ImGui `##ids` and every printf specifier are preserved, so
+  switching language still cannot disturb widget identity. CJK glyphs come
+  from a system CJK face merged onto the UI font at startup — JetBrains Mono
+  carries none, so without it a Chinese label would draw as tofu; a system
+  with no CJK font simply keeps its present behaviour.
+
+## [1.6.3] — 2026-08-28
+
+### Added
+
+- **The interface speaks five new languages.** Spanish, Portuguese (Brazilian),
+  French, German and Italian, chosen on first run — the Getting Started tour
+  now opens with a language page, each language listed in its own name — or
+  any time in Settings → Appearance. Switching is instant, no restart. Menus,
+  tools, tooltips, panels, dialogs and the settings descriptions are covered;
+  the translations are machine-drafted against a CAD glossary and native-
+  speaker review is welcome. ViewCube labels deliberately stay as they are.
+- **Arcs take typed dimensions.** Like circles and rectangles already did:
+  type the chord after the first click, then one number for the bow — a swept
+  angle (180 = semicircle) or a radius, chosen with a Degrees/Radius toggle in
+  the input dialog. The radius floor (half the chord) is shown and enforced,
+  and which way the arc bows still follows the cursor.
+- **Drawing guides in every sketch tool.** The angle snap, tangent,
+  perpendicular/parallel and alignment guides only worked while drawing lines.
+  Arcs, circles (two-point), polygons and splines now get the same assistance,
+  measured from the point actually being placed — and splines chain
+  perpendicular/parallel off their last control leg like line chains do.
+- **Tangent guides from the curve itself.** Starting a line ON a circle and
+  drawing off tangentially, or continuing tangent from an arc's endpoint, now
+  fires the tangent guide (it previously only worked from a point standing
+  clear of the curve). Splines can be tangent references too, arcs honour
+  their real span, and with several curves in range the guide names the one
+  actually aimed at.
+
+### Fixed
+
+- **Windows starts again.** 1.6.1 and 1.6.2 crashed on launch before showing a
+  window (#82) — a logging setup call that Windows' C runtime rejects outright.
+  The packaging pipeline now smoke-launches the packaged exe so this class of
+  crash cannot ship again. Thanks to the reporter for pinning down 1.6.0 as
+  the last working release.
+- **The sketch grid on round faces lines up with the world.** Sketching on the
+  top of a tube or flange could come out with the grid rotated to a keyway
+  flat or slot side — a couple of short straight edges outvoted a boundary
+  that is circles by any sane reading. Round faces now align to the world
+  axes; genuinely edge-dominated faces still align to their edges.
+- **Sweep angle and radius stay honest in the arc dialog** — a typed sweep is
+  exact and is not pulled onto the 15° snap the way a dragged apex is.
+
+### Changed
+
+- Loft grew tip-split sampling, face sections and body bridging; extrude and
+  booleans are time-boxed so a pathological case cancels instead of hanging;
+  STL export welds and repairs the mesh so slicers stop rejecting prints;
+  Merge Faces gained a linear tolerance and clearer refusal messages; Lay
+  Flat on Plane works from a right-clicked planar face and for sketches; and
+  a union that comes back smaller than its largest input is rejected as the
+  data-loss it is.
+
 ## [1.6.2] — 2026-08-22
 
 ### Changed

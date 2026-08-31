@@ -30,6 +30,8 @@
 #include <gp_Vec.hxx>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace {
 // Representative point on a face (midpoint of its UV bounds).
@@ -790,18 +792,18 @@ std::string ChamferOp::description() const {
 }
 
 void ChamferOp::renderProperties() {
-    ImGui::Text("Chamfer");
+    ImGui::Text("%s", materializr::tr("Chamfer"));
     ImGui::Separator();
 
-    materializr::inputNumber("Distance", &m_distance, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Distance"), &m_distance, 0.1, 1.0, "%g");
     bool asym = (m_distance2 > 0.0);
-    if (ImGui::Checkbox("Two distances", &asym))
+    if (ImGui::Checkbox(materializr::tr("Two distances"), &asym))
         m_distance2 = asym ? m_distance : -1.0;
     if (m_distance2 > 0.0)
-        materializr::inputNumber("Distance 2", &m_distance2, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Distance 2"), &m_distance2, 0.1, 1.0, "%g");
 
-    ImGui::Text("Edges: %d selected", static_cast<int>(m_edges.size()));
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Edges: %d selected"), static_cast<int>(m_edges.size()));
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 OperationDiff ChamferOp::captureDiff() const {

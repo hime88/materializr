@@ -7,6 +7,7 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <TopoDS.hxx>
 #include <imgui.h>
+#include "../i18n.h"
 
 DefeatureOp::DefeatureOp() = default;
 
@@ -61,10 +62,10 @@ std::string DefeatureOp::description() const {
 }
 
 void DefeatureOp::renderProperties() {
-    ImGui::Text("Repair Geometry");
+    ImGui::Text("%s", materializr::tr("Repair Geometry"));
     ImGui::Separator();
-    ImGui::Text("Faces removed: %d", m_faces.Size());
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Faces removed: %d"), m_faces.Size());
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 std::string DefeatureOp::serializeParams() const {

@@ -60,6 +60,9 @@
 #include <Message_ProgressScope.hxx>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace {
 // Turns the per-job cancel token into an OCCT user-break, so a Cancel click
@@ -2102,11 +2105,11 @@ std::string ThreadOp::description() const {
 }
 
 void ThreadOp::renderProperties() {
-    ImGui::Text("%s Thread", m_isHole ? "Internal" : "External");
+    ImGui::Text(materializr::tr("%s Thread"), m_isHole ? "Internal" : "External");
     ImGui::Separator();
-    materializr::inputNumber("Pitch (mm)", &m_pitch, 0.1, 0.5, "%.2f");
+    materializr::inputNumber(materializr::tr("Pitch (mm)"), &m_pitch, 0.1, 0.5, "%.2f");
     if (m_pitch < 0.1) m_pitch = 0.1;
-    materializr::inputNumber("Depth (mm)", &m_depth, 0.05, 0.2, "%.2f");
+    materializr::inputNumber(materializr::tr("Depth (mm)"), &m_depth, 0.05, 0.2, "%.2f");
     if (m_depth < 0.05) m_depth = 0.05;
     // Past ~0.65·pitch the grooves merge and shred the crests into floating
     // helical fins (Steve found this empirically — "it's jumping lol").
@@ -2126,30 +2129,27 @@ void ThreadOp::renderProperties() {
     ImGui::PopStyleColor();
     // Cross-section profile. Standard is the fast, shipped V-thread; the rest
     // are the maker/printing set (clean but slower — a boolean cut per turn).
-    const char* kProfiles[] = {"Standard (V)", "Trapezoidal (ACME)",
-                               "Square", "Buttress", "Rounded (print)"};
+    const char* kProfiles[] = {materializr::tr("Standard (V)"), materializr::tr("Trapezoidal (ACME)"),
+                               materializr::tr("Square"), materializr::tr("Buttress"), materializr::tr("Rounded (print)")};
     int prof = static_cast<int>(m_profile);
-    if (ImGui::Combo("Profile", &prof, kProfiles, IM_ARRAYSIZE(kProfiles)))
+    if (ImGui::Combo(materializr::tr("Profile"), &prof, kProfiles, IM_ARRAYSIZE(kProfiles)))
         m_profile = static_cast<ThreadProfile>(prof);
     if (profileTakesGrooveWidth(m_profile)) {
-        materializr::inputNumber("Groove width (mm)", &m_grooveWidth, 0.1, 0.5, "%.2f");
+        materializr::inputNumber(materializr::tr("Groove width (mm)"), &m_grooveWidth, 0.1, 0.5, "%.2f");
         if (m_grooveWidth < 0.0) m_grooveWidth = 0.0;
-        ImGui::SetItemTooltip("Width of the cut at the surface. 0 = automatic "
-                              "(a set fraction of the pitch).");
+        ImGui::SetItemTooltip("%s", materializr::tr("Width of the cut at the surface. 0 = automatic (a set fraction of the pitch)."));
         if (m_grooveWidth <= 0.0)
-            ImGui::TextDisabled("automatic: %.2f mm at this pitch",
+            ImGui::TextDisabled(materializr::tr("automatic: %.2f mm at this pitch"),
                                 profileOpenFraction(m_profile) * m_pitch);
     }
     if (m_profile != ThreadProfile::Standard) {
-        materializr::inputNumber("Fit clearance (mm)", &m_clearance, 0.05, 0.1, "%.2f");
+        materializr::inputNumber(materializr::tr("Fit clearance (mm)"), &m_clearance, 0.05, 0.1, "%.2f");
         if (m_clearance < 0.0) m_clearance = 0.0;
-        ImGui::SetItemTooltip("Radial gap so a PRINTED thread fits its mate "
-                              "(0.2\xE2\x80\x93" "0.4mm typical). 0 = geometrically exact.");
-        ImGui::TextDisabled("Non-Standard profiles cut per-turn \xE2\x80\x94 a long "
-                            "thread can take a while.");
+        ImGui::SetItemTooltip("%s", materializr::tr("Radial gap so a PRINTED thread fits its mate (0.2\xE2\x80\x93""0.4mm typical). 0 = geometrically exact."));
+        ImGui::TextDisabled("%s", materializr::tr("Non-Standard profiles cut per-turn \xE2\x80\x94 a long thread can take a while."));
     }
     bool rh = m_rightHanded;
-    if (ImGui::Checkbox("Right-handed", &rh)) m_rightHanded = rh;
+    if (ImGui::Checkbox(materializr::tr("Right-handed"), &rh)) m_rightHanded = rh;
     // Multi-start was missing here entirely — a saved 3-start cap could not
     // have its start count edited after the fact. Same 1-6 range and stepped
     // style as the create panel.
@@ -2157,9 +2157,9 @@ void ThreadOp::renderProperties() {
     materializr::inputNumberInt("Starts", &starts, 1, 1);
     m_starts = std::min(6, std::max(1, starts));
     if (m_starts > 1)
-        ImGui::TextDisabled("lead %.2f mm/turn (%d interleaved helixes)",
+        ImGui::TextDisabled(materializr::tr("lead %.2f mm/turn (%d interleaved helixes)"),
                             m_starts * m_pitch, m_starts);
-    ImGui::Text("Diameter: %.2f mm   Length: %.2f mm", m_radius * 2.0, m_length);
+    ImGui::Text(materializr::tr("Diameter: %.2f mm   Length: %.2f mm"), m_radius * 2.0, m_length);
 }
 
 OperationDiff ThreadOp::captureDiff() const {

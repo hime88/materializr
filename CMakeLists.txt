@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Materializr VERSION 1.6.2 LANGUAGES CXX)
+project(Materializr VERSION 1.6.3 LANGUAGES CXX)
 
 # Pre-release suffix appended to the reported version (e.g. "-beta.1"). Empty on
 # stable releases. Kept here next to project() so a beta build self-identifies
@@ -207,6 +207,7 @@ add_executable(materializr
     src/main.cpp
     src/app/Application.cpp
     src/app/ui_layout_bridge.cpp
+    src/i18n.cpp
     src/app/InteractiveOpController.cpp
     src/app/FaceOpControllers.cpp
     src/app/ExtrudeController.cpp
@@ -320,6 +321,7 @@ add_executable(materializr
     src/modeling/Sketch.cpp
     src/modeling/Unfold.cpp
     src/modeling/SketchSolver.cpp
+    src/modeling/AirfoilImport.cpp
     src/modeling/SketchTool.cpp
     src/modeling/SketchEditOp.cpp
     src/viewport/Viewport.cpp

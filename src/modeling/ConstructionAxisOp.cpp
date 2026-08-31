@@ -4,6 +4,7 @@
 
 #include <imgui.h>
 #include <cmath>
+#include "../i18n.h"
 
 ConstructionAxisOp::ConstructionAxisOp() = default;
 
@@ -155,11 +156,11 @@ std::string ConstructionAxisOp::description() const {
 }
 
 void ConstructionAxisOp::renderProperties() {
-    ImGui::Text("Construction Axis");
+    ImGui::Text("%s", materializr::tr("Construction Axis"));
     ImGui::Separator();
-    ImGui::Text("Name: %s", m_axisName.c_str());
-    ImGui::Text("Origin: (%.2f, %.2f, %.2f)",
+    ImGui::Text(materializr::tr("Name: %s"), m_axisName.c_str());
+    ImGui::Text(materializr::tr("Origin: (%.2f, %.2f, %.2f)"),
                 m_origin.X(), m_origin.Y(), m_origin.Z());
-    ImGui::Text("Direction: (%.3f, %.3f, %.3f)",
+    ImGui::Text(materializr::tr("Direction: (%.3f, %.3f, %.3f)"),
                 m_direction.X(), m_direction.Y(), m_direction.Z());
 }

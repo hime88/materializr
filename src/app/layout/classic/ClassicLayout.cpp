@@ -10,15 +10,16 @@
 #include "ui_scale.h"
 
 #include <imgui.h>
+#include "../../../i18n.h"
 
 namespace materializr {
 
 void Application::renderMenuBar() {
     if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("File")) { renderFileMenuItems(); ImGui::EndMenu(); }
-        if (ImGui::BeginMenu("Edit")) { renderEditMenuItems(); ImGui::EndMenu(); }
-        if (ImGui::BeginMenu("View")) { renderViewMenuItems(); ImGui::EndMenu(); }
-        if (ImGui::BeginMenu("Help")) { renderHelpMenuItems(); ImGui::EndMenu(); }
+        if (ImGui::BeginMenu(materializr::tr("File"))) { renderFileMenuItems(); ImGui::EndMenu(); }
+        if (ImGui::BeginMenu(materializr::tr("Edit"))) { renderEditMenuItems(); ImGui::EndMenu(); }
+        if (ImGui::BeginMenu(materializr::tr("View"))) { renderViewMenuItems(); ImGui::EndMenu(); }
+        if (ImGui::BeginMenu(materializr::tr("Help"))) { renderHelpMenuItems(); ImGui::EndMenu(); }
         // (No soft-keyboard toggle: the numeric fields now raise the native
         // keyboard on focus, so the manual force-toggle is redundant here.)
         ImGui::EndMainMenuBar();

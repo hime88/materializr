@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace {
 
@@ -316,14 +318,14 @@ std::string ShellOp::description() const {
 }
 
 void ShellOp::renderProperties() {
-    ImGui::Text("Shell");
+    ImGui::Text("%s", materializr::tr("Shell"));
     ImGui::Separator();
 
-    materializr::inputNumber("Thickness", &m_thickness, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Thickness"), &m_thickness, 0.1, 1.0, "%g");
 
     int faceCount = m_facesToRemove.Size();
-    ImGui::Text("Open faces: %d selected", faceCount);
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Open faces: %d selected"), faceCount);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 std::string ShellOp::serializeParams() const {

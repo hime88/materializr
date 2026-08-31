@@ -36,6 +36,7 @@ inline void resetFpuForOcct() {
 #endif
 
 #include "app/Application.h"
+#include "../i18n.h"
 #include "app/Window.h"
 #include "ui_scale.h"
 #include "touch_mode.h"
@@ -103,6 +104,7 @@ inline void resetFpuForOcct() {
 #include "io/DxfExport.h"
 #include "io/FileDialogs.h"
 #include "modeling/SvgImport.h"
+#include "modeling/AirfoilImport.h"
 #include "io/ProjectIO.h"
 #include "io/SketchRecovery.h"
 #include "io/ProjectRecovery.h"
@@ -346,6 +348,8 @@ Application::Application(bool safeMode, float uiScaleOverride)
         [this](const std::vector<int>& ids) { combineSketches(ids); });
     m_itemsPanel->setRotatePlaneCallback([this](int planeId) { beginRotatePlaneAboutAxis(planeId); });
     m_propertiesPanel->setRotatePlaneCallback([this](int planeId) { beginRotatePlaneAboutAxis(planeId); });
+    m_propertiesPanel->setAttachRefImageCallback(
+        [this](int planeId) { attachRefImageToPlane(planeId); });
     m_propertiesPanel->setDirtyCallback([this]() { markDirty(); });
     m_propertiesPanel->setLinkInfoCallback(
         [this](bool isBody, int id) { return linkHintFor(isBody, id); });
@@ -558,11 +562,11 @@ bool Application::switchToSession(size_t idx) {
     // committing or dropping it. A thread re-cut owns its body until it
     // lands; blocking on it here would freeze the switch for seconds.
     if (m_inSketchMode) {
-        showToast("Finish or cancel the sketch before switching tabs.");
+        showToast(materializr::tr("Finish or cancel the sketch before switching tabs."));
         return false;
     }
     if (!m_threadRecuts.empty()) {
-        showToast("Wait for the thread re-cut to finish before switching tabs.");
+        showToast(materializr::tr("Wait for the thread re-cut to finish before switching tabs."));
         return false;
     }
     cancelAllInteractivePreviews();
@@ -838,6 +842,70 @@ std::string Application::resolveBundledFont(const std::string& fname) const {
     return std::string();
 }
 
+// A CJK face for the UI font, looked up on the host system.
+//
+// JetBrains Mono carries no CJK glyphs at all, so a Chinese (or Japanese or
+// Korean) interface would draw tofu boxes. ImGui 1.92 rasterises glyphs on
+// demand and can merge faces, so pointing it at a system CJK face costs
+// nothing until a CJK glyph is actually drawn -- no atlas rebuild and no
+// per-language font work. Looking one up on the host is a deliberate trade:
+// bundling a CJK face would add roughly 10 MB to every install for a feature
+// most users never select. When no candidate exists nothing is merged, which
+// leaves every other language exactly as it was.
+std::string resolveSystemCjkFont() {
+    const char* dirs[] = {
+#if defined(_WIN32)
+        "%WINDIR%\\Fonts", "C:\\Windows\\Fonts",
+#elif defined(__APPLE__)
+        "/System/Library/Fonts", "/Library/Fonts",
+        "/System/Library/Fonts/Supplemental",
+#elif defined(__ANDROID__)
+        "/system/fonts", "/system/fonts/opentype", "/product/fonts",
+#else
+        "/usr/share/fonts/opentype/noto", "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/noto-cjk", "/usr/share/fonts/truetype/wqy",
+        "/usr/share/fonts/wqy-zenhei", "/usr/share/fonts/truetype/arphic",
+        "/usr/share/fonts/truetype/droid", "/usr/share/fonts",
+#endif
+    };
+    const char* names[] = {
+#if defined(_WIN32)
+        "msyh.ttc", "msyhl.ttc", "simhei.ttf", "simsun.ttc", "Deng.ttf",
+#elif defined(__APPLE__)
+        "PingFang.ttc", "STHeiti Medium.ttc", "STHeiti Light.ttc",
+        "Hiragino Sans GB.ttc", "Arial Unicode.ttf",
+#elif defined(__ANDROID__)
+        "NotoSansCJK-Regular.ttc", "NotoSansSC-Regular.otf",
+        "NotoSansSC-Regular.ttf", "DroidSansFallback.ttf",
+#else
+        "NotoSansCJK-Regular.ttc", "NotoSansCJKsc-Regular.otf",
+        "NotoSansSC-Regular.otf", "NotoSansSC-Regular.ttf",
+        "wqy-zenhei.ttc", "wqy-microhei.ttc", "uming.ttc",
+        "DroidSansFallbackFull.ttf",
+#endif
+    };
+    for (const char* d : dirs) {
+        std::string dir = d;
+#if defined(_WIN32)
+        if (dir.compare(0, 9, "%WINDIR%\\") == 0) {
+            // Windows is not always installed on C:, and a hard-coded path
+            // silently finds nothing on those installs.
+            const char* w = std::getenv("WINDIR");
+            if (!w) continue;
+            dir = std::string(w) + "\\Fonts";
+        }
+#endif
+        for (const char* n : names) {
+            const std::string path = dir + "/" + n;
+            if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
+                std::fclose(f);
+                return path;
+            }
+        }
+    }
+    return std::string();
+}
+
 void Application::initImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -937,6 +1005,11 @@ void Application::initImGui() {
         std::string path = resolveBundledFont("JetBrainsMono-Regular.ttf");
         ImFont* fnt = nullptr;
         if (!path.empty()) {
+            // No explicit glyph range: ImGui 1.92 loads glyphs ON DEMAND and
+            // marks ImFontConfig::GlyphRanges as legacy. That is why the em
+            // dash and ellipsis already used in English render fine even though
+            // they sit above the old 0x00FF default -- and why the translated
+            // accents need nothing here either.
             fnt = io.Fonts->AddFontFromFileTTF(path.c_str(), 15.0f * uiScale);
             if (fnt) std::fprintf(stderr, "Loaded font: %s\n", path.c_str());
         }
@@ -956,6 +1029,24 @@ void Application::initImGui() {
             if (io.Fonts->AddFontFromFileTTF(icons.c_str(), 15.0f * uiScale,
                                              &cfg, kIconRange))
                 std::fprintf(stderr, "Loaded font: %s (icon merge)\n", icons.c_str());
+        }
+
+        // Merge a system CJK face so Chinese / Japanese / Korean text has
+        // glyphs at all -- JetBrains Mono has none, and without this a Chinese
+        // UI draws tofu boxes. No glyph range, same as the main font: ImGui
+        // rasterises on demand. Missing candidate = no merge = no change.
+        if (fnt) {
+            const std::string cjk = resolveSystemCjkFont();
+            if (!cjk.empty()) {
+                ImFontConfig cfg;
+                cfg.MergeMode = true;
+                // Explicit CJK range so Chinese is baked once at atlas-build time.
+                // Without it ImGui 1.92 loads CJK on demand, and a failed first
+                // load is cached as NOT_FOUND (rendered as '?').
+                cfg.GlyphRanges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+                if (io.Fonts->AddFontFromFileTTF(cjk.c_str(), 15.0f * uiScale, &cfg))
+                    std::fprintf(stderr, "Loaded font: %s (CJK merge)\n", cjk.c_str());
+            }
         }
     }
 
@@ -1249,6 +1340,7 @@ void Application::beginFrame() {
         }
     }
     ImGui::NewFrame();
+
 #if defined(MZ_IOS)
     // Shrink the root work rect by the device safe areas (status bar, rounded
     // corners, home indicator) so the menu bar / dockspace / status bar all
@@ -1420,7 +1512,7 @@ bool Application::renderProgressFrame(float fraction, const char* label) {
     ImGui::Begin("##progress", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::TextColored(materializr::accentText(), "Working\xE2\x80\xA6");
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Working\xE2\x80\xA6"));
     ImGui::Spacing();
     if (label && label[0]) ImGui::TextWrapped("%s", label);
     ImGui::Spacing();
@@ -1432,7 +1524,7 @@ bool Application::renderProgressFrame(float fraction, const char* label) {
         ImGui::ProgressBar(fraction, ImVec2(-1, 0), pct);
     }
     ImGui::Spacing();
-    if (ImGui::Button("Cancel", materializr::uiSz(110, 0)) ||
+    if (ImGui::Button(materializr::tr("Cancel"), materializr::uiSz(110, 0)) ||
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         m_progressCancelled = true;
     }
@@ -1516,16 +1608,13 @@ void Application::renderSmallScreenWarning() {
     if (ImGui::BeginPopupModal("Small screen", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushTextWrapPos(uiW(440));
-        ImGui::TextWrapped(
-            "Materializr is designed for tablets and larger displays. On a small "
-            "screen the panels and toolbars are cramped and some controls may be "
-            "hard to reach — a tablet or larger is strongly recommended.");
+        ImGui::TextWrapped("%s", materializr::tr("Materializr is designed for tablets and larger displays. On a small screen the panels and toolbars are cramped and some controls may be hard to reach — a tablet or larger is strongly recommended."));
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         static bool dontShow = false;
-        ImGui::Checkbox("Don't show this again", &dontShow);
+        ImGui::Checkbox(materializr::tr("Don't show this again"), &dontShow);
         ImGui::Spacing();
-        if (ImGui::Button("OK", uiSz(140, 0))) {
+        if (ImGui::Button(materializr::tr("OK"), uiSz(140, 0))) {
             m_smallScreenAck = true;                 // gone for this run
             if (dontShow) { m_smallScreenWarned = true; saveAppSettings(); }
             ImGui::CloseCurrentPopup();
@@ -1630,6 +1719,12 @@ void Application::loadAppSettings() {
         [this]() { return static_cast<int>(m_uiLayout); },
         [this](int idx) {
             m_uiLayout = static_cast<UiLayout>(idx);
+            saveAppSettings();
+        });
+    materializr::bindLanguageBridge(
+        [this]() { return m_language; },
+        [this](int idx) {
+            m_language = idx;
             saveAppSettings();
         });
     // Welcome screen: every launch until the user becomes a Supporter.
@@ -1793,6 +1888,7 @@ AppSettings Application::currentSettings() const {
     s.theme = (m_themeManager->getTheme() == Theme::Light) ? 1 : 0;
     s.touchMode = m_touchMode;
     s.uiLayout = m_uiLayout;
+    s.language = m_language;
     s.imTouchTree = m_imTouchTree;
     s.imTouchTimeline = m_imTouchTimeline;
     s.touchRightTab = m_touchRightTab;
@@ -1871,6 +1967,12 @@ void Application::applyAppSettings(const AppSettings& s) {
     materializr::setTouchMode(s.touchMode);
     m_touchMode = s.touchMode;   // staged value for the Settings dialog
     m_uiLayout = s.uiLayout;     // interface layout — live, no restart needed
+    // UI language — also live. -1 means the user has never chosen, which the
+    // setup wizard turns into its opening question; until then, English.
+    m_language = s.language;
+    setLanguage((s.language > 0 && s.language < languageCount())
+                    ? static_cast<Lang>(s.language)
+                    : Lang::English);
     m_imTouchTree = s.imTouchTree;
     m_imTouchTimeline = s.imTouchTimeline;
     m_showFps = s.showFps;
@@ -2229,6 +2331,37 @@ void Application::handleToolAction(int action) {
                 }
                 seedUprightPlacementAngle();
                 m_sketchTool->setMode(SketchToolMode::Text);
+            }
+            break;
+
+        case ToolAction::SketchAirfoil:
+            if (m_inSketchMode) {
+                // Filter by CONTENT, not extension: .dat is one of the most
+                // generic extensions there is, and airfoil files also ship as
+                // .txt or .air. The parser is what decides -- it refuses
+                // anything that is not chord-normalised, with a reason.
+                materializr::FileDialogs::openFile(
+                    "Import Airfoil Section",
+                    {{"Airfoil coordinates", "*.dat *.txt *.air *.DAT *.TXT"}},
+                    [this](const std::string& path) {
+                        if (path.empty() || !m_sketchTool) return;
+                        materializr::AirfoilProfile prof;
+                        std::string err;
+                        if (!materializr::AirfoilImport::load(path, prof, &err)) {
+                            showToast(std::string("Not an airfoil file: ") + err);
+                            return;
+                        }
+                        // A published section is typically 60-200 points per
+                        // surface; that many spline control points is slow to
+                        // solve and to walk for regions, and buys nothing at
+                        // model scale. The panel can raise it.
+                        materializr::AirfoilImport::simplify(prof, 40);
+                        m_airfoilPointBudget = 40;
+                        m_airfoilSource = path;
+                        m_sketchTool->setAirfoil(std::move(prof));
+                        seedUprightPlacementAngle();
+                        m_sketchTool->setMode(SketchToolMode::Airfoil);
+                    });
             }
             break;
 
@@ -2668,8 +2801,8 @@ void Application::handleToolAction(int action) {
                 // the user at the face-picking route rather than implying the
                 // part is as merged as it can get.
                 if (merged == 0)
-                    showToast("Nothing exactly coplanar left to merge \xE2\x80\x94 pick "
-                              "the faces either side of a seam and try again.");
+                    showToast(materializr::tr("Nothing exactly coplanar left to merge \xE2\x80\x94 pick "
+                              "the faces either side of a seam and try again."));
             }
             // The picked faces are gone — they were replaced by the face they
             // merged into. Holding on to them would leave the highlight drawing
@@ -3021,11 +3154,14 @@ void Application::handleShortcuts() {
         ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
         recordSketchMutation([&] { m_sketchTool->removeLastSplinePoint(); });
     }
-    // Backspace while the Text / SVG tool is active removes the WHOLE last
-    // stamp — re-place a misjudged logo without leaving the tool.
+    // Backspace while the Text / SVG / Airfoil tool is active removes the
+    // WHOLE last stamp — re-place a misjudged logo or section without leaving
+    // the tool. (The panels all advertise Backspace, so every stamp mode has
+    // to honour it.)
     if (m_inSketchMode && m_sketchTool &&
         (m_sketchTool->getMode() == SketchToolMode::Text ||
-         m_sketchTool->getMode() == SketchToolMode::Svg) &&
+         m_sketchTool->getMode() == SketchToolMode::Svg ||
+         m_sketchTool->getMode() == SketchToolMode::Airfoil) &&
         m_sketchTool->hasLastStamp() &&
         !ImGui::GetIO().WantTextInput &&
         ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
@@ -3451,7 +3587,7 @@ void Application::handleViewCubeAction(int action) {
 
 std::string Application::projectDisplayName() const {
     if (!m_currentProjectName.empty()) return m_currentProjectName;
-    if (m_currentProjectPath.empty()) return "New project";
+    if (m_currentProjectPath.empty()) return materializr::tr("New project");
     std::string pn = m_currentProjectPath;
     auto slash = pn.find_last_of("/\\");
     if (slash != std::string::npos) pn = pn.substr(slash + 1);
@@ -4402,30 +4538,30 @@ void Application::requestClose() {
 
 void Application::renderSavePrompt() {
     if (m_showSavePrompt) {
-        ImGui::OpenPopup("Unsaved Changes");
+        ImGui::OpenPopup(materializr::tr("Unsaved Changes"));
         m_showSavePrompt = false; // OpenPopup latches; only call once per request
     }
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal(materializr::tr("Unsaved Changes"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const char* prompt;
         switch (m_postSaveAction) {
             case PostSaveAction::CloseProject:
-                prompt = "You have unsaved changes. Save before closing the project?"; break;
+                prompt = materializr::tr("You have unsaved changes. Save before closing the project?"); break;
             case PostSaveAction::OpenProject:
-                prompt = "You have unsaved changes. Save before opening another project?"; break;
+                prompt = materializr::tr("You have unsaved changes. Save before opening another project?"); break;
             default:
-                prompt = "You have unsaved changes. Save before exiting?"; break;
+                prompt = materializr::tr("You have unsaved changes. Save before exiting?"); break;
         }
         ImGui::Text("%s", prompt);
         ImGui::Separator();
-        if (ImGui::Button("Save", materializr::uiSz(100, 0))) {
+        if (ImGui::Button(materializr::tr("Save"), materializr::uiSz(100, 0))) {
             m_closeAfterSave = true;
             saveProjectQuick();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Don't Save", materializr::uiSz(100, 0))) {
+        if (ImGui::Button(materializr::tr("Don't Save"), materializr::uiSz(100, 0))) {
             if (m_postSaveAction == PostSaveAction::CloseProject) {
                 doCloseProject();
                 m_postSaveAction = PostSaveAction::None;
@@ -4440,7 +4576,7 @@ void Application::renderSavePrompt() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", materializr::uiSz(100, 0))) {
+        if (ImGui::Button(materializr::tr("Cancel"), materializr::uiSz(100, 0))) {
             m_closeAfterSave = false;
             m_pendingOpenAction = nullptr;
             m_postSaveAction = PostSaveAction::None;
@@ -6530,17 +6666,16 @@ void Application::renderSketchRecoveryPrompt() {
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextUnformatted(
-            "An unfinished sketch from your last session was found.");
-        ImGui::TextDisabled(
-            "It wasn't committed before the app closed (a crash, or a restart).");
+            materializr::tr("An unfinished sketch from your last session was found."));
+        ImGui::TextDisabled("%s", materializr::tr("It wasn't committed before the app closed (a crash, or a restart)."));
         ImGui::Spacing();
-        if (ImGui::Button("Restore it", materializr::uiSz(140, 0))) {
+        if (ImGui::Button(materializr::tr("Restore it"), materializr::uiSz(140, 0))) {
             restoreSketchDraftNow();
             m_pendingSketchRecovery = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Discard", materializr::uiSz(140, 0))) {
+        if (ImGui::Button(materializr::tr("Discard"), materializr::uiSz(140, 0))) {
             materializr::clearSketchDraft();
             m_pendingSketchRecovery = false;
             ImGui::CloseCurrentPopup();
@@ -6675,21 +6810,19 @@ void Application::renderProjectRecoveryPrompt() {
         materializr::ProjectRecoveryMeta meta;
         materializr::readProjectRecoveryMeta(meta);
         ImGui::TextUnformatted(
-            "Unsaved work from your last session was recovered.");
+            materializr::tr("Unsaved work from your last session was recovered."));
         if (!meta.projectPath.empty())
-            ImGui::TextDisabled("Project: %s", meta.projectPath.c_str());
+            ImGui::TextDisabled(materializr::tr("Project: %s"), meta.projectPath.c_str());
         else
-            ImGui::TextDisabled("An unsaved project (never written to a file).");
-        ImGui::TextDisabled("%d bodies, %d history steps.",
+            ImGui::TextDisabled("%s", materializr::tr("An unsaved project (never written to a file)."));
+        ImGui::TextDisabled(materializr::tr("%d bodies, %d history steps."),
                             meta.bodyCount, meta.stepCount);
-        ImGui::TextDisabled(
-            "Materializr didn't close cleanly (a crash, hang, or restart).");
+        ImGui::TextDisabled("%s", materializr::tr("Materializr didn't close cleanly (a crash, hang, or restart)."));
         // One snapshot per tab the dead instance had open — the summary above
         // describes the newest; all of them come back, a tab each.
         const int nOrphans = materializr::projectRecoveryOrphanCount();
         if (nOrphans > 1)
-            ImGui::TextDisabled("%d projects in total — each reopens in its "
-                                "own tab.", nOrphans);
+            ImGui::TextDisabled(materializr::tr("%d projects in total — each reopens in its own tab."), nOrphans);
         ImGui::Spacing();
         if (ImGui::Button(nOrphans > 1 ? "Restore all" : "Restore it",
                           materializr::uiSz(140, 0))) {
@@ -6698,7 +6831,7 @@ void Application::renderProjectRecoveryPrompt() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Discard", materializr::uiSz(140, 0))) {
+        if (ImGui::Button(materializr::tr("Discard"), materializr::uiSz(140, 0))) {
             // These are the dead session's orphaned snapshots — our own live
             // slot is separate and untouched. Discard means ALL of them, to
             // match the restore: leaving the rest to resurface on the next
@@ -7468,13 +7601,9 @@ void Application::run() {
                         ImGuiWindowFlags_NoFocusOnAppearing |
                         ImGuiWindowFlags_NoNav;
                     bool open = true;
-                    if (ImGui::Begin("Pick more sketches", &open, flags)) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f),
-                                           "Loft needs at least two profiles.");
-                        ImGui::TextWrapped("Ctrl-click the other sketches (or "
-                                           "their regions) in loft order — as "
-                                           "many as you like — then click Loft "
-                                           "again.");
+                    if (ImGui::Begin(materializr::tr("Pick more sketches"), &open, flags)) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s", materializr::tr("Loft needs at least two profiles."));
+                        ImGui::TextWrapped("%s", materializr::tr("Ctrl-click the other sketches (or their regions) in loft order — as many as you like — then click Loft again."));
                     }
                     ImGui::End();
                     if (!open) m_loftPickHintVisible = false;
@@ -7519,6 +7648,7 @@ void Application::run() {
             renderSectionPanel();
             renderTextToolPanel();
             renderSvgToolPanel();
+            renderAirfoilToolPanel();
             renderMirrorToolPanel();
             renderLoftPanel();
             renderBoundaryFillPanel();

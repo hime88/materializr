@@ -4,6 +4,8 @@
 #include "../core/SelectionManager.h"
 #include <imgui.h>
 #include <cstdio>
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -64,14 +66,12 @@ void StatusBar::render() {
         }
 
         // Project name first — the thing people most want to confirm.
-        ImGui::Text("Project: %s",
-                    m_projectName.empty() ? "New project"
+        ImGui::Text(materializr::tr("Project: %s"),
+                    m_projectName.empty() ? materializr::tr("New project")
                                           : m_projectName.c_str());
         ImGui::SameLine(); ImGui::Text("|"); ImGui::SameLine();
 
-        char bodiesText[64];
-        std::snprintf(bodiesText, sizeof(bodiesText), "Bodies: %d", bodyCount);
-        ImGui::Text("%s", bodiesText);
+        ImGui::Text(materializr::tr("Bodies: %d"), bodyCount);
 
         // Selection info
         ImGui::SameLine();
@@ -79,32 +79,32 @@ void StatusBar::render() {
         ImGui::SameLine();
 
         if (m_selection && m_selection->hasSelection()) {
-            const char* typeName = "None";
+            const char* typeName = materializr::tr("None");
             int count = 0;
 
             switch (m_selection->primaryType()) {
                 case SelectionType::Body:
-                    typeName = "Body";
+                    typeName = materializr::tr("Body");
                     count = m_selection->selectedBodyCount();
                     break;
                 case SelectionType::Face:
-                    typeName = "Face";
+                    typeName = materializr::tr("Face");
                     count = m_selection->selectedFaceCount();
                     break;
                 case SelectionType::Edge:
-                    typeName = "Edge";
+                    typeName = materializr::tr("Edge");
                     count = m_selection->selectedEdgeCount();
                     break;
                 case SelectionType::Vertex:
-                    typeName = "Vertex";
+                    typeName = materializr::tr("Vertex");
                     count = static_cast<int>(m_selection->getSelection().size());
                     break;
                 case SelectionType::Sketch:
-                    typeName = "Sketch";
+                    typeName = materializr::tr("Sketch");
                     count = static_cast<int>(m_selection->getSelection().size());
                     break;
                 case SelectionType::Plane:
-                    typeName = "Plane";
+                    typeName = materializr::tr("Plane");
                     count = static_cast<int>(m_selection->getSelection().size());
                     break;
                 default:
@@ -112,10 +112,10 @@ void StatusBar::render() {
             }
 
             char selText[128];
-            std::snprintf(selText, sizeof(selText), "Selection: %s (%d)", typeName, count);
+            std::snprintf(selText, sizeof(selText), materializr::tr("Selection: %s (%d)"), typeName, count);
             ImGui::Text("%s", selText);
         } else {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Selection: None");
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("Selection: None"));
         }
 
         // Current tool
@@ -124,7 +124,7 @@ void StatusBar::render() {
         ImGui::SameLine();
 
         char toolText[128];
-        std::snprintf(toolText, sizeof(toolText), "Tool: %s", m_currentTool.c_str());
+        std::snprintf(toolText, sizeof(toolText), materializr::tr("Tool: %s"), m_currentTool.c_str());
         ImGui::Text("%s", toolText);
 
         // Sketch mode indicator
@@ -132,7 +132,7 @@ void StatusBar::render() {
             ImGui::SameLine();
             ImGui::Text("|");
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.3f, 0.85f, 0.4f, 1.0f), "[SKETCH MODE]");
+            ImGui::TextColored(ImVec4(0.3f, 0.85f, 0.4f, 1.0f), "%s", materializr::tr("[SKETCH MODE]"));
         }
 
         // Transient message (right-aligned)

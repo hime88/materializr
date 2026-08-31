@@ -5,6 +5,8 @@
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
 #include <imgui.h>
+#include "../i18n.h"
+#include "../i18n.h"
 
 MirrorOp::MirrorOp() = default;
 
@@ -109,21 +111,21 @@ std::string MirrorOp::description() const {
 }
 
 void MirrorOp::renderProperties() {
-    ImGui::Text("Mirror");
+    ImGui::Text("%s", materializr::tr("Mirror"));
     ImGui::Separator();
 
     const char* planeItems[] = { "XY", "XZ", "YZ", "Custom" };
     int planeIndex = static_cast<int>(m_plane);
-    if (ImGui::Combo("Mirror Plane", &planeIndex, planeItems, 4)) {
+    if (ImGui::Combo(materializr::tr("Mirror Plane"), &planeIndex, planeItems, 4)) {
         m_plane = static_cast<MirrorPlane>(planeIndex);
     }
 
-    ImGui::Checkbox("Keep Original", &m_keepOriginal);
+    ImGui::Checkbox(materializr::tr("Keep Original"), &m_keepOriginal);
 
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 
     if (m_mirroredBodyId >= 0) {
-        ImGui::Text("Mirrored body ID: %d", m_mirroredBodyId);
+        ImGui::Text(materializr::tr("Mirrored body ID: %d"), m_mirroredBodyId);
     }
 }
 

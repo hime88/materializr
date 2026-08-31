@@ -1,5 +1,7 @@
 #include "ThemeManager.h"
 #include <imgui.h>
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -32,9 +34,9 @@ void ThemeManager::apply() {
 
 bool ThemeManager::renderSelector() {
     int current = static_cast<int>(m_theme);
-    const char* items[] = { "Dark", "Light" };
+    const char* items[] = { materializr::tr("Dark"), materializr::tr("Light") };
 
-    if (ImGui::Combo("Theme", &current, items, 2)) {
+    if (ImGui::Combo(materializr::tr("Theme"), &current, items, 2)) {
         setTheme(static_cast<Theme>(current));
         return true;
     }

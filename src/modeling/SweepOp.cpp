@@ -5,6 +5,8 @@
 #include <GProp_GProps.hxx>
 #include <TopoDS.hxx>
 #include <imgui.h>
+#include "../i18n.h"
+#include "../i18n.h"
 
 SweepOp::SweepOp() = default;
 
@@ -63,23 +65,23 @@ std::string SweepOp::description() const {
 }
 
 void SweepOp::renderProperties() {
-    ImGui::Text("Sweep");
+    ImGui::Text("%s", materializr::tr("Sweep"));
     ImGui::Separator();
 
     if (m_profile.IsNull()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No profile selected");
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", materializr::tr("No profile selected"));
     } else {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Profile set");
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", materializr::tr("Profile set"));
     }
 
     if (m_path.IsNull()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No path selected");
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", materializr::tr("No path selected"));
     } else {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Path set");
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", materializr::tr("Path set"));
     }
 
     ImGui::Separator();
-    ImGui::TextWrapped("Select a profile (face or wire) and a path (wire) to sweep along.");
+    ImGui::TextWrapped("%s", materializr::tr("Select a profile (face or wire) and a path (wire) to sweep along."));
 }
 
 OperationDiff SweepOp::captureDiff() const {

@@ -44,6 +44,8 @@
 #include <gp_Pln.hxx>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace {
 
@@ -526,13 +528,13 @@ std::string ProjectSketchOp::description() const {
 }
 
 void ProjectSketchOp::renderProperties() {
-    ImGui::Text("Projection");
+    ImGui::Text("%s", materializr::tr("Projection"));
     ImGui::Separator();
-    ImGui::Text("Mode: %s",
+    ImGui::Text(materializr::tr("Mode: %s"),
                 m_mode == Mode::Engrave ? "Engrave" : "Emboss");
-    materializr::inputNumber("Depth (mm)", &m_depth, 0.1, 1.0, "%.2f");
-    ImGui::Text("Sketch ID: %d", m_sketchId);
-    ImGui::Text("Body ID: %d", m_bodyId);
+    materializr::inputNumber(materializr::tr("Depth (mm)"), &m_depth, 0.1, 1.0, "%.2f");
+    ImGui::Text(materializr::tr("Sketch ID: %d"), m_sketchId);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 std::string ProjectSketchOp::serializeParams() const {

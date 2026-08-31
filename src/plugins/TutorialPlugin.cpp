@@ -18,17 +18,21 @@
 // way until the user reopens it.
 
 #include "../plugin/PluginMacro.h"
+#include "../i18n.h"
 #include "../plugin/PluginContext.h"
 #include "../app/ui_layout_bridge.h"
 #include "../touch_mode.h"
+#include "../i18n.h"
 #include "../ui_scale.h"
 
 #include <imgui.h>
 #include <SDL.h>
 #include <algorithm>
 #include <cfloat>
+#include <cstdio>
 #include <fstream>
 #include <string>
+#include "../i18n.h"
 
 namespace {
 
@@ -203,6 +207,7 @@ const LayoutCard kLayouts[3] = {
 // --- State (process-lifetime; the plugin is a singleton overlay) -------------
 bool g_open = false;
 bool g_onPicker = false;   // the layout-picker page (before step 1)
+bool g_onLanguage = false; // the language page (before the layout picker)
 int  g_step = 0;
 bool g_firstRunChecked = false;
 
@@ -228,17 +233,66 @@ void markSeen() {
     if (f) f << "1\n";
 }
 
+// The LANGUAGE page, shown before everything else on a first run where no
+// language has been chosen. It has to be first and it has to be readable
+// without already knowing the UI language, so:
+//   * every language is listed in ITS OWN name ("Espanol", not "Spanish");
+//   * tapping one switches the whole UI live, so the confirmation that you
+//     picked right is the page itself changing under your finger;
+//   * the only prose is one line, and it is translated into all of them.
+// Reachable afterwards from Settings > Appearance, so a mis-tap is not a trap.
+void renderLanguagePage(bool& close) {
+    using namespace materializr;
+    ImGui::TextDisabled("%s", materializr::tr("Language"));
+    ImGui::SeparatorText(materializr::tr("Choose your language"));
+    ImGui::Spacing();
+
+    const int current = currentLanguageIndex();
+    for (int i = 0; i < languageCount(); ++i) {
+        ImGui::PushID(i);
+        const bool active = (current == i);
+        // Native name first, English name after, so the list is navigable
+        // whichever of the two you happen to read.
+        char label[96];
+        std::snprintf(label, sizeof(label), "%s", languageNativeName(i));
+        if (ImGui::RadioButton(label, active)) requestLanguage(i);
+        if (i != 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)", languageEnglishName(i));
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    // Honest about the state of the work: the tool and menu names are
+    // translated, the long help text mostly is not. Better to say so than to
+    // let someone conclude the translation is broken.
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", materializr::tr("Menus and tool names are translated. "
+                                 "Some longer help text is still English."));
+    ImGui::PopTextWrapPos();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (ImGui::Button(materializr::tr("Continue"), materializr::uiSz(110, 0)))
+        g_onLanguage = false;
+    const float skipW = uiW(80.0f);
+    const float rightX = ImGui::GetWindowContentRegionMax().x - skipW;
+    if (rightX > ImGui::GetCursorPosX()) ImGui::SameLine(rightX);
+    else                                 ImGui::SameLine();
+    if (ImGui::Button(materializr::tr("Skip"), materializr::uiSz(80, 0))) close = true;
+}
+
 // The picker page: three selectable cards. Tapping one switches the layout
 // LIVE (the app behind the modal is the preview). Continue starts the tour.
 void renderLayoutPicker(bool& close) {
     using namespace materializr;
-    ImGui::TextDisabled("First, make it yours");
-    ImGui::SeparatorText("Choose your workspace");
+    ImGui::TextDisabled("%s", materializr::tr("First, make it yours"));
+    ImGui::SeparatorText(materializr::tr("Choose your workspace"));
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(
-        "Materializr has three interface styles. Tap one to try it — the app "
-        "behind this window switches instantly, so you can see the real thing. "
-        "You can change your mind anytime in Settings > Appearance.");
+        materializr::tr("Materializr has three interface styles. Tap one to try it — the app behind this window switches instantly, so you can see the real thing. You can change your mind anytime in Settings > Appearance."));
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
@@ -250,7 +304,7 @@ void renderLayoutPicker(bool& close) {
         ImVec2 pad = ImGui::GetStyle().FramePadding;
         const float wrapW = ImGui::GetContentRegionAvail().x - 2.0f * pad.x
                             - uiW(28.0f);
-        ImVec2 blurbSz = ImGui::CalcTextSize(kLayouts[i].blurb, nullptr,
+        ImVec2 blurbSz = ImGui::CalcTextSize(materializr::tr(kLayouts[i].blurb), nullptr,
                                              false, wrapW);
         const float cardH = ImGui::GetTextLineHeightWithSpacing() +
                             blurbSz.y + 3.0f * pad.y;
@@ -270,12 +324,12 @@ void renderLayoutPicker(bool& close) {
             dl->AddCircleFilled(c, uiW(3.2f),
                                 ImGui::GetColorU32(ImGuiCol_CheckMark));
         ImVec2 txt(tl.x + pad.x + uiW(22.0f), tl.y + pad.y);
-        dl->AddText(txt, ImGui::GetColorU32(ImGuiCol_Text), kLayouts[i].name);
+        dl->AddText(txt, ImGui::GetColorU32(ImGuiCol_Text), materializr::tr(kLayouts[i].name));
         ImVec2 blurbPos(txt.x + uiW(6.0f),
                         txt.y + ImGui::GetTextLineHeightWithSpacing());
         dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), blurbPos,
                     ImGui::GetColorU32(ImGuiCol_TextDisabled),
-                    kLayouts[i].blurb, nullptr, wrapW);
+                    materializr::tr(kLayouts[i].blurb), nullptr, wrapW);
         ImGui::PopID();
         ImGui::Spacing();
     }
@@ -284,7 +338,7 @@ void renderLayoutPicker(bool& close) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    if (ImGui::Button("Continue", materializr::uiSz(110, 0))) {
+    if (ImGui::Button(materializr::tr("Continue"), materializr::uiSz(110, 0))) {
         g_onPicker = false;
         g_step = 0;
     }
@@ -292,7 +346,7 @@ void renderLayoutPicker(bool& close) {
     const float rightX = ImGui::GetWindowContentRegionMax().x - skipW;
     if (rightX > ImGui::GetCursorPosX()) ImGui::SameLine(rightX);
     else                                 ImGui::SameLine();
-    if (ImGui::Button("Skip", materializr::uiSz(80, 0))) close = true;
+    if (ImGui::Button(materializr::tr("Skip"), materializr::uiSz(80, 0))) close = true;
 }
 
 void renderTutorial(materializr::PluginContext&) {
@@ -301,7 +355,14 @@ void renderTutorial(materializr::PluginContext&) {
     // First overlay frame: auto-open on a fresh install, otherwise stay hidden.
     if (!g_firstRunChecked) {
         g_firstRunChecked = true;
-        if (!tutorialSeen()) { g_open = true; g_onPicker = true; g_step = 0; }
+        if (!tutorialSeen()) {
+            g_open = true;
+            g_onPicker = true;
+            g_step = 0;
+            // Only ASK when the user has never chosen. Someone who already set
+            // a language (or reopens the tour later) goes straight to layout.
+            g_onLanguage = (materializr::currentLanguageIndex() < 0);
+        }
     }
     if (!g_open) return;
 
@@ -323,9 +384,17 @@ void renderTutorial(materializr::PluginContext&) {
                                         ImVec2(FLT_MAX, vp->WorkSize.y * 0.92f));
 
     bool keepOpen = true;
-    if (ImGui::Begin("Getting Started###Tutorial", &keepOpen,
+    if (ImGui::Begin(materializr::tr("Getting Started###Tutorial"), &keepOpen,
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoMove)) {
+        if (g_onLanguage) {
+            bool wantClose = false;
+            renderLanguagePage(wantClose);
+            if (wantClose) { ImGui::End(); close(); return; }
+            ImGui::End();
+            if (!keepOpen) close();
+            return;
+        }
         if (g_onPicker) {
             bool wantClose = false;
             renderLayoutPicker(wantClose);
@@ -335,7 +404,7 @@ void renderTutorial(materializr::PluginContext&) {
             return;
         }
 
-        ImGui::TextDisabled("Step %d of %d", g_step + 1, kStepCount);
+        ImGui::TextDisabled(materializr::tr("Step %d of %d"), g_step + 1, kStepCount);
         ImGui::SeparatorText(s.title);
 
         ImGui::PushTextWrapPos(0.0f); // wrap at the window's right edge
@@ -350,7 +419,7 @@ void renderTutorial(materializr::PluginContext&) {
                 ImGui::Spacing();
                 ImGui::PushStyleColor(ImGuiCol_Text,
                                       ImVec4(0.55f, 0.90f, 0.70f, 1.0f));
-                ImGui::TextWrapped("In this layout:  %s", s.where[li]);
+                ImGui::TextWrapped(materializr::tr("In this layout:  %s"), s.where[li]);
                 ImGui::PopStyleColor();
             }
         }
@@ -379,7 +448,7 @@ void renderTutorial(materializr::PluginContext&) {
         ImGui::Spacing();
 
         const bool last = (g_step == kStepCount - 1);
-        if (ImGui::Button("Back", uiSz(80, 0))) {
+        if (ImGui::Button(materializr::tr("Back"), uiSz(80, 0))) {
             if (g_step > 0) g_step--;
             else            g_onPicker = true;   // back to the layout picker
         }

@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include "../i18n.h"
 
 namespace {
 
@@ -120,7 +121,7 @@ public:
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize);
 
-        ImGui::Text("Distance (mm)");
+        ImGui::Text("%s", materializr::tr("Distance (mm)"));
         ImGui::Separator();
 
         if (m_inputFocus) {
@@ -145,7 +146,7 @@ public:
         }
 
         ImGui::SameLine();
-        ImGui::Text("mm");
+        ImGui::Text("%s", materializr::tr("mm"));
 
         if (materializr::stepperRow("ppStep", &m_distance,
                                     /*allowNegative=*/true, -50.0f, 50.0f)) {

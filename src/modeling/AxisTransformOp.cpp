@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <cstdio>
 #include <cstdlib>
+#include "../i18n.h"
+#include "../i18n.h"
 
 bool AxisTransformOp::execute(Document& doc) {
     for (const auto& e : m_entries) {
@@ -27,9 +29,8 @@ std::string AxisTransformOp::description() const {
 
 void AxisTransformOp::renderProperties() {
     ImGui::TextUnformatted(m_label.c_str());
-    ImGui::Text("Axes affected: %d", static_cast<int>(m_entries.size()));
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                       "Construction-axis transform (undo/redo only).");
+    ImGui::Text(materializr::tr("Axes affected: %d"), static_cast<int>(m_entries.size()));
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", materializr::tr("Construction-axis transform (undo/redo only)."));
 }
 
 std::string AxisTransformOp::serializeParams() const {

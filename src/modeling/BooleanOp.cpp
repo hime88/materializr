@@ -17,6 +17,8 @@
 #include <cstdlib>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 BooleanOp::BooleanOp() = default;
 
@@ -310,12 +312,12 @@ std::string BooleanOp::description() const {
 }
 
 void BooleanOp::renderProperties() {
-    ImGui::Text("Boolean Operation");
+    ImGui::Text("%s", materializr::tr("Boolean Operation"));
     ImGui::Separator();
 
     const char* modeItems[] = { "Union", "Subtract", "Intersect" };
     int modeIndex = static_cast<int>(m_mode);
-    if (ImGui::Combo("Mode", &modeIndex, modeItems, 3)) {
+    if (ImGui::Combo(materializr::tr("Mode"), &modeIndex, modeItems, 3)) {
         m_mode = static_cast<BooleanMode>(modeIndex);
     }
 

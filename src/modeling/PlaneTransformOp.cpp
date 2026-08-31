@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <cstdio>
 #include <cstdlib>
+#include "../i18n.h"
+#include "../i18n.h"
 
 bool PlaneTransformOp::execute(Document& doc) {
     // setPlane with an id that isn't present is a safe no-op (it just finds
@@ -30,9 +32,8 @@ std::string PlaneTransformOp::description() const {
 
 void PlaneTransformOp::renderProperties() {
     ImGui::TextUnformatted(m_label.c_str());
-    ImGui::Text("Planes affected: %d", static_cast<int>(m_entries.size()));
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                       "Construction-plane transform (undo/redo only).");
+    ImGui::Text(materializr::tr("Planes affected: %d"), static_cast<int>(m_entries.size()));
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", materializr::tr("Construction-plane transform (undo/redo only)."));
 }
 
 std::string PlaneTransformOp::serializeParams() const {

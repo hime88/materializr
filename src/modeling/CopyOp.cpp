@@ -4,6 +4,7 @@
 #include <gp_Vec.hxx>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
 
 CopyOp::CopyOp() = default;
 
@@ -68,18 +69,18 @@ std::string CopyOp::description() const {
 }
 
 void CopyOp::renderProperties() {
-    ImGui::Text("Duplicate");
+    ImGui::Text("%s", materializr::tr("Duplicate"));
     ImGui::Separator();
 
     materializr::inputNumberInt("Source Body ID", &m_sourceBodyId);
 
-    ImGui::Text("Offset");
+    ImGui::Text("%s", materializr::tr("Offset"));
     materializr::inputNumber("X", &m_dx, 0.1, 1.0, "%g");
     materializr::inputNumber("Y", &m_dy, 0.1, 1.0, "%g");
     materializr::inputNumber("Z", &m_dz, 0.1, 1.0, "%g");
 
     if (m_createdBodyId >= 0) {
-        ImGui::Text("Created body ID: %d", m_createdBodyId);
+        ImGui::Text(materializr::tr("Created body ID: %d"), m_createdBodyId);
     }
 }
 

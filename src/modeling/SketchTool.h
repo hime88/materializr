@@ -2,6 +2,7 @@
 #include "Sketch.h"
 #include "SketchSolver.h"
 #include "SvgImport.h"
+#include "AirfoilImport.h"
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <functional>
@@ -11,7 +12,11 @@
 
 namespace materializr {
 
-enum class SketchToolMode { None, Select, Line, Circle, Rectangle, Arc, Spline, Polygon, Trim, Text, Svg, Mirror, Dimension };
+// APPEND ONLY. Toolbar mirrors the active tool as this enum's raw INDEX
+// (Application::setActiveSketchMode) and the sketch toolbar hardcodes those
+// indices, so inserting a mode in the middle silently highlights the wrong
+// button -- Dimension would become 13 while the button still tests 12.
+enum class SketchToolMode { None, Select, Line, Circle, Rectangle, Arc, Spline, Polygon, Trim, Text, Svg, Mirror, Dimension, Airfoil };
 
 enum class DimEntityKind { None, Point, Line, Circle, Arc };
 struct DimPick { DimEntityKind kind = DimEntityKind::None; int id = -1; };
@@ -175,6 +180,16 @@ public:
     const std::vector<std::vector<glm::vec2>>& getTextPreviewLoops() const {
         return m_textPrevLoops;
     }
+    // Airfoil placement (shares the Text/SVG placement frame: same angle and
+    // stamp/undo machinery). The profile is chord-normalised; chord is the
+    // real-world size in mm, and the click lands on the LEADING EDGE.
+    void setAirfoil(AirfoilProfile prof) { m_airfoil = std::move(prof); }
+    const AirfoilProfile& getAirfoil() const { return m_airfoil; }
+    void  setAirfoilChord(float mm) { m_airfoilChord = (mm < 0.1f) ? 0.1f : mm; }
+    float getAirfoilChord() const { return m_airfoilChord; }
+    void setAirfoilAnchor(AirfoilAnchor a) { m_airfoilAnchor = a; }
+    AirfoilAnchor getAirfoilAnchor() const { return m_airfoilAnchor; }
+
     // SVG placement (shares the Text tool's placement frame: same angle,
     // same cursor preview box, same fromText suppression on the result).
     void setSvgPaths(SvgPaths svg) { m_svgPaths = std::move(svg); }
@@ -472,6 +487,7 @@ private:
     void handlePolygonTool(glm::vec2 pos);
     void handleTextTool(glm::vec2 pos);
     void handleSvgTool(glm::vec2 pos);
+    void handleAirfoilTool(glm::vec2 pos);
     // Collapse a directional-inference result onto the axis (+ grid) when
     // it's within a few degrees of horizontal/vertical — crooked-line guard.
     glm::vec2 rectifyNearAxis(glm::vec2 target) const;
@@ -517,6 +533,9 @@ private:
 
     // SVG placement state (see SvgImport.h)
     SvgPaths m_svgPaths;
+    AirfoilProfile m_airfoil;
+    float m_airfoilChord = 100.0f;  // mm, a typical model-wing root chord
+    AirfoilAnchor m_airfoilAnchor = AirfoilAnchor::LeadingEdge;
     float m_svgWidth = 50.0f; // target artwork width, mm
 
     // One entry per Text/SVG stamp (newest last), each holding that stamp's
@@ -525,7 +544,8 @@ private:
     // through every stamp to the original, not just the most recent one.
     // Cleared on setMode so each tool session starts fresh.
     std::vector<std::vector<int>> m_stampStack;
-    void recordStamp(size_t pointsBefore, size_t linesBefore);
+    void recordStamp(size_t pointsBefore, size_t linesBefore,
+                     size_t splinesBefore = static_cast<size_t>(-1));
 
     // --- Interactive Mirror state ---
     bool m_mirrorActive = false;

@@ -2,6 +2,7 @@
 #include "core/Verbose.h"
 
 #include <OSD.hxx>
+#include <Standard_Failure.hxx>
 
 #include <cstddef>
 #include <cstdio>
@@ -170,8 +171,26 @@ int main(int argc, char* argv[]) {
     try {
         materializr::Application app(opts.safeMode, opts.uiScale);
         app.run();
+    } catch (const Standard_Failure& e) {
+        // OCCT's exceptions do NOT derive from std::exception, so the catch
+        // below never saw them: startup on a machine with no usable OpenGL
+        // threw out of Application's constructor and the process died with no
+        // message at all -- exit 0xE06D7363 on Windows, silence on Linux.
+        // That is what winget's headless validation sandbox reports every
+        // release, and what a user with a broken driver sees.
+        const char* msg = e.GetMessageString();
+        std::cerr << "Fatal error: " << (msg && *msg ? msg : e.DynamicType()->Name())
+                  << "\n\nThis is usually a graphics-driver problem: Materializr "
+                     "needs OpenGL 3.3.\nTry --safe-mode, or update your graphics "
+                     "drivers." << std::endl;
+        return 1;
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
+        return 1;
+    } catch (...) {
+        // Last resort: something threw that is neither kind. Still better than
+        // an exit code nobody can read.
+        std::cerr << "Fatal error: unknown exception during startup." << std::endl;
         return 1;
     }
     return 0;

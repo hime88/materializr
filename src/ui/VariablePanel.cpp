@@ -1,4 +1,5 @@
 #include "UiTheme.h"
+#include "../i18n.h"
 #include "VariablePanel.h"
 #include "../core/VariableManager.h"
 #include <imgui.h>
@@ -6,6 +7,8 @@
 #include <cstdio>
 #include <vector>
 #include <algorithm>
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -18,10 +21,10 @@ void VariablePanel::setVariableManager(VariableManager* mgr) {
 bool VariablePanel::render() {
     bool changed = false;
 
-    ImGui::Begin("Variables");
+    ImGui::Begin(materializr::tr("Variables"));
 
     if (!m_manager) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No variable manager");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No variable manager"));
         ImGui::End();
         return false;
     }
@@ -42,9 +45,9 @@ bool VariablePanel::render() {
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_SizingStretchProp)) {
 
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Expression", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn(materializr::tr("Name"), ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn(materializr::tr("Expression"), ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(materializr::tr("Value"), ImGuiTableColumnFlags_WidthFixed, 80.0f);
             ImGui::TableSetupColumn("##Del", ImGuiTableColumnFlags_WidthFixed, 30.0f);
             ImGui::TableHeadersRow();
 
@@ -91,7 +94,7 @@ bool VariablePanel::render() {
                     std::snprintf(valText, sizeof(valText), "%.4g", var.value);
                     ImGui::Text("%s", valText);
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "ERR");
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", materializr::tr("ERR"));
                     if (ImGui::IsItemHovered() && !var.error.empty()) {
                         ImGui::SetTooltip("%s", var.error.c_str());
                     }
@@ -115,13 +118,13 @@ bool VariablePanel::render() {
             ImGui::EndTable();
         }
     } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No variables defined");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No variables defined"));
     }
 
     // Add Variable section
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextColored(materializr::accentText(), "Add Variable");
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Add Variable"));
 
     ImGui::SetNextItemWidth(100.0f);
     ImGui::InputText("##NewName", m_newName, sizeof(m_newName));
@@ -132,7 +135,7 @@ bool VariablePanel::render() {
     ImGui::InputText("##NewExpr", m_newExpr, sizeof(m_newExpr));
     ImGui::SameLine();
 
-    if (ImGui::Button("Add")) {
+    if (ImGui::Button(materializr::tr("Add"))) {
         if (m_newName[0] != '\0' && m_newExpr[0] != '\0') {
             if (m_manager->set(m_newName, m_newExpr)) {
                 m_manager->recalculate();

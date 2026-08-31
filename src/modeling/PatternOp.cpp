@@ -8,6 +8,9 @@
 #include <imgui.h>
 #include <cmath>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -202,12 +205,12 @@ bool PatternOp::rehydrateFromReload(const ReloadState& state, Document& /*doc*/)
 }
 
 void PatternOp::renderProperties() {
-    ImGui::Text("Pattern");
+    ImGui::Text("%s", materializr::tr("Pattern"));
     ImGui::Separator();
 
     const char* typeItems[] = { "Linear", "Circular" };
     int typeIndex = static_cast<int>(m_type);
-    if (ImGui::Combo("Type", &typeIndex, typeItems, 2)) {
+    if (ImGui::Combo(materializr::tr("Type"), &typeIndex, typeItems, 2)) {
         m_type = static_cast<PatternType>(typeIndex);
     }
 
@@ -216,21 +219,21 @@ void PatternOp::renderProperties() {
         m_count = 2;
     }
 
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 
     if (m_type == PatternType::Linear) {
-        materializr::inputNumber("Spacing X", &m_spacingX, 0.1, 1.0, "%g");
-        materializr::inputNumber("Spacing Y", &m_spacingY, 0.1, 1.0, "%g");
-        materializr::inputNumber("Spacing Z", &m_spacingZ, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Spacing X"), &m_spacingX, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Spacing Y"), &m_spacingY, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Spacing Z"), &m_spacingZ, 0.1, 1.0, "%g");
     } else {
-        materializr::inputNumber("Axis X", &m_axisX, 0.1, 1.0, "%g");
-        materializr::inputNumber("Axis Y", &m_axisY, 0.1, 1.0, "%g");
-        materializr::inputNumber("Axis Z", &m_axisZ, 0.1, 1.0, "%g");
-        materializr::inputNumber("Total Angle", &m_totalAngle, 1.0, 15.0, "%.1f");
+        materializr::inputNumber(materializr::tr("Axis X"), &m_axisX, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Axis Y"), &m_axisY, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Axis Z"), &m_axisZ, 0.1, 1.0, "%g");
+        materializr::inputNumber(materializr::tr("Total Angle"), &m_totalAngle, 1.0, 15.0, "%.1f");
     }
 
     if (!m_createdBodyIds.empty()) {
-        ImGui::Text("Created %d copies", static_cast<int>(m_createdBodyIds.size()));
+        ImGui::Text(materializr::tr("Created %d copies"), static_cast<int>(m_createdBodyIds.size()));
     }
 }
 

@@ -35,6 +35,12 @@
 #include <memory>  // make_unique (DeleteOp)
 #include <set>
 #include <string>
+#include "../../../i18n.h"
+#include "../../../i18n.h"
+#include "../../../i18n.h"
+#include "../../../i18n.h"
+#include "../../../i18n.h"
+#include "../../../i18n.h"
 
 namespace materializr {
 
@@ -151,7 +157,7 @@ void Application::renderImTouchLayout() {
         // Menu box.
         if (touchui::iconButton("menu", MZ_ICON_MENU_BARS, bh))
             ImGui::OpenPopup("##TouchOverflow");
-        tip("Menu: file, edit, view, help and settings");
+        tip(materializr::tr("Menu: file, edit, view, help and settings"));
         renderTouchOverflowPopup();
         ImGui::SameLine(0.0f, 8.0f * s);
 
@@ -215,11 +221,10 @@ void Application::renderImTouchLayout() {
         const bool showMulti = !m_inSketchMode ||
             (m_sketchTool && m_sketchTool->getMode() == SketchToolMode::Select);
         if (showMulti) {
-            if (touchui::pillButton("multi", MZ_ICON_SELECT, "Multi",
+            if (touchui::pillButton("multi", MZ_ICON_SELECT, materializr::tr("Multi"),
                                     m_multiSelectToggle))
                 m_multiSelectToggle = !m_multiSelectToggle;
-            tip("Multi-select: add taps to the current selection\n"
-                "(the touch equivalent of holding Ctrl)");
+            tip(materializr::tr("Multi-select: add taps to the current selection\n(the touch equivalent of holding Ctrl)"));
             ImGui::SameLine(0.0f, 8.0f * s);
         }
         // Inference level, in sketch mode — the same live cycle the modern
@@ -239,11 +244,9 @@ void Application::renderImTouchLayout() {
                 case SketchTool::InferenceLevel::Off:     infLbl = "Off";     break;
                 case SketchTool::InferenceLevel::Max:     infLbl = "Max";     break;
             }
-            if (touchui::twoRowButton("inflvl", "Inference", infLbl))
+            if (touchui::twoRowButton("inflvl", materializr::tr("Inference"), infLbl))
                 handleToolAction(static_cast<int>(ToolAction::SketchCycleInference));
-            tip("Sketch inference level (snapping / guides)\n"
-                "Tap to cycle: Full \xE2\x86\x92 Reduced \xE2\x86\x92 Off \xE2\x86\x92 Max\n"
-                "Max widens the catch ranges for fingertips.");
+            tip(materializr::tr("Sketch inference level (snapping / guides)\nTap to cycle: Full \xE2\x86\x92 Reduced \xE2\x86\x92 Off \xE2\x86\x92 Max\nMax widens the catch ranges for fingertips."));
             ImGui::SameLine(0.0f, 8.0f * s);
         }
         // Snap-to-grid — the corner square's im-touch home (renderSnapWidget
@@ -267,19 +270,19 @@ void Application::renderImTouchLayout() {
             m_imTouchTree = !m_imTouchTree;
             saveAppSettings();
         }
-        tip(m_imTouchTree ? "Hide the model tree"
-                          : "Show the model tree (bodies, sketches, construction)");
+        tip(m_imTouchTree ? materializr::tr("Hide the model tree")
+                          : materializr::tr("Show the model tree (bodies, sketches, construction)"));
         ImGui::SameLine(0.0f, 8.0f * s);
         const bool histLocked = anyInteractivePreviewActive();
         ImGui::BeginDisabled(histLocked || !touchCanUndo());
         if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) touchUndo();
         ImGui::EndDisabled();
-        tip("Undo (in a sketch: backs out the in-progress shape first)");
+        tip(materializr::tr("Undo (in a sketch: backs out the in-progress shape first)"));
         if (materializr::touchMode()) {
             ImGui::SameLine(0.0f, 8.0f * s);
             if (touchui::iconButton("kb", MZ_ICON_KEYBOARD, bh))
                 m_softKeyboardForced = !m_softKeyboardForced;
-            tip("Toggle the on-screen keyboard");
+            tip(materializr::tr("Toggle the on-screen keyboard"));
         }
         // (History has its own bottom toggle; the ⋯ menu lives on the
         // top-left chip.)
@@ -405,9 +408,9 @@ void Application::renderImTouchLayout() {
                 }
                 if (act.rightClicked) ImGui::OpenPopup("bodyCtx");
                 if (ImGui::BeginPopup("bodyCtx")) {
-                    if (ImGui::MenuItem("Rename"))
+                    if (ImGui::MenuItem(materializr::tr("Rename")))
                         startRename(id, m_document->getBodyName(id));
-                    if (ImGui::MenuItem("Delete")) {
+                    if (ImGui::MenuItem(materializr::tr("Delete"))) {
                         if (m_history) {
                             auto op = std::make_unique<DeleteOp>();
                             op->setBodyId(id);
@@ -418,9 +421,9 @@ void Application::renderImTouchLayout() {
                         if (m_selection) m_selection->clear();
                         gone = true;
                     }
-                    if (!gone && ImGui::BeginMenu("Move to folder")) {
+                    if (!gone && ImGui::BeginMenu(materializr::tr("Move to folder"))) {
                         if (m_document->getBodyFolder(id) >= 0 &&
-                            ImGui::MenuItem("(root — no folder)")) {
+                            ImGui::MenuItem(materializr::tr("(root — no folder)"))) {
                             m_document->setBodyFolder(id, -1);
                             markDirty();
                         }
@@ -430,7 +433,7 @@ void Application::renderImTouchLayout() {
                                 markDirty();
                             }
                         ImGui::Separator();
-                        if (ImGui::MenuItem("New folder…")) {
+                        if (ImGui::MenuItem(materializr::tr("New folder…"))) {
                             m_imTouchNewFolderBodies = { id };
                             m_imTouchNewFolderName[0] = '\0';
                             m_imTouchNewFolderOpen = true;
@@ -492,10 +495,10 @@ void Application::renderImTouchLayout() {
                         if (fact.rightClicked) ImGui::OpenPopup("folderCtx");
                         bool folderGone = false;
                         if (ImGui::BeginPopup("folderCtx")) {
-                            if (ImGui::MenuItem("Rename"))
+                            if (ImGui::MenuItem(materializr::tr("Rename")))
                                 startRename(2000000 + fid,
                                             m_document->getFolderName(fid));
-                            if (ImGui::MenuItem("Delete folder (keeps bodies)")) {
+                            if (ImGui::MenuItem(materializr::tr("Delete folder (keeps bodies)"))) {
                                 m_document->removeFolder(fid);
                                 markDirty();
                                 folderGone = true;
@@ -548,10 +551,10 @@ void Application::renderImTouchLayout() {
                             // silently re-loses the geometry the mid-edit save
                             // just protected.
                             bool isBeingDrawn = m_inSketchMode && id == m_activeSketchId;
-                            if (ImGui::MenuItem("Rename", nullptr, false, !isBeingDrawn))
+                            if (ImGui::MenuItem(materializr::tr("Rename"), nullptr, false, !isBeingDrawn))
                                 startRename(1000000 + id,
                                             m_document->getSketchName(id));
-                            if (ImGui::MenuItem("Delete", nullptr, false, !isBeingDrawn)) {
+                            if (ImGui::MenuItem(materializr::tr("Delete"), nullptr, false, !isBeingDrawn)) {
                                 m_document->removeSketch(id);
                                 if (m_selection) m_selection->clear();
                                 sgone = true;
@@ -591,9 +594,9 @@ void Application::renderImTouchLayout() {
                         }
                         if (act.rightClicked) ImGui::OpenPopup("planeCtx");
                         if (ImGui::BeginPopup("planeCtx")) {
-                            if (ImGui::MenuItem("Rename"))
+                            if (ImGui::MenuItem(materializr::tr("Rename")))
                                 startRename(4000000 + id, label);
-                            if (ImGui::MenuItem("Delete")) {
+                            if (ImGui::MenuItem(materializr::tr("Delete"))) {
                                 m_document->removePlane(id);
                                 if (m_selection) m_selection->clear();
                                 cgone = true;
@@ -622,9 +625,9 @@ void Application::renderImTouchLayout() {
                         }
                         if (act.rightClicked) ImGui::OpenPopup("axisCtx");
                         if (ImGui::BeginPopup("axisCtx")) {
-                            if (ImGui::MenuItem("Rename"))
+                            if (ImGui::MenuItem(materializr::tr("Rename")))
                                 startRename(5000000 + id, label);
-                            if (ImGui::MenuItem("Delete")) {
+                            if (ImGui::MenuItem(materializr::tr("Delete"))) {
                                 m_document->removeAxis(id);
                                 if (m_selection) m_selection->clear();
                                 cgone = true;
@@ -637,7 +640,7 @@ void Application::renderImTouchLayout() {
                 }
             }
             if (!any)
-                ImGui::TextColored(touchui::textDim(), "Nothing here yet");
+                ImGui::TextColored(touchui::textDim(), "%s", materializr::tr("Nothing here yet"));
         }
         ImGui::End();
 
@@ -650,7 +653,7 @@ void Application::renderImTouchLayout() {
         }
         if (ImGui::BeginPopupModal("Rename##imtouch", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("Name:");
+            ImGui::TextUnformatted(materializr::tr("Name:"));
             if (m_imTouchRenameFocus) {
                 ImGui::SetKeyboardFocusHere();
                 m_imTouchRenameFocus = false;
@@ -660,9 +663,9 @@ void Application::renderImTouchLayout() {
                 "##rnbuf", m_imTouchRenameBuf, sizeof(m_imTouchRenameBuf),
                 ImGuiInputTextFlags_EnterReturnsTrue |
                 ImGuiInputTextFlags_AutoSelectAll);
-            bool ok     = ImGui::Button("Rename", uiSz(110, 44));
+            bool ok     = ImGui::Button(materializr::tr("Rename"), uiSz(110, 44));
             ImGui::SameLine();
-            bool cancel = ImGui::Button("Cancel", uiSz(110, 44));
+            bool cancel = ImGui::Button(materializr::tr("Cancel"), uiSz(110, 44));
             if (committed || ok) {
                 const int key = m_imTouchRenameKey;
                 if (m_imTouchRenameBuf[0] != '\0' && key >= 0) {
@@ -692,7 +695,7 @@ void Application::renderImTouchLayout() {
         }
         if (ImGui::BeginPopupModal("New Folder##imtouch", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("Folder name:");
+            ImGui::TextUnformatted(materializr::tr("Folder name:"));
             if (m_imTouchNewFolderFocus) {
                 ImGui::SetKeyboardFocusHere();
                 m_imTouchNewFolderFocus = false;
@@ -702,9 +705,9 @@ void Application::renderImTouchLayout() {
                 "##nfname", m_imTouchNewFolderName,
                 sizeof(m_imTouchNewFolderName),
                 ImGuiInputTextFlags_EnterReturnsTrue);
-            bool create = ImGui::Button("Create", uiSz(110, 44));
+            bool create = ImGui::Button(materializr::tr("Create"), uiSz(110, 44));
             ImGui::SameLine();
-            bool cancel = ImGui::Button("Cancel", uiSz(110, 44));
+            bool cancel = ImGui::Button(materializr::tr("Cancel"), uiSz(110, 44));
             if (committed || create) {
                 if (m_imTouchNewFolderName[0] != '\0') {
                     int newId = m_document->addFolder(m_imTouchNewFolderName);
@@ -767,8 +770,8 @@ void Application::renderImTouchLayout() {
             auto flatButton = [&](const Toolbar::RailTool& tool, int id) {
                 ImGui::PushID(id); // labels can repeat across groups
                 const bool clicked = touchui::railButton(
-                    tool.label, tool.icon, tool.label, tool.active, 64.0f * s);
-                tip(tool.tip);
+                    tool.label, tool.icon, tr(tool.label), tool.active, 64.0f * s);
+                tip(materializr::tr(tool.tip));
                 fire(tool, clicked, /*inPopup=*/false);
                 ImGui::PopID();
             };
@@ -785,17 +788,18 @@ void Application::renderImTouchLayout() {
                     if (t->active) { activeTool = t; break; }
                 if (touchui::railButton(id,
                                         activeTool ? activeTool->icon : groupIcon,
-                                        activeTool ? activeTool->label : groupLabel,
+                                        materializr::tr(activeTool ? activeTool->label
+                                                                   : groupLabel),
                                         activeTool != nullptr, 64.0f * s))
                     ImGui::OpenPopup(popupId);
-                tip(groupTip);
+                tip(materializr::tr(groupTip));
                 if (ImGui::BeginPopup(popupId)) {
                     int idx = 0;
                     for (const auto* t : members) {
                         if (idx % 4 != 0) ImGui::SameLine(0.0f, 6.0f * s);
                         ImGui::PushID(idx++);
                         const bool clicked = touchui::railButton(
-                            t->label, t->icon, t->label, t->active, 64.0f * s);
+                            t->label, t->icon, tr(t->label), t->active, 64.0f * s);
                         tip(t->tip);
                         fire(*t, clicked, /*inPopup=*/true);
                         ImGui::PopID();
@@ -846,11 +850,17 @@ void Application::renderImTouchLayout() {
                 // the draw tools and the active tool's origin toggle render
                 // in catalogue order, so anything unrecognised (future tools)
                 // also lands flat and can't silently vanish from the rail.
-                std::vector<const Toolbar::RailTool*> modify, aids;
+                std::vector<const Toolbar::RailTool*> modify, aids, importers;
                 int railIdx = 0;
                 for (const auto& t : tools) {
                     if (t.pluginIndex >= 0) { modify.push_back(&t); continue; }
                     switch (t.action) {
+                    // Bringing outside artwork in is its own act, distinct from
+                    // drawing or modifying: SVG outlines and aerofoil sections
+                    // share a group so neither is buried in the flat rail.
+                    case ToolAction::SketchSvg:
+                    case ToolAction::SketchAirfoil:
+                        importers.push_back(&t); break;
                     case ToolAction::Trim:
                     case ToolAction::SketchCopy:
                     case ToolAction::SketchMirror:
@@ -869,6 +879,10 @@ void Application::renderImTouchLayout() {
                       "Modify tools: trim, copy, mirror, linear and circular "
                       "patterns",
                       modify);
+                group("importGroup", "##sketchImport", MZ_ICON_SVG, "Import",
+                      "Bring outside artwork into the sketch: an SVG outline or "
+                      "an aerofoil section",
+                      importers);
                 group("aidsGroup", "##sketchAids", MZ_ICON_MORE, "More",
                       "Drawing guides level, measure, look at the sketch plane",
                       aids);
@@ -930,15 +944,15 @@ void Application::renderImTouchLayout() {
             if (ImGui::BeginPopupModal("Discard sketch?", nullptr,
                                        ImGuiWindowFlags_AlwaysAutoResize)) {
                 ImGui::TextUnformatted(
-                    "Leave the sketch and throw away its changes?");
+                    materializr::tr("Leave the sketch and throw away its changes?"));
                 ImGui::Spacing();
                 const float bw = 150.0f * s;
-                if (ImGui::Button("Discard Sketch", ImVec2(bw, 44.0f * s))) {
+                if (ImGui::Button(materializr::tr("Discard Sketch"), ImVec2(bw, 44.0f * s))) {
                     ImGui::CloseCurrentPopup();
                     handleToolAction(static_cast<int>(ToolAction::ExitSketchDiscard));
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Keep Editing", ImVec2(bw, 44.0f * s)))
+                if (ImGui::Button(materializr::tr("Keep Editing"), ImVec2(bw, 44.0f * s)))
                     ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
@@ -954,19 +968,19 @@ void Application::renderImTouchLayout() {
             ImGui::SetCursorPosY(topY + (fabD - side) * 0.5f);
             if (touchui::iconButton("cancelAct", MZ_ICON_DISCARD, side))
                 cancelActiveAction();
-            tip("Cancel the action and discard its preview");
+            tip(materializr::tr("Cancel the action and discard its preview"));
             ImGui::SameLine(0.0f, 18.0f * s); // deliberate gap: no stray cancels
             ImGui::SetCursorPosY(topY);
             if (touchui::fab("applyAct", MZ_ICON_FINISH, fabD))
                 confirmActiveAction();
-            tip("Apply the action");
+            tip(materializr::tr("Apply the action"));
         }
         ImGui::End();
     } else {
         if (ImGui::Begin("##LiteFab", nullptr, kFloat)) {
             if (touchui::fab("create", MZ_ICON_ADD))
                 ImGui::OpenPopup("##LiteCreate");
-            tip("Create: a sketch or a primitive solid");
+            tip(materializr::tr("Create: a sketch or a primitive solid"));
             if (ImGui::BeginPopup("##LiteCreate")) {
                 // Mirror the modern rail's create logic instead of dumping every
                 // option flat: sketch is contextual (on a picked face/plane if there
@@ -981,25 +995,25 @@ void Application::renderImTouchLayout() {
                     if (ImGui::MenuItem(MZ_ICON_SKETCH "  Sketch on selection"))
                         handleToolAction(static_cast<int>(ToolAction::SketchOnFace));
                 } else if (ImGui::BeginMenu(MZ_ICON_SKETCH "  New Sketch")) {
-                    if (ImGui::MenuItem("XY plane"))
+                    if (ImGui::MenuItem(materializr::tr("XY plane")))
                         handleToolAction(static_cast<int>(ToolAction::StartSketchXY));
-                    if (ImGui::MenuItem("XZ plane"))
+                    if (ImGui::MenuItem(materializr::tr("XZ plane")))
                         handleToolAction(static_cast<int>(ToolAction::StartSketchXZ));
-                    if (ImGui::MenuItem("YZ plane"))
+                    if (ImGui::MenuItem(materializr::tr("YZ plane")))
                         handleToolAction(static_cast<int>(ToolAction::StartSketchYZ));
                     ImGui::EndMenu();
                 }
                 if (m_pluginContext &&
                     ImGui::BeginMenu(MZ_ICON_PRIMITIVE "  Primitive")) {
-                    if (ImGui::MenuItem("Box"))
+                    if (ImGui::MenuItem(materializr::tr("Box")))
                         m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveBox);
-                    if (ImGui::MenuItem("Cylinder"))
+                    if (ImGui::MenuItem(materializr::tr("Cylinder")))
                         m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveCylinder);
-                    if (ImGui::MenuItem("Sphere"))
+                    if (ImGui::MenuItem(materializr::tr("Sphere")))
                         m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveSphere);
-                    if (ImGui::MenuItem("Cone"))
+                    if (ImGui::MenuItem(materializr::tr("Cone")))
                         m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveCone);
-                    if (ImGui::MenuItem("Torus"))
+                    if (ImGui::MenuItem(materializr::tr("Torus")))
                         m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveTorus);
                     ImGui::EndMenu();
                 }
@@ -1046,7 +1060,7 @@ void Application::renderImTouchLayout() {
             // accent-fills while the timeline is open. The button is the same
             // open or closed, so the reopen state sits exactly where the
             // collapse state was.
-            if (touchui::railButton("histToggle", MZ_ICON_HISTORY, "History",
+            if (touchui::railButton("histToggle", MZ_ICON_HISTORY, materializr::tr("History"),
                                     m_imTouchTimeline, railBtnW, /*solid=*/true)) {
                 m_imTouchTimeline = !m_imTouchTimeline;
                 saveAppSettings();
@@ -1081,8 +1095,7 @@ void Application::renderImTouchLayout() {
             // Empty history still shows a hint so toggling History in a fresh
             // project doesn't look like it did nothing.
             if (steps == 0)
-                ImGui::TextColored(touchui::textDim(),
-                                   "History: no steps yet");
+                ImGui::TextColored(touchui::textDim(), "%s", materializr::tr("History: no steps yet"));
             const int curr = m_history->currentStep();
             const int failedAt = m_history->lastReplayFailure();
             const bool histLocked = anyInteractivePreviewActive();
@@ -1148,24 +1161,19 @@ void Application::renderImTouchLayout() {
                     ImGui::TextColored(touchui::textPrimary(), "%d. %s",
                                        i + 1, detail.c_str());
                     if (!op->isEnabled())
-                        ImGui::TextColored(touchui::textDim(), "Disabled");
+                        ImGui::TextColored(touchui::textDim(), "%s", materializr::tr("Disabled"));
                     if (i > curr)
-                        ImGui::TextColored(touchui::textDim(),
-                                           "Undone \xE2\x80\x94 Go Here replays it.");
+                        ImGui::TextColored(touchui::textDim(), "%s", materializr::tr("Undone \xE2\x80\x94 Go Here replays it."));
                     if (i == failedAt) {
                         ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
-                            "Couldn't recompute after an upstream change. Edit "
-                            "its parameters, fix the step before it, or delete it.");
+                        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", materializr::tr("Couldn't recompute after an upstream change. Edit its parameters, fix the step before it, or delete it."));
                         ImGui::PopTextWrapPos();
                     }
                     ImGui::Separator();
 
                     if (op->isReloaded()) {
                         ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1.0f),
-                            "Restored from an older save \xE2\x80\x94 no editable "
-                            "parameters. Undo/redo still work.");
+                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1.0f), "%s", materializr::tr("Restored from an older save \xE2\x80\x94 no editable parameters. Undo/redo still work."));
                         ImGui::PopTextWrapPos();
                     } else {
                         // The op's own parameter editor — identical widgets to
@@ -1190,7 +1198,7 @@ void Application::renderImTouchLayout() {
                         ImGui::PopItemWidth();
                         ImGui::EndChild();
                         ImGui::BeginDisabled(histLocked);
-                        if (ImGui::Button("Apply Changes",
+                        if (ImGui::Button(materializr::tr("Apply Changes"),
                                           ImVec2(-1.0f, 44.0f * s))) {
                             // Same sequence as HistoryPanel: carry inline
                             // sketch-dimension edits into later snapshots
@@ -1221,7 +1229,7 @@ void Application::renderImTouchLayout() {
 
                     const float bw = 104.0f * s;
                     ImGui::BeginDisabled(histLocked || i == curr);
-                    if (ImGui::Button("Go Here", ImVec2(bw, 44.0f * s))) {
+                    if (ImGui::Button(materializr::tr("Go Here"), ImVec2(bw, 44.0f * s))) {
                         // Roll the model to this step (Fusion's marker drag).
                         // Progress guard: a failed replay mid-walk must not
                         // spin forever.
@@ -1249,7 +1257,7 @@ void Application::renderImTouchLayout() {
                         m_meshesDirty = true;
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Delete", ImVec2(bw, 44.0f * s))) {
+                    if (ImGui::Button(materializr::tr("Delete"), ImVec2(bw, 44.0f * s))) {
                         if (m_history->removeStep(i, *m_document)) {
                             m_imTouchHistoryEdit = -1;
                             if (m_historyPanel)
@@ -1285,7 +1293,7 @@ void Application::renderImTouchLayout() {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(9.0f * s, 4.0f * s));
         if (ImGui::Begin("##LiteFps", nullptr, kFloat)) {
             ImGui::SetWindowFontScale(0.82f);   // smaller than the shell text
-            ImGui::TextColored(touchui::textDim(), "%.0f fps",
+            ImGui::TextColored(touchui::textDim(), materializr::tr("%.0f fps"),
                                ImGui::GetIO().Framerate);
             ImGui::SetWindowFontScale(1.0f);
         }

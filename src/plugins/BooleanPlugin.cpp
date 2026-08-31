@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include "../i18n.h"
 
 namespace {
 
@@ -171,8 +172,8 @@ REGISTER_PLUGIN(Boolean, [](materializr::PluginContext& ctx) {
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Subtract##boolpick", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("Tick the cutters \xE2\x80\x94 they're subtracted");
-            ImGui::TextUnformatted("from the unticked bodies, which remain.");
+            ImGui::TextUnformatted(materializr::tr("Tick the cutters \xE2\x80\x94 they're subtracted"));
+            ImGui::TextUnformatted(materializr::tr("from the unticked bodies, which remain."));
             ImGui::Separator();
             for (int id : g_subtractBodies) {
                 std::string label = ctx.document().getBodyName(id);
@@ -188,7 +189,7 @@ REGISTER_PLUGIN(Boolean, [](materializr::PluginContext& ctx) {
                 ImGui::PopID();
             }
             ImGui::Separator();
-            ImGui::Checkbox("Keep the cutter bodies after cutting",
+            ImGui::Checkbox(materializr::tr("Keep the cutter bodies after cutting"),
                             &g_subtractKeepCutters);
             ImGui::Separator();
 
@@ -200,14 +201,14 @@ REGISTER_PLUGIN(Boolean, [](materializr::PluginContext& ctx) {
             }
             bool canApply = !cutters.empty() && !targets.empty();
             if (!canApply)
-                ImGui::TextDisabled("Need at least one cutter (ticked) and one body to keep.");
+                ImGui::TextDisabled("%s", materializr::tr("Need at least one cutter (ticked) and one body to keep."));
 
             bool apply = false;
             ImGui::BeginDisabled(!canApply);
-            if (ImGui::Button("Apply")) apply = true;
+            if (ImGui::Button(materializr::tr("Apply"))) apply = true;
             ImGui::EndDisabled();
             ImGui::SameLine();
-            bool cancel = ImGui::Button("Cancel");
+            bool cancel = ImGui::Button(materializr::tr("Cancel"));
             if (apply || cancel) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
 

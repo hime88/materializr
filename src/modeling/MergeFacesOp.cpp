@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <imgui.h>
+#include "../i18n.h"
 
 namespace {
 
@@ -550,11 +551,11 @@ std::string MergeFacesOp::description() const {
 }
 
 void MergeFacesOp::renderProperties() {
-    ImGui::Text("Merge Faces");
+    ImGui::Text("%s", materializr::tr("Merge Faces"));
     ImGui::Separator();
-    ImGui::Text("Scope: %s", isFaceScoped() ? "selected faces" : "whole body");
-    ImGui::Text("Faces: %d -> %d", m_facesBefore, m_facesAfter);
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Scope: %s"), isFaceScoped() ? "selected faces" : "whole body");
+    ImGui::Text(materializr::tr("Faces: %d -> %d"), m_facesBefore, m_facesAfter);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 std::string MergeFacesOp::serializeParams() const {

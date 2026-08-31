@@ -29,6 +29,9 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -846,7 +849,7 @@ void EdgeOpController::renderEdgeOpPanel(const IopContext& ctx) {
             }
         }
         ImGui::SameLine();
-        ImGui::Text("mm");
+        ImGui::Text("%s", materializr::tr("mm"));
     }
 
     // Quick-nudge stepper (replaces the slider). Positive-only for a radius /
@@ -864,7 +867,7 @@ void EdgeOpController::renderEdgeOpPanel(const IopContext& ctx) {
     // qualifies; a coplanar edge loop does too). Two arrows: A=amber, B=blue.
     if (m_kind == EdgeOpKind::Chamfer && m_canTwoDist) {
         ImGui::Spacing();
-        if (ImGui::Checkbox("Two distances (A / B)", &m_twoDist)) {
+        if (ImGui::Checkbox(materializr::tr("Two distances (A / B)"), &m_twoDist)) {
             if (m_twoDist && m_value2 < 0.1f) {
                 m_value2 = std::max(0.1f, m_value);   // seed B from A
                 std::snprintf(m_inputBuf2, sizeof(m_inputBuf2), "%.1f", m_value2);
@@ -874,10 +877,9 @@ void EdgeOpController::renderEdgeOpPanel(const IopContext& ctx) {
         }
         if (m_twoDist) {
             if (!imTouch)
-                ImGui::TextColored(materializr::accentText(),
-                                   "Distance B (other face)");
+                ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Distance B (other face)"));
             if (imTouch) {
-                if (touchui::amountField("edgeAmt2", "Distance B", &m_value2,
+                if (touchui::amountField("edgeAmt2", materializr::tr("Distance B"), &m_value2,
                                          "mm", 1, /*allowSign=*/false,
                                          0.1f, 20.0f)) {
                     std::snprintf(m_inputBuf2, sizeof(m_inputBuf2), "%.1f",
@@ -899,7 +901,7 @@ void EdgeOpController::renderEdgeOpPanel(const IopContext& ctx) {
                     }
                 }
                 ImGui::SameLine();
-                ImGui::Text("mm");
+                ImGui::Text("%s", materializr::tr("mm"));
             }
             if (!imTouch &&
                 materializr::stepperRow("edgeStep2", &m_value2,

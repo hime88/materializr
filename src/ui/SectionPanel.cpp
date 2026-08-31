@@ -1,10 +1,13 @@
 #include "SectionPanel.h"
+#include "../i18n.h"
 #include "../viewport/SectionView.h"
 
 #include <imgui.h>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -19,11 +22,11 @@ bool SectionPanel::render() {
 
     bool needsUpdate = false;
 
-    ImGui::Begin("Section View");
+    ImGui::Begin(materializr::tr("Section View"));
 
     // Enable/disable toggle
     bool enabled = m_sectionView->isEnabled();
-    if (ImGui::Checkbox("Enable Section", &enabled)) {
+    if (ImGui::Checkbox(materializr::tr("Enable Section"), &enabled)) {
         m_sectionView->setEnabled(enabled);
         needsUpdate = true;
     }
@@ -32,7 +35,7 @@ bool SectionPanel::render() {
 
     // Plane axis selection
     const char* axisItems[] = { "YZ (X normal)", "XZ (Y normal)", "XY (Z normal)" };
-    if (ImGui::Combo("Cutting Plane", &m_planeAxis, axisItems, 3)) {
+    if (ImGui::Combo(materializr::tr("Cutting Plane"), &m_planeAxis, axisItems, 3)) {
         gp_Pnt origin(0, 0, 0);
         gp_Pln plane;
         switch (m_planeAxis) {
@@ -45,13 +48,13 @@ bool SectionPanel::render() {
     }
 
     // Offset slider
-    if (ImGui::SliderFloat("Offset", &m_offset, -100.0f, 100.0f, "%.2f")) {
+    if (ImGui::SliderFloat(materializr::tr("Offset"), &m_offset, -100.0f, 100.0f, "%.2f")) {
         m_sectionView->setOffset(m_offset);
         needsUpdate = true;
     }
 
     // Reset offset button
-    if (ImGui::Button("Reset Offset")) {
+    if (ImGui::Button(materializr::tr("Reset Offset"))) {
         m_offset = 0.0f;
         m_sectionView->setOffset(m_offset);
         needsUpdate = true;

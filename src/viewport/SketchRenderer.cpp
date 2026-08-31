@@ -1,5 +1,6 @@
 #include "gl_common.h"
 #include "SketchRenderer.h"
+#include "modeling/AirfoilImport.h"
 #include "modeling/Sketch.h"
 #include "modeling/SketchTool.h"
 #include "modeling/SketchSolver.h"
@@ -442,6 +443,7 @@ void SketchRenderer::render(const Sketch* sketch, const SketchTool* tool,
         drawPreview(sketch, tool, vp);
         drawTrimHover(sketch, tool, vp);
         drawSvgGhost(sketch, tool, vp);
+        drawAirfoilGhost(sketch, tool, vp);
     }
 
     // The LUT holds pointers into the sketch's point vector — valid only for
@@ -713,6 +715,46 @@ void SketchRenderer::drawSvgGhost(const Sketch* sketch, const SketchTool* tool,
         const auto& L = svg.loops[li];
         for (size_t i = 0; i + 1 < L.size(); ++i) { push(L[i]); push(L[i + 1]); }
         if (svg.closed[li] && L.size() >= 3) { push(L.back()); push(L.front()); }
+    }
+    uploadAndDraw(verts, GL_LINES, glm::vec3(1.0f, 0.85f, 0.2f), vp, 1.5f);
+}
+
+void SketchRenderer::drawAirfoilGhost(const Sketch* sketch, const SketchTool* tool,
+                                     const glm::mat4& vp) {
+    if (!sketch || !tool || tool->getMode() != SketchToolMode::Airfoil) return;
+    const AirfoilProfile& prof = tool->getAirfoil();
+    if (prof.empty()) return;
+
+    // Same mapping AirfoilImport::place uses: chord-normalised -> mm, rotated
+    // about the LEADING EDGE, which is the cursor. Drawing it any other way
+    // would put the ghost somewhere the geometry will not land.
+    const glm::vec2 pos = tool->getCurrentPos();
+    const float chord = tool->getAirfoilChord();
+    const float a = glm::radians(static_cast<float>(tool->getTextAngle()));
+    const float ca = std::cos(a), sa = std::sin(a);
+    // Same anchor the stamp uses -- one function, so the ghost cannot drift
+    // from where the geometry actually lands.
+    const glm::vec2 a0 = AirfoilImport::anchorPoint(prof, tool->getAirfoilAnchor());
+    auto map = [&](glm::vec2 n) {
+        const glm::vec2 l((n.x - a0.x) * chord, (n.y - a0.y) * chord);
+        return pos + glm::vec2(l.x * ca - l.y * sa, l.x * sa + l.y * ca);
+    };
+
+    std::vector<float> verts;
+    auto push = [&](glm::vec2 q) {
+        const glm::vec3 w = toWorld(sketch, map(q));
+        verts.push_back(w.x); verts.push_back(w.y); verts.push_back(w.z);
+    };
+    auto strip = [&](const std::vector<glm::vec2>& surf) {
+        for (std::size_t i = 0; i + 1 < surf.size(); ++i) { push(surf[i]); push(surf[i + 1]); }
+    };
+    strip(prof.upper);
+    strip(prof.lower);
+    // Blunt sections get their trailing-edge closing segment drawn too, so the
+    // ghost is the outline that will actually be created.
+    if (prof.bluntTrailingEdge && !prof.upper.empty() && !prof.lower.empty()) {
+        push(prof.upper.back());
+        push(prof.lower.back());
     }
     uploadAndDraw(verts, GL_LINES, glm::vec3(1.0f, 0.85f, 0.2f), vp, 1.5f);
 }

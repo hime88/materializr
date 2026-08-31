@@ -74,13 +74,27 @@ inline gp_Dir sketchPlaneXDirection(const TopoDS_Face& face, const gp_Dir& n,
     }
 
     // Collect every straight edge with its in-plane direction, its length, and
-    // how far it sits from the nearest world axis.
+    // how far it sits from the nearest world axis. Circular edges are measured
+    // too (arc length only) -- they get no direction vote, but they decide
+    // whether the face is ROUND. A flange cap is bounded by circles with one
+    // short keyway flat; following that flat rotated the whole grid 17 degrees
+    // off the world on a face that is round by any sane reading (Steve's
+    // flange.mzr, top of the tube). Edge-following exists for faces whose
+    // shape IS the straight edges (a slanted lofted cap); when the boundary is
+    // mostly arc, the arcs say "no preferred straight direction here" and the
+    // world axes win.
     struct Cand { gp_Dir dir; double len; double angle; };
     std::vector<Cand> cands;
     double longestOverall = 0.0;
+    double lineLenTotal = 0.0, arcLenTotal = 0.0;
 
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         BRepAdaptor_Curve c(TopoDS::Edge(ex.Current()));
+        if (c.GetType() == GeomAbs_Circle) {
+            arcLenTotal += std::abs(c.LastParameter() - c.FirstParameter()) *
+                           c.Circle().Radius();
+            continue;
+        }
         if (c.GetType() != GeomAbs_Line) continue;
         gp_Pnt p0, p1;
         c.D0(c.FirstParameter(), p0);
@@ -102,8 +116,21 @@ inline gp_Dir sketchPlaneXDirection(const TopoDS_Face& face, const gp_Dir& n,
         }
         cands.push_back({gp_Dir(dir), len, best});
         longestOverall = std::max(longestOverall, len);
+        lineLenTotal += len;
     }
 
+    // Round face: the boundary is dominated by circular arcs, so no straight
+    // edge speaks for the face's orientation. Straight slivers (keyway flats,
+    // slot sides) must not steer the grid -- unless one of them already agrees
+    // with a world axis, in which case following it changes nothing visible
+    // and keeps the edge exactly on the lattice.
+    const bool roundFace = arcLenTotal > lineLenTotal * 1.5;
+
+    if (!cands.empty()) {
+        double minAngle = 180.0;
+        for (const auto& c : cands) minAngle = std::min(minAngle, c.angle);
+        if (roundFace && minAngle > 1.0) cands.clear();
+    }
     if (!cands.empty()) {
         double minAngle = 180.0;
         for (const auto& c : cands) minAngle = std::min(minAngle, c.angle);

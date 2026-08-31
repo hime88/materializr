@@ -25,6 +25,10 @@
 #include <cstdio>
 #include <utility>
 #include <vector>
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -373,7 +377,7 @@ void ExtrudeController::renderExtrudePanel(const IopContext& ctx) {
     opDialogDragGrip(s);
 
     if (!imTouch) {   // im-touch: just the value well below
-        ImGui::Text("Extrude Distance (mm)");
+        ImGui::Text("%s", materializr::tr("Extrude Distance (mm)"));
         ImGui::Separator();
     }
 
@@ -388,7 +392,7 @@ void ExtrudeController::renderExtrudePanel(const IopContext& ctx) {
         // im-touch: the WHOLE panel is this one tappable value well — no
         // header, hint or steppers (Steve: the full "distance dialog" kept
         // showing up; drag for coarse, pad for exact).
-        if (touchui::amountField("extAmt", "Distance", &m_distance,
+        if (touchui::amountField("extAmt", materializr::tr("Distance"), &m_distance,
                                  "mm", 1, /*allowSign=*/true)) {
             std::snprintf(m_inputBuf, sizeof(m_inputBuf), "%.1f", m_distance);
             updateExtrude(ctx, /*applySnap=*/false);  // typed = exact
@@ -416,7 +420,7 @@ void ExtrudeController::renderExtrudePanel(const IopContext& ctx) {
             }
         }
         ImGui::SameLine();
-        ImGui::Text("mm");
+        ImGui::Text("%s", materializr::tr("mm"));
     }
 
     // Quick-nudge stepper (replaces the slider): ±10/1/0.1, and 0 to clear
@@ -442,17 +446,13 @@ void ExtrudeController::renderExtrudePanel(const IopContext& ctx) {
         // carries the detail. im-touch gets a pill instead of a checkbox: a
         // checkbox tickbox is a fingertip-hostile tap target.
         if (imTouch) {
-            if (touchui::pillButton("cutall", MZ_ICON_BODY, "All bodies",
+            if (touchui::pillButton("cutall", MZ_ICON_BODY, materializr::tr("All bodies"),
                                     m_cutAllBodies))
                 m_cutAllBodies = !m_cutAllBodies;
         } else {
-            ImGui::Checkbox("Cut every body it reaches", &m_cutAllBodies);
+            ImGui::Checkbox(materializr::tr("Cut every body it reaches"), &m_cutAllBodies);
         }
-        ImGui::SetItemTooltip(
-            "Off: cut ONE body \xE2\x80\x94 the one the sketch sits on when it has a "
-            "host, otherwise whichever the sweep reaches most of.\n"
-            "On: cut every body the swept profile reaches, each as its own "
-            "undoable step.");
+        ImGui::SetItemTooltip("%s", materializr::tr("Off: cut ONE body \xE2\x80\x94 the one the sketch sits on when it has a host, otherwise whichever the sweep reaches most of.\nOn: cut every body the swept profile reaches, each as its own undoable step."));
     }
 
     if (!ctx.cornerCommitUi) {   // im-touch: corner ✓/✗ FABs instead

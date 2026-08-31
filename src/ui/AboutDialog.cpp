@@ -6,6 +6,8 @@
 
 #include <cstring>
 #include <string>
+#include "../i18n.h"
+#include "../i18n.h"
 
 #ifndef MATERIALIZR_VERSION
 #define MATERIALIZR_VERSION "0.0.0"
@@ -37,13 +39,13 @@ bool AboutDialog::isVisible() const {
 void AboutDialog::render() {
     if (!m_visible) return;
 
-    ImGui::OpenPopup("About Materializr");
+    ImGui::OpenPopup(materializr::tr("About Materializr"));
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(uiSz(420, 400), ImGuiCond_Appearing);
 
-    if (ImGui::BeginPopupModal("About Materializr", &m_visible,
+    if (ImGui::BeginPopupModal(materializr::tr("About Materializr"), &m_visible,
                                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
 
         // App name — slightly larger via font scaling.
@@ -51,11 +53,11 @@ void AboutDialog::render() {
         ImGui::GetFont()->Scale = 2.0f;
         ImGui::PushFont(ImGui::GetFont());
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize("Materializr").x) * 0.5f);
-        ImGui::TextColored(materializr::accentText(), "Materializr");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Materializr"));
         ImGui::GetFont()->Scale = origScale;
         ImGui::PopFont();
 
-        std::string verLine = std::string("Version ") + MATERIALIZR_VERSION;
+        std::string verLine = std::string(materializr::tr("Version ")) + MATERIALIZR_VERSION;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(verLine.c_str()).x) * 0.5f);
         ImGui::Text("%s", verLine.c_str());
 
@@ -63,24 +65,23 @@ void AboutDialog::render() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        const char* desc = "Open-source parametric 3D CAD";
+        const char* desc = materializr::tr("Open-source parametric 3D CAD");
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(desc).x) * 0.5f);
         ImGui::Text("%s", desc);
 
         ImGui::Spacing();
-        ImGui::TextColored(materializr::accentText(), "Credits");
-        ImGui::BulletText("R4stl1n — original project");
-        ImGui::BulletText("stevebushwa — design, testing, direction");
-        ImGui::BulletText("Claude (Anthropic) — pair-coding collaborator");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Credits"));
+        ImGui::BulletText("%s", materializr::tr("R4stl1n — original project"));
+        ImGui::BulletText("%s", materializr::tr("stevebushwa — design, testing, direction"));
+        ImGui::BulletText("%s", materializr::tr("Claude (Anthropic) — pair-coding collaborator"));
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                           "Built with OpenCASCADE, Dear ImGui, SDL2, GLM, libcurl.");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", materializr::tr("Built with OpenCASCADE, Dear ImGui, SDL2, GLM, libcurl."));
         // GPLv3 since 0.9.8 (the old "MIT" line survived the relicense);
         // section-7 additional permissions live in LICENSE-EXCEPTIONS.md.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-        ImGui::TextWrapped("License: GNU GPLv3, with additional permissions");
-        ImGui::TextWrapped("(see LICENSE and LICENSE-EXCEPTIONS.md in the source repository)");
+        ImGui::TextWrapped("%s", materializr::tr("License: GNU GPLv3, with additional permissions"));
+        ImGui::TextWrapped("%s", materializr::tr("(see LICENSE and LICENSE-EXCEPTIONS.md in the source repository)"));
         ImGui::PopStyleColor();
 
         ImGui::Spacing();
@@ -90,7 +91,7 @@ void AboutDialog::render() {
         const char* repoUrl = "https://github.com/materializr-cad/materializr";
         float btnW = 200.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - btnW) * 0.5f);
-        if (ImGui::Button("Open Project on GitHub", ImVec2(btnW, 0))) {
+        if (ImGui::Button(materializr::tr("Open Project on GitHub"), ImVec2(btnW, 0))) {
             openInBrowser(repoUrl);
         }
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(repoUrl).x) * 0.5f);
@@ -106,7 +107,7 @@ void AboutDialog::render() {
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.275f, 0.318f, 0.796f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - btnW) * 0.5f);
-        if (ImGui::Button("Join our Discord", ImVec2(btnW, 0))) {
+        if (ImGui::Button(materializr::tr("Join our Discord"), ImVec2(btnW, 0))) {
             openInBrowser(discordUrl);
         }
         ImGui::PopStyleColor(4);
@@ -125,7 +126,7 @@ void AboutDialog::render() {
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.85f, 0.74f, 0.00f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - btnW) * 0.5f);
-        if (ImGui::Button("Buy us a Coffee", ImVec2(btnW, 0))) {
+        if (ImGui::Button(materializr::tr("Buy us a Coffee"), ImVec2(btnW, 0))) {
             openInBrowser(bmcUrl);
         }
         ImGui::PopStyleColor(4);
@@ -135,7 +136,7 @@ void AboutDialog::render() {
         ImGui::Spacing();
         float closeW = 100.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - closeW) * 0.5f);
-        if (ImGui::Button("Close", ImVec2(closeW, 0))) {
+        if (ImGui::Button(materializr::tr("Close"), ImVec2(closeW, 0))) {
             m_visible = false;
             ImGui::CloseCurrentPopup();
         }

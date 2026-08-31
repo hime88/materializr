@@ -1,5 +1,7 @@
 #include "UiTheme.h"
+#include "../i18n.h"
 #include "HistoryPanel.h"
+#include <cctype>
 #include "../core/History.h"
 #include "../core/Document.h"
 #include "../core/Operation.h"
@@ -14,6 +16,10 @@
 #include <cstdio>
 #include <string>
 #include <tuple>
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -29,7 +35,7 @@ void HistoryPanel::setDocument(Document* doc) {
 
 bool HistoryPanel::render() {
     m_showUndoRedo = true;   // the desktop window always shows its own row
-    ImGui::Begin("History", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(materializr::tr("History"), nullptr, ImGuiWindowFlags_NoCollapse);
     const bool modified = renderContent();
     ImGui::End();
     return modified;
@@ -41,7 +47,7 @@ bool HistoryPanel::renderContent() {
     m_hoveredStep = -1; // recomputed below from whichever row the cursor is over
 
     if (!m_history || !m_document) {
-        ImGui::TextColored(materializr::dimText(), "No history available.");
+        ImGui::TextColored(materializr::dimText(), "%s", materializr::tr("No history available."));
         return false;
     }
 
@@ -49,7 +55,7 @@ bool HistoryPanel::renderContent() {
     int currentStep = m_history->currentStep();
     int breakpoint = m_history->getBreakpoint();
 
-    ImGui::TextColored(materializr::accentText(), "Operation History");
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Operation History"));
     if (!m_showUndoRedo) {
         // No bottom button row (the host provides undo/redo) — the step
         // counter rides beside the label instead.
@@ -74,15 +80,10 @@ bool HistoryPanel::renderContent() {
         // produces the same state on a brand-new save — a bug to report, not an
         // old file.)
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1.0f),
-            "Amber (frozen) steps reloaded without editable parameters. "
-            "(hover for more)");
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1.0f), "%s", materializr::tr("Amber (frozen) steps reloaded without editable parameters. (hover for more)"));
         ImGui::PopTextWrapPos();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(
-                "Undo/redo still work; to change one, select its feature and\n"
-                "use Repair Geometry, then redo it.\n"
-                "(Usual cause: a save from an older version.)");
+            ImGui::SetTooltip("%s", materializr::tr("Undo/redo still work; to change one, select its feature and\nuse Repair Geometry, then redo it.\n(Usual cause: a save from an older version.)"));
         ImGui::Separator();
     }
 
@@ -94,10 +95,7 @@ bool HistoryPanel::renderContent() {
         const Operation* fop = m_history->getStep(failedAt);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
-            "Step %d (%s) couldn't recompute — the geometry it referenced no "
-            "longer exists after an upstream step was edited or disabled. "
-            "Re-enable the disabled step, edit an upstream step (it retries "
-            "automatically), edit this step's parameters, or delete it.",
+            materializr::tr("Step %d (%s) couldn't recompute — the geometry it referenced no longer exists after an upstream step was edited or disabled. Re-enable the disabled step, edit an upstream step (it retries automatically), edit this step's parameters, or delete it."),
             failedAt + 1, fop ? fop->name().c_str() : "?");
         ImGui::PopTextWrapPos();
         ImGui::Separator();
@@ -173,6 +171,25 @@ bool HistoryPanel::renderContent() {
         // of the generic name().
         std::string detail = op->description();
         if (detail.empty()) detail = op->name();
+        // Descriptions are COMPOSED English ("Boolean Union (body 2 with body
+        // 3)") built by 36 different ops, so they cannot be catalogue keys.
+        // Translate the leading word run -- the op name -- when the catalogue
+        // knows it; the numeric tail stays as-is. Cheap, safe (a miss changes
+        // nothing), and it is the op name that carries the meaning.
+        {
+            std::size_t cut = 0;
+            while (cut < detail.size() &&
+                   (std::isalpha(static_cast<unsigned char>(detail[cut])) ||
+                    detail[cut] == ' ' || detail[cut] == '/' || detail[cut] == '-'))
+                ++cut;
+            while (cut > 0 && !std::isalpha(static_cast<unsigned char>(detail[cut - 1])))
+                --cut;
+            if (cut >= 2) {
+                const std::string head = detail.substr(0, cut);
+                const char* t = materializr::tr(head.c_str());
+                if (t != nullptr && head != t) detail = t + detail.substr(cut);
+            }
+        }
         char label[256];
         std::snprintf(label, sizeof(label), "%d. %s%s%s",
                       i + 1,
@@ -203,15 +220,12 @@ bool HistoryPanel::renderContent() {
         if (i == m_enableFailStep) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 250.0f);
-            ImGui::TextWrapped("Re-enabled, but this step still can't find the "
-                               "geometry it referenced on the current body, so "
-                               "it produces nothing. Delete it and re-apply "
-                               "the feature on the updated body.");
+            ImGui::TextWrapped("%s", materializr::tr("Re-enabled, but this step still can't find the geometry it referenced on the current body, so it produces nothing. Delete it and re-apply the feature on the updated body."));
             ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
         }
         if (ImGui::BeginPopupContextItem("StepContextMenu")) {
-            if (ImGui::MenuItem("Edit Parameters")) {
+            if (ImGui::MenuItem(materializr::tr("Edit Parameters"))) {
                 m_editingStep = i;
                 m_showProperties = true;
             }
@@ -227,16 +241,16 @@ bool HistoryPanel::renderContent() {
                 m_enableFailStep = (enabling && !okTog) ? i : -1;
                 modified = true;
             }
-            if (ImGui::MenuItem("Set Breakpoint Here")) {
+            if (ImGui::MenuItem(materializr::tr("Set Breakpoint Here"))) {
                 m_history->setBreakpoint(i);
                 modified = true;
             }
-            if (breakpoint == i && ImGui::MenuItem("Clear Breakpoint")) {
+            if (breakpoint == i && ImGui::MenuItem(materializr::tr("Clear Breakpoint"))) {
                 m_history->setBreakpoint(-1);
                 modified = true;
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Delete")) {
+            if (ImGui::MenuItem(materializr::tr("Delete"))) {
                 deleteIndex = i;
             }
             ImGui::EndPopup();
@@ -281,8 +295,8 @@ bool HistoryPanel::renderContent() {
                    : ymd_t{1970, 0, 1};
     };
     auto dateLabel = [](ymd_t d, ymd_t today, ymd_t yest) -> std::string {
-        if (d == today) return "Today";
-        if (d == yest)  return "Yesterday";
+        if (d == today) return materializr::tr("Today");
+        if (d == yest)  return materializr::tr("Yesterday");
         char buf[32];
         static const char* months[] = {
             "Jan","Feb","Mar","Apr","May","Jun",
@@ -335,7 +349,7 @@ bool HistoryPanel::renderContent() {
         ImGui::PopID();
         ImGui::SameLine();
         ImGui::TextColored(materializr::accentText(),
-                           "%s  (%d step%s)",
+                           materializr::tr("%s  (%d step%s)"),
                            dateLabel(bucket, today, yest).c_str(),
                            runLen, runLen == 1 ? "" : "s");
         if (!isCollapsed) {
@@ -365,8 +379,7 @@ bool HistoryPanel::renderContent() {
     }
 
     if (m_deleteConflict) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f),
-                           "Can't delete: a later operation depends on it.");
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s", materializr::tr("Can't delete: a later operation depends on it."));
     }
 
     // Draw breakpoint line at the end if breakpoint is at last step
@@ -386,7 +399,7 @@ bool HistoryPanel::renderContent() {
         const Operation* op = m_history->getStep(m_editingStep);
         if (op) {
             ImGui::Separator();
-            ImGui::TextColored(materializr::accentText(), "Properties: %s",
+            ImGui::TextColored(materializr::accentText(), materializr::tr("Properties: %s"),
                                op->name().c_str());
             ImGui::BeginChild("StepProps",
                               ImVec2(0, propsBlockH - kPropsChrome), true);
@@ -423,7 +436,7 @@ bool HistoryPanel::renderContent() {
                  ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
             ImGui::EndChild();
 
-            if (ImGui::Button("Apply Changes", ImVec2(-1, 0)) || enterInProps) {
+            if (ImGui::Button(materializr::tr("Apply Changes"), ImVec2(-1, 0)) || enterInProps) {
                 // Carry any inline circle-diameter edit forward into the later
                 // full-snapshot sketchedit steps FIRST — otherwise the next
                 // snapshot overwrites it before the extrude/pushpull reads it.
@@ -489,7 +502,7 @@ bool HistoryPanel::renderContent() {
 
     if (m_showUndoRedo) {
         ImGui::BeginDisabled(m_historyLocked || !m_history->canUndo());
-        if (ImGui::Button("Undo")) {
+        if (ImGui::Button(materializr::tr("Undo"))) {
             const Operation* undone =
                 m_history->getStep(m_history->currentStep());
             m_history->undo(*m_document);
@@ -501,7 +514,7 @@ bool HistoryPanel::renderContent() {
         ImGui::SameLine();
 
         ImGui::BeginDisabled(m_historyLocked || !m_history->canRedo());
-        if (ImGui::Button("Redo")) {
+        if (ImGui::Button(materializr::tr("Redo"))) {
             m_history->redo(*m_document);
             publishIfSketchEdit(m_history->getStep(m_history->currentStep()));
             modified = true;
@@ -512,7 +525,7 @@ bool HistoryPanel::renderContent() {
 
         // Step counter
         char stepText[64];
-        std::snprintf(stepText, sizeof(stepText), "Step %d/%d", currentStep + 1, stepCount);
+        std::snprintf(stepText, sizeof(stepText), materializr::tr("Step %d/%d"), currentStep + 1, stepCount);
         ImGui::Text("%s", stepText);
     }
 

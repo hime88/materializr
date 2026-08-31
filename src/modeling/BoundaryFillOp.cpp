@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include "../i18n.h"
 
 namespace {
 
@@ -169,9 +170,8 @@ std::string BoundaryFillOp::description() const {
 }
 
 void BoundaryFillOp::renderProperties() {
-    ImGui::Text("Silhouettes: %d", static_cast<int>(m_outers.size()));
-    ImGui::TextWrapped("Each profile is extruded through the others and the "
-                       "prisms are intersected (visual hull).");
+    ImGui::Text(materializr::tr("Silhouettes: %d"), static_cast<int>(m_outers.size()));
+    ImGui::TextWrapped("%s", materializr::tr("Each profile is extruded through the others and the prisms are intersected (visual hull)."));
 }
 
 std::string BoundaryFillOp::serializeParams() const {

@@ -1,5 +1,6 @@
 #pragma once
 #include "platform_defs.h"
+#include "i18n.h"
 #include <cstdlib>
 
 // Runtime "touch mode" flag. When ON, the UI scales up for fingers and input is
@@ -67,8 +68,12 @@ inline bool touchInputActive() {
 // Commit/cancel/create button labels. In touch mode drop the keyboard hint —
 // there are no Enter/Esc keys, and "(Enter)" just eats space and confuses. So
 // "Confirm (Enter)" -> "Confirm", "Cancel (Esc)" -> "Cancel", etc.
-inline const char* btnConfirm() { return touchMode() ? "Confirm" : "Confirm (Enter)"; }
-inline const char* btnCancel()  { return touchMode() ? "Cancel"  : "Cancel (Esc)"; }
-inline const char* btnCreate()  { return touchMode() ? "Create"  : "Create (Enter)"; }
+inline const char* btnConfirm() {
+    return tr(touchMode() ? "Confirm" : "Confirm (Enter)");
+}
+inline const char* btnCancel()  {
+    return tr(touchMode() ? "Cancel"  : "Cancel (Esc)");
+}
+inline const char* btnCreate()  { return tr(touchMode() ? "Create"  : "Create (Enter)"); }
 
 } // namespace materializr

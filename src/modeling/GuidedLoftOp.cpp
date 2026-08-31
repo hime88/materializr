@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include "../i18n.h"
 
 namespace {
 
@@ -422,8 +423,8 @@ std::string GuidedLoftOp::description() const {
 }
 
 void GuidedLoftOp::renderProperties() {
-    ImGui::Text("Base profile + %d rail(s)", static_cast<int>(m_rails.size()));
-    ImGui::Text("%s, %d generated sections", m_solid ? "Solid" : "Shell",
+    ImGui::Text(materializr::tr("Base profile + %d rail(s)"), static_cast<int>(m_rails.size()));
+    ImGui::Text(materializr::tr("%s, %d generated sections"), m_solid ? "Solid" : "Shell",
                 m_samples);
 }
 

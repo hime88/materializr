@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include "../i18n.h"
 
 namespace materializr {
 namespace touchui {
@@ -672,7 +673,7 @@ bool numberField(const char* id, const char* label, double* v, const char* fmt,
         // Enter commits. Parsing here rather than per keystroke is what makes
         // the caller see one change instead of one per digit — a history-step
         // editor rebuilds once on commit, not on every tap.
-        if (ImGui::Button("Enter", ImVec2(thirdW, keyH))) {
+        if (ImGui::Button(materializr::tr("Enter"), ImVec2(thirdW, keyH))) {
             char* end = nullptr;
             const double parsed = std::strtod(e.buf, &end);
             if (end != e.buf) { *v = parsed; committed = true; }

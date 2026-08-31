@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <imgui.h>
+#include "../i18n.h"
 
 DeleteOp::DeleteOp() = default;
 
@@ -55,13 +56,13 @@ std::string DeleteOp::description() const {
 }
 
 void DeleteOp::renderProperties() {
-    ImGui::Text("Delete");
+    ImGui::Text("%s", materializr::tr("Delete"));
     ImGui::Separator();
 
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 
     if (!m_deletedName.empty()) {
-        ImGui::Text("Name: %s", m_deletedName.c_str());
+        ImGui::Text(materializr::tr("Name: %s"), m_deletedName.c_str());
     }
 }
 

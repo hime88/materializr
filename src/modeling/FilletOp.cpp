@@ -29,6 +29,8 @@
 #include <cmath>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace {
 // Representative point on a face (midpoint of its UV bounds). Stable for the
@@ -639,13 +641,13 @@ std::string FilletOp::description() const {
 }
 
 void FilletOp::renderProperties() {
-    ImGui::Text("Fillet");
+    ImGui::Text("%s", materializr::tr("Fillet"));
     ImGui::Separator();
 
-    materializr::inputNumber("Radius", &m_radius, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Radius"), &m_radius, 0.1, 1.0, "%g");
 
-    ImGui::Text("Edges: %d selected", static_cast<int>(m_edges.size()));
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Edges: %d selected"), static_cast<int>(m_edges.size()));
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 OperationDiff FilletOp::captureDiff() const {

@@ -37,13 +37,17 @@ REGISTER_PLUGIN(RefImage, [](materializr::PluginContext& ctx) {
     auto action = [](materializr::PluginContext& c) {
         c.requestInteractiveOp(materializr::InteractiveOp::ImportRefImage);
     };
-    ctx.registerToolbarButton({"Reference Image", "Create",
-        materializr::SelectionContext::Always, 55,
-        action, nullptr,
-        "Import a photo as a traceable underlay on a construction plane. "
-        "Photograph the object with a ruler in the shot, calibrate the scale "
-        "off the ruler, then sketch over it — move/rotate the plane like any "
-        "construction plane."});
+    // NO toolbar button. A reference image is a construction plane carrying a
+    // picture (RefImageEntry is keyed by planeId), and it is now reachable
+    // where planes are made: the New Plane dialog has an "Add a reference
+    // image" option that works with EVERY plane type, and any existing plane
+    // can take one from its properties. A separate rail button would be a
+    // third route to a worse version of the same thing -- it could only ever
+    // make a ground plane at the origin.
+    //
+    // The command stays registered so the action is still scriptable and
+    // keyboard-reachable, and so old muscle memory finds it in the command
+    // list rather than hitting nothing.
     ctx.registerCommand({"Import Reference Image", "", action});
 
     // Same three plane events as the plane renderer — pose moves, renames,

@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <functional>
+#include "../i18n.h"
 
 namespace {
 
@@ -110,8 +111,8 @@ public:
             materializr::viewportBanner(
                 materializr::accentText(),
                 materializr::touchMode()
-                    ? "SKETCH MODE - Draw shapes. Finish Sketch applies, Exit Sketch discards."
-                    : "SKETCH MODE - Draw shapes. Enter to finish, Escape to cancel.");
+                    ? materializr::tr("SKETCH MODE - Draw shapes. Finish Sketch applies, Exit Sketch discards.")
+                    : materializr::tr("SKETCH MODE - Draw shapes. Enter to finish, Escape to cancel."));
         }
 
         // Dimension input when placing
@@ -122,7 +123,7 @@ public:
             ImGui::Begin("##SketchDim", nullptr,
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-            if (ImGui::InputText("mm", m_dimBuf, sizeof(m_dimBuf),
+            if (ImGui::InputText(materializr::tr("mm"), m_dimBuf, sizeof(m_dimBuf),
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
                 float v = 0.0f;
                 if (materializr::parseFinite(m_dimBuf, v) && v > 0.0f) {

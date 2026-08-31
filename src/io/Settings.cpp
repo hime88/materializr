@@ -143,6 +143,8 @@ void applyKv(const std::map<std::string, std::string>& kv, AppSettings& s) {
     readBool(kv, "snapToGrid",           s.snapToGrid);
     readFloat(kv, "sketchGridStep",      s.sketchGridStep); // was written but never read back
     readIntClamped(kv, "inferenceLevel", s.inferenceLevel, 0, 3);
+    // -1 is meaningful here ("never chosen"), so the floor is -1, not 0.
+    readIntClamped(kv, "language", s.language, -1, 5);
     readBool(kv, "showInferenceToolbarToggle", s.showInferenceToolbarToggle);
     readIntClamped(kv, "angleSnapDeg",   s.angleSnapDeg, 1, 90);
     readFloat(kv, "stlImportAccuracy",   s.stlImportAccuracy);
@@ -400,6 +402,7 @@ bool SettingsIO::save(const std::string& path, const AppSettings& s) {
     ofs << "snapToGrid = "              << (s.snapToGrid ? "true" : "false") << "\n";
     ofs << "sketchGridStep = "          << s.sketchGridStep      << "\n";
     ofs << "inferenceLevel = "          << s.inferenceLevel      << "\n";
+    ofs << "language = "                << s.language            << "\n";
     ofs << "showInferenceToolbarToggle = "
         << (s.showInferenceToolbarToggle ? "true" : "false") << "\n";
     ofs << "angleSnapDeg = "             << s.angleSnapDeg        << "\n";
@@ -500,6 +503,7 @@ bool SettingsIO::exportJson(const std::string& path, const AppSettings& s) {
     ofs << "  \"snapToGrid\": "              << b(s.snapToGrid)         << ",\n";
     ofs << "  \"sketchGridStep\": "          << s.sketchGridStep        << ",\n";
     ofs << "  \"inferenceLevel\": "          << s.inferenceLevel        << ",\n";
+    ofs << "  \"language\": "                << s.language              << ",\n";
     ofs << "  \"showInferenceToolbarToggle\": "
         << b(s.showInferenceToolbarToggle) << ",\n";
     ofs << "  \"angleSnapDeg\": "             << s.angleSnapDeg          << ",\n";

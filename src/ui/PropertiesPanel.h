@@ -45,6 +45,13 @@ public:
     // Routes the plane panel's "Rotate About Axis…" button to Application,
     // which opens the hinge popup for that plane id.
     void setRotatePlaneCallback(std::function<void(int)> cb) { m_rotatePlane = std::move(cb); }
+    // Attach / replace a reference image on an EXISTING plane. A reference
+    // image is already just a plane plus a picture in the document model, so
+    // any plane the user has built -- offset, face-derived, midplane -- can
+    // host one, not only the ground plane the import flow makes.
+    void setAttachRefImageCallback(std::function<void(int)> cb) {
+        m_attachRefImage = std::move(cb);
+    }
     // Called for non-history plane mutations (Flip Normal) so the host marks
     // the project dirty.
     void setDirtyCallback(std::function<void()> cb) { m_markDirty = std::move(cb); }
@@ -89,6 +96,7 @@ private:
     void renderAxisPanel(int axisId, bool& modified);
 
     std::function<void(int)> m_rotatePlane;
+    std::function<void(int)> m_attachRefImage;
     std::function<void()>    m_markDirty;
 
     History* m_history = nullptr;

@@ -13,6 +13,9 @@
 
 #include <cstdio>
 #include <sstream>
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -135,33 +138,33 @@ void PrimitiveOp::renderProperties() {
     ImGui::Separator();
     switch (m_kind) {
         case Kind::Box:
-            materializr::inputNumber("Width (X)",  &m_x, 0.1, 1.0, "%g");
-            materializr::inputNumber("Depth (Y)",  &m_y, 0.1, 1.0, "%g");
-            materializr::inputNumber("Height (Z)", &m_z, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Width (X)"),  &m_x, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Depth (Y)"),  &m_y, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Height (Z)"), &m_z, 0.1, 1.0, "%g");
             break;
         case Kind::Cylinder:
-            materializr::inputNumber("Radius",     &m_radius, 0.1, 1.0, "%g");
-            materializr::inputNumber("Height",     &m_height, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Radius"),     &m_radius, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Height"),     &m_height, 0.1, 1.0, "%g");
             break;
         case Kind::Sphere:
-            materializr::inputNumber("Radius",     &m_radius, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Radius"),     &m_radius, 0.1, 1.0, "%g");
             break;
         case Kind::Cone:
-            materializr::inputNumber("Bottom radius", &m_radius,    0.1, 1.0, "%g");
-            materializr::inputNumber("Top radius",    &m_topRadius, 0.1, 1.0, "%g");
-            materializr::inputNumber("Height",        &m_height,    0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Bottom radius"), &m_radius,    0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Top radius"),    &m_topRadius, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Height"),        &m_height,    0.1, 1.0, "%g");
             break;
         case Kind::Torus:
-            materializr::inputNumber("Major radius",  &m_radius,      0.1, 1.0, "%g");
-            materializr::inputNumber("Minor radius",  &m_minorRadius, 0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Major radius"),  &m_radius,      0.1, 1.0, "%g");
+            materializr::inputNumber(materializr::tr("Minor radius"),  &m_minorRadius, 0.1, 1.0, "%g");
             break;
     }
     ImGui::Spacing();
-    ImGui::Text("Origin");
+    ImGui::Text("%s", materializr::tr("Origin"));
     materializr::inputNumber("X", &m_ox, 0.1, 1.0, "%g");
     materializr::inputNumber("Y", &m_oy, 0.1, 1.0, "%g");
     materializr::inputNumber("Z", &m_oz, 0.1, 1.0, "%g");
-    ImGui::Text("Body ID: %d", m_createdBodyId);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_createdBodyId);
 
     // Same validation feedback the create popup shows — Apply Changes runs
     // execute() which short-circuits on invalid params, and History's
@@ -199,7 +202,7 @@ void PrimitiveOp::renderProperties() {
         ImGui::Spacing();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 240.0f);
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
-                           "Invalid: %s\nApply will be rolled back.", problem);
+                           materializr::tr("Invalid: %s\nApply will be rolled back."), problem);
         ImGui::PopTextWrapPos();
     }
 }

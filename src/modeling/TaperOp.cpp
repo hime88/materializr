@@ -14,6 +14,8 @@
 #include <gp_Pnt.hxx>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -135,11 +137,11 @@ std::string TaperOp::description() const {
 }
 
 void TaperOp::renderProperties() {
-    ImGui::Text("Draft");
+    ImGui::Text("%s", materializr::tr("Draft"));
     ImGui::Separator();
-    materializr::inputNumber("Angle (deg)", &m_angleDeg, 0.5, 5.0, "%.1f");
-    ImGui::Text("Faces: %d", m_faces.Size());
-    ImGui::Text("Body ID: %d", m_bodyId);
+    materializr::inputNumber(materializr::tr("Angle (deg)"), &m_angleDeg, 0.5, 5.0, "%.1f");
+    ImGui::Text(materializr::tr("Faces: %d"), m_faces.Size());
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 }
 
 std::string TaperOp::serializeParams() const {

@@ -15,6 +15,7 @@
 #include "modeling/SketchPlaneAxis.h"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <Geom_Circle.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -137,4 +138,66 @@ TEST(SketchPlaneAxis, AVerticalFaceUsesAnAxisThatLiesInIt) {
                                gp_Pnt(0, 20, 8), gp_Pnt(0, 0, 8));
     const gp_Dir x = sketchPlaneXDirection(f, n, gp_Dir(0, 1, 0));
     EXPECT_NEAR(gp_Vec(x) * gp_Vec(n), 0.0, 1e-9);
+}
+
+// A ROUND face must not let a straight sliver steer the grid. Steve's flange:
+// the tube's top cap is bounded by circles plus one short keyway flat at ~17
+// degrees; the flat won the edge-following pick and rotated the whole sketch
+// grid 17 degrees off the world grid on a face that is round by any sane
+// reading. When circular arc length dominates the boundary, off-axis straight
+// edges are ignored and the world axis wins.
+TEST(SketchPlaneAxis, KeywayFlatOnARoundFaceDoesNotRotateTheGrid) {
+    // Disc of radius 10 in the XY plane with a chord flat at 17 degrees:
+    // arc from A going the long way round to B, then the chord B->A.
+    const double ang = 17.0 * M_PI / 180.0;
+    const gp_Dir flatDir(std::cos(ang), std::sin(ang), 0);
+    // Chord endpoints: a short flat near the rim, perpendicular offset 9.5.
+    const gp_Pnt C(0, 0, 0);
+    const gp_Dir n(0, 0, 1);
+    const gp_Dir toFlat(-std::sin(ang), std::cos(ang), 0);   // flat's outward side
+    const double half = std::sqrt(10.0 * 10.0 - 9.5 * 9.5);  // ~3.12 -> short flat
+    gp_Pnt A(toFlat.X() * 9.5 - flatDir.X() * half,
+             toFlat.Y() * 9.5 - flatDir.Y() * half, 0);
+    gp_Pnt B(toFlat.X() * 9.5 + flatDir.X() * half,
+             toFlat.Y() * 9.5 + flatDir.Y() * half, 0);
+    Handle(Geom_Circle) circ = new Geom_Circle(gp_Ax2(C, n), 10.0);
+    // Arc the long way round from B to A (parameters via angles).
+    // Long-way arc A -> B: CCW from aA up to aB + 2pi (sweep ~324 deg). The
+    // first attempt swept aB -> aA+2pi = 396 deg -- more than a full turn --
+    // and the resulting degenerate arc adapted as something other than a
+    // circle, so the round-face rule never saw it.
+    const double aA = std::atan2(A.Y(), A.X());
+    const double aB = std::atan2(B.Y(), B.X());
+    TopoDS_Edge arc = BRepBuilderAPI_MakeEdge(circ, aA, aB + 2.0 * M_PI).Edge();
+    TopoDS_Edge chord = BRepBuilderAPI_MakeEdge(B, A).Edge();
+    BRepBuilderAPI_MakeWire w(arc, chord);
+    ASSERT_TRUE(w.IsDone());
+    TopoDS_Face f = BRepBuilderAPI_MakeFace(gp_Pln(C, n), w.Wire()).Face();
+
+    const gp_Dir x = sketchPlaneXDirection(f, n, gp_Dir(1, 0, 0));
+    // Must land on a world axis, not the 17-degree flat.
+    const double offX = std::abs(std::abs(gp_Vec(x) * gp_Vec(1, 0, 0)) - 1.0);
+    const double offY = std::abs(std::abs(gp_Vec(x) * gp_Vec(0, 1, 0)) - 1.0);
+    EXPECT_LT(std::min(offX, offY), 1e-6)
+        << "grid rotated off the world axes: x = (" << x.X() << ", " << x.Y()
+        << ", " << x.Z() << ")";
+}
+
+// ...but when the flat IS world-aligned, following it is harmless and keeps
+// the edge exactly on the lattice -- that behaviour survives.
+TEST(SketchPlaneAxis, WorldAlignedFlatOnARoundFaceStillFollows) {
+    const gp_Pnt C(0, 0, 0);
+    const gp_Dir n(0, 0, 1);
+    const double half = std::sqrt(10.0 * 10.0 - 9.5 * 9.5);
+    gp_Pnt A(-half, 9.5, 0), B(half, 9.5, 0);                // flat along +X
+    Handle(Geom_Circle) circ = new Geom_Circle(gp_Ax2(C, n), 10.0);
+    const double aA = std::atan2(A.Y(), A.X());
+    const double aB = std::atan2(B.Y(), B.X());
+    TopoDS_Edge arc = BRepBuilderAPI_MakeEdge(circ, aB, aA + 2.0 * M_PI).Edge();
+    TopoDS_Edge chord = BRepBuilderAPI_MakeEdge(A, B).Edge();
+    BRepBuilderAPI_MakeWire w(arc, chord);
+    ASSERT_TRUE(w.IsDone());
+    TopoDS_Face f = BRepBuilderAPI_MakeFace(gp_Pln(C, n), w.Wire()).Face();
+    const gp_Dir x = sketchPlaneXDirection(f, n, gp_Dir(0.6, 0.8, 0));
+    EXPECT_NEAR(std::abs(gp_Vec(x) * gp_Vec(1, 0, 0)), 1.0, 1e-6);
 }

@@ -1,4 +1,5 @@
 #include "DrawingView.h"
+#include "../i18n.h"
 #include "../core/Document.h"
 
 #include <imgui.h>
@@ -15,6 +16,8 @@
 #include <fstream>
 #include <cstdio>
 #include <cmath>
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -285,24 +288,24 @@ void DrawingView::renderView(const DrawingViewData& view) {
 }
 
 void DrawingView::render() {
-    ImGui::Begin("2D Drawing");
+    ImGui::Begin(materializr::tr("2D Drawing"));
 
     if (!m_document) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No document loaded.");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No document loaded."));
         ImGui::End();
         return;
     }
 
     // Toolbar
-    if (ImGui::Button("Generate Views")) {
+    if (ImGui::Button(materializr::tr("Generate Views"))) {
         generateViews();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Export DXF")) {
+    if (ImGui::Button(materializr::tr("Export DXF"))) {
         exportDXF("drawing.dxf");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Export SVG")) {
+    if (ImGui::Button(materializr::tr("Export SVG"))) {
         exportSVG("drawing.svg");
     }
 

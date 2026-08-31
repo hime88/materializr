@@ -58,6 +58,9 @@ void ExtrudeOp::setProfile(const TopoDS_Shape& wire) {
 #include <ElSLib.hxx>
 #include <TopExp_Explorer.hxx>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace {
 // Interior points of `face`, up to `maxPts`, spread over a UV grid. MANY
@@ -769,24 +772,26 @@ std::string ExtrudeOp::description() const {
 }
 
 void ExtrudeOp::renderProperties() {
-    ImGui::Text("Extrude");
+    ImGui::Text("%s", materializr::tr("Extrude"));
     ImGui::Separator();
 
-    materializr::inputNumber("Distance", &m_distance, 0.1, 1.0, "%g");
+    materializr::inputNumber(materializr::tr("Distance"), &m_distance, 0.1, 1.0, "%g");
 
-    const char* modeItems[] = { "New Body", "Union", "Subtract", "Intersect" };
+    const char* modeItems[] = { materializr::tr("New Body"), materializr::tr("Union"),
+                                materializr::tr("Subtract"), materializr::tr("Intersect") };
     int modeIndex = static_cast<int>(m_mode);
-    if (ImGui::Combo("Mode", &modeIndex, modeItems, 4)) {
+    if (ImGui::Combo(materializr::tr("Mode"), &modeIndex, modeItems, 4)) {
         m_mode = static_cast<ExtrudeMode>(modeIndex);
     }
 
-    const char* dirItems[] = { "Normal", "Symmetric", "Custom" };
+    const char* dirItems[] = { materializr::tr("Normal"), materializr::tr("Symmetric"),
+                               materializr::tr("Custom") };
     int dirIndex = static_cast<int>(m_direction);
-    if (ImGui::Combo("Direction", &dirIndex, dirItems, 3)) {
+    if (ImGui::Combo(materializr::tr("Direction"), &dirIndex, dirItems, 3)) {
         m_direction = static_cast<ExtrudeDirection>(dirIndex);
     }
 
-    materializr::inputNumber("Draft Angle", &m_draftAngle, 0.1, 1.0, "%.1f");
+    materializr::inputNumber(materializr::tr("Draft Angle"), &m_draftAngle, 0.1, 1.0, "%.1f");
 
     if (m_mode != ExtrudeMode::NewBody) {
         materializr::inputNumberInt("Target Body ID", &m_targetBodyId);

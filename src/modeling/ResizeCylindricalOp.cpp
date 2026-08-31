@@ -34,6 +34,8 @@
 #include <cmath>
 #include <algorithm>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 // Per-op diagnostic log. Off unless the user passed --verbose; under verbose,
 // stderr is redirected to /tmp/materializr.log (or --log <path>), so these
@@ -664,7 +666,7 @@ bool ResizeCylindricalOp::undo(Document& doc) {
 }
 
 void ResizeCylindricalOp::renderProperties() {
-    ImGui::Text("Resize %s", m_isHole ? "Hole" : "Cylinder");
+    ImGui::Text(materializr::tr("Resize %s"), m_isHole ? "Hole" : "Cylinder");
     ImGui::Separator();
     // Directly editable — Apply (or Enter) re-executes the op with the new
     // diameters (m_old* stays the original cylinder, so the change volume is
@@ -676,26 +678,25 @@ void ResizeCylindricalOp::renderProperties() {
     if (std::abs(m_newTopR - m_newBottomR) < 1e-5) {
         double dia = m_newTopR * 2.0;
         ImGui::SetNextItemWidth(diaW);
-        if (materializr::inputNumber("Diameter (mm)", &dia, 0.1, 1.0, "%.2f")) {
+        if (materializr::inputNumber(materializr::tr("Diameter (mm)"), &dia, 0.1, 1.0, "%.2f")) {
             if (dia > 0.01) { m_newTopR = dia * 0.5; m_newBottomR = dia * 0.5; }
         }
     } else {
         double db = m_newBottomR * 2.0;
         double dt = m_newTopR * 2.0;
         ImGui::SetNextItemWidth(diaW);
-        if (materializr::inputNumber("Bottom Ø (mm)", &db, 0.1, 1.0, "%.2f")) {
+        if (materializr::inputNumber(materializr::tr("Bottom Ø (mm)"), &db, 0.1, 1.0, "%.2f")) {
             if (db > 0.01) m_newBottomR = db * 0.5;
         }
         ImGui::SetNextItemWidth(diaW);
-        if (materializr::inputNumber("Top Ø (mm)", &dt, 0.1, 1.0, "%.2f")) {
+        if (materializr::inputNumber(materializr::tr("Top Ø (mm)"), &dt, 0.1, 1.0, "%.2f")) {
             if (dt > 0.01) m_newTopR = dt * 0.5;
         }
     }
-    ImGui::Text("Length: %.2f mm", m_height);
+    ImGui::Text(materializr::tr("Length: %.2f mm"), m_height);
     // WRAPPED: inline history-panel editor — see ThreadOp for the same note.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("Clicking the circular edge / face in the viewport "
-                       "also re-edits.");
+    ImGui::TextWrapped("%s", materializr::tr("Clicking the circular edge / face in the viewport also re-edits."));
     ImGui::PopStyleColor();
 }
 

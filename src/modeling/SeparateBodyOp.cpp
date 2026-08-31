@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include "../i18n.h"
 
 int SeparateBodyOp::solidCount(const TopoDS_Shape& shape) {
     if (shape.IsNull()) return 0;
@@ -87,14 +88,14 @@ std::string SeparateBodyOp::description() const {
 }
 
 void SeparateBodyOp::renderProperties() {
-    ImGui::Text("Separate");
+    ImGui::Text("%s", materializr::tr("Separate"));
     ImGui::Separator();
-    ImGui::Text("Source body: %d", m_bodyId);
-    ImGui::Text("Split into: %d bodies",
+    ImGui::Text(materializr::tr("Source body: %d"), m_bodyId);
+    ImGui::Text(materializr::tr("Split into: %d bodies"),
                 static_cast<int>(m_newBodyIds.size() + 1));
     if (!m_newBodyIds.empty()) {
-        ImGui::Text("New bodies:");
-        for (int id : m_newBodyIds) ImGui::BulletText("Body %d", id);
+        ImGui::Text("%s", materializr::tr("New bodies:"));
+        for (int id : m_newBodyIds) ImGui::BulletText(materializr::tr("Body %d"), id);
     }
 }
 

@@ -122,6 +122,9 @@ private:
     std::string m_toastText;
     double m_toastExpiry = 0.0;
     void renderSvgToolPanel();  // SVG placement settings (floating)
+    void renderAirfoilToolPanel(); // airfoil chord / points / trailing edge
+    std::string m_airfoilSource;   // path the profile came from, for re-reading
+    int  m_airfoilPointBudget = 40; // spline control points per surface
     void renderMirrorToolPanel(); // interactive mirror line controls (floating)
     // Camera-upright default rotation for Text/SVG placement.
     void seedUprightPlacementAngle();
@@ -930,6 +933,9 @@ private:
     // Live-switchable: read every frame by run()/renderViewport(); persisted
     // on save. The helpers below are the preferred spelling at call sites.
     UiLayout m_uiLayout = UiLayout::Classic;
+    // UI language index, mirroring materializr::Lang. -1 = never chosen, which
+    // is what makes the setup wizard open with the language question.
+    int m_language = -1;
     bool classicLayout() const { return m_uiLayout == UiLayout::Classic; }
     bool modernLayout()  const { return m_uiLayout == UiLayout::Modern;  }
     bool imTouchLayout() const { return m_uiLayout == UiLayout::ImTouch; }
@@ -1598,6 +1604,11 @@ private:
     // selected) drives opacity / physical width / the ruler-calibration popup.
     void beginRefImageImport();
     void renderRefImagePanel();
+    void renderRefImageControls(int planeId);          // opacity / size / Calibrate
+    void renderRefImageCalibrationPopup(int planeId);  // the two-click ruler popup
+    void attachRefImageToPlane(int planeId);
+    bool loadRefImageFile(const std::string& path, RefImageEntry& out,
+                          std::string& baseName);
     // Calibration popup state: which plane's image is being calibrated
     // (-1 = closed), the ImGui preview texture (panel-owned, one at a time),
     // and up to two picked points in IMAGE-PIXEL coordinates.
@@ -1634,6 +1645,17 @@ private:
     // user can stack multiple rotations by re-clicking Apply.
     float m_planeOpRotDeg = 0.0f;
     char  m_planeOpRotBuf[32] = "0.0";
+    // One per axis: a compound tilt is a single intent, not three sequential
+    // applies through a radio button. The values are ABSOLUTE -- the plane's
+    // total rotation from its chosen alignment -- so the fields keep reading
+    // what you set, and pressing Enter twice cannot silently double it.
+    char  m_planeOpRotBufX[32] = "0.0";
+    char  m_planeOpRotBufY[32] = "0.0";
+    char  m_planeOpRotBufZ[32] = "0.0";
+    // Applied after EVERY preview rebuild, so changing the alignment or
+    // nudging the offset no longer throws the rotation away.
+    float m_planeOpRotX = 0.0f, m_planeOpRotY = 0.0f, m_planeOpRotZ = 0.0f;
+    void applyPlaneOpRotation();
     int   m_planeOpRotAxisIdx = 0; // 0=X, 1=Z (user up), 2=Y
 
     // Selection-derived inputs for the kind-index 4/5/6 creation modes,
@@ -1657,6 +1679,17 @@ private:
     // selection isn't present.
     bool computeDerivedPlaneNP(int kindIdx, gp_Dir& outNormal, gp_Pnt& outPoint) const;
 
+    // Reference image being placed WITH a construction plane. The preview
+    // plane is destroyed and rebuilt on every alignment/offset change
+    // (LiveOpPreview::hold drops the previous instance), so the image cannot
+    // live on it -- it is held here and re-attached after each preview apply.
+    // That is what lets the photo be visible, scaled and calibrated while the
+    // plane is still being positioned, instead of only after Apply.
+    bool m_planeOpWantRefImage = false;
+    bool m_planeOpHasPendingImage = false;
+    RefImageEntry m_planeOpPendingImage;
+    void pickPlaneOpRefImage();
+    void reattachPlaneOpRefImage();
     void beginConstructionPlane();
     // Open the plane popup forced to a specific kind index (4=Midplane,
     // 5=Normal-to-Axis, 6=Tangent), used by the Properties-panel contextual

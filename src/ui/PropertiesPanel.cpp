@@ -1,4 +1,5 @@
 #include "UiTheme.h"
+#include "../i18n.h"
 #include "PropertiesPanel.h"
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -39,6 +40,12 @@
 #include <TopoDS.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include "NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 // Measurement-style readouts for selected FACES / EDGES / VERTICES — area,
 // length, surface/curve kind and dimensions, with totals across a
@@ -73,8 +80,8 @@ static void renderSubShapeProperties(const SelectionManager& sel) {
                     default: break;
                 }
                 ImGui::TextColored(materializr::accentText(), "%s", kind);
-                ImGui::Text("Area: %.2f mm^2", g.Mass());
-                ImGui::Text("Centre: %.2f, %.2f, %.2f mm", c.X(), c.Z(), c.Y());
+                ImGui::Text(materializr::tr("Area: %.2f mm^2"), g.Mass());
+                ImGui::Text(materializr::tr("Centre: %.2f, %.2f, %.2f mm"), c.X(), c.Z(), c.Y());
                 if (surf.GetType() == GeomAbs_Plane) {
                     // From the SURFACE, not the plane's stored axis.
                     //
@@ -95,18 +102,18 @@ static void renderSubShapeProperties(const SelectionManager& sel) {
                         gf.Normal(0.5 * (u0 + u1), 0.5 * (v0 + v1), np, nv);
                         if (nv.Magnitude() > 1e-9) n = gp_Dir(nv);
                     } catch (...) {}
-                    ImGui::Text("Normal: %.3f, %.3f, %.3f", n.X(), n.Z(), n.Y());
+                    ImGui::Text(materializr::tr("Normal: %.3f, %.3f, %.3f"), n.X(), n.Z(), n.Y());
                 } else if (surf.GetType() == GeomAbs_Cylinder) {
-                    ImGui::Text("Radius: %.3f mm  (dia %.3f)",
+                    ImGui::Text(materializr::tr("Radius: %.3f mm  (dia %.3f)"),
                                 surf.Cylinder().Radius(),
                                 2.0 * surf.Cylinder().Radius());
                 } else if (surf.GetType() == GeomAbs_Sphere) {
-                    ImGui::Text("Radius: %.3f mm", surf.Sphere().Radius());
+                    ImGui::Text(materializr::tr("Radius: %.3f mm"), surf.Sphere().Radius());
                 } else if (surf.GetType() == GeomAbs_Cone) {
-                    ImGui::Text("Half-angle: %.1f deg",
+                    ImGui::Text(materializr::tr("Half-angle: %.1f deg"),
                                 surf.Cone().SemiAngle() * 180.0 / M_PI);
                 } else if (surf.GetType() == GeomAbs_Torus) {
-                    ImGui::Text("Radii: %.3f / %.3f mm",
+                    ImGui::Text(materializr::tr("Radii: %.3f / %.3f mm"),
                                 surf.Torus().MajorRadius(),
                                 surf.Torus().MinorRadius());
                 }
@@ -128,27 +135,27 @@ static void renderSubShapeProperties(const SelectionManager& sel) {
                     default: break;
                 }
                 ImGui::TextColored(materializr::accentText(), "%s", kind);
-                ImGui::Text("Length: %.3f mm", g.Mass());
+                ImGui::Text(materializr::tr("Length: %.3f mm"), g.Mass());
                 if (cu.GetType() == GeomAbs_Circle) {
-                    ImGui::Text("Radius: %.3f mm  (dia %.3f)",
+                    ImGui::Text(materializr::tr("Radius: %.3f mm  (dia %.3f)"),
                                 cu.Circle().Radius(),
                                 2.0 * cu.Circle().Radius());
                     double sweep = (cu.LastParameter() - cu.FirstParameter())
                                    * 180.0 / M_PI;
                     if (sweep < 359.9)
-                        ImGui::Text("Arc sweep: %.1f deg", sweep);
+                        ImGui::Text(materializr::tr("Arc sweep: %.1f deg"), sweep);
                 }
                 gp_Pnt m = cu.Value(0.5 * (cu.FirstParameter() +
                                            cu.LastParameter()));
-                ImGui::Text("Midpoint: %.2f, %.2f, %.2f mm",
+                ImGui::Text(materializr::tr("Midpoint: %.2f, %.2f, %.2f mm"),
                             m.X(), m.Z(), m.Y());
                 ImGui::Spacing();
             } else if (e.type == SelectionType::Vertex &&
                        e.shape.ShapeType() == TopAbs_VERTEX) {
                 ++nVerts;
                 gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(e.shape));
-                ImGui::TextColored(materializr::accentText(), "Vertex");
-                ImGui::Text("At: %.3f, %.3f, %.3f mm", p.X(), p.Z(), p.Y());
+                ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Vertex"));
+                ImGui::Text(materializr::tr("At: %.3f, %.3f, %.3f mm"), p.X(), p.Z(), p.Y());
                 ImGui::Spacing();
             }
         } catch (...) {}
@@ -156,15 +163,14 @@ static void renderSubShapeProperties(const SelectionManager& sel) {
     // Multi-select totals = a quick measure tool.
     if (nFaces > 1) {
         ImGui::Separator();
-        ImGui::Text("Total area (%d faces): %.2f mm^2", nFaces, totalArea);
+        ImGui::Text(materializr::tr("Total area (%d faces): %.2f mm^2"), nFaces, totalArea);
     }
     if (nEdges > 1) {
         ImGui::Separator();
-        ImGui::Text("Total length (%d edges): %.3f mm", nEdges, totalLen);
+        ImGui::Text(materializr::tr("Total length (%d edges): %.3f mm"), nEdges, totalLen);
     }
     if (nFaces + nEdges + nVerts == 0)
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                           "No measurable sub-shapes selected.");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No measurable sub-shapes selected."));
 }
 
 
@@ -193,7 +199,7 @@ int PropertiesPanel::getEditingStep() const {
 }
 
 bool PropertiesPanel::render() {
-    ImGui::Begin("Properties", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(materializr::tr("Properties"), nullptr, ImGuiWindowFlags_NoCollapse);
     const bool modified = renderContent();
     ImGui::End();
     return modified;
@@ -242,7 +248,7 @@ bool PropertiesPanel::renderContent() {
             ImGui::Spacing();
             ImGui::Separator();
 
-            if (ImGui::Button("Apply Changes", ImVec2(-1, 0)) || enterCommits) {
+            if (ImGui::Button(materializr::tr("Apply Changes"), ImVec2(-1, 0)) || enterCommits) {
                 if (m_document) {
                     // Carry any inline circle-diameter edit into later snapshots
                     // of the same sketch before replaying (see HistoryPanel).
@@ -259,7 +265,7 @@ bool PropertiesPanel::renderContent() {
 
             // Enabled/disabled toggle
             bool enabled = op->isEnabled();
-            if (ImGui::Checkbox("Enabled", &enabled)) {
+            if (ImGui::Checkbox(materializr::tr("Enabled"), &enabled)) {
                 if (m_document) {
                     // In-place toggle — preserves base bodies the op modifies
                     // (replayAll's doc.clear() would delete them).
@@ -277,7 +283,7 @@ bool PropertiesPanel::renderContent() {
             ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", stepInfo);
 
             // Clear selection button
-            if (ImGui::Button("Deselect", ImVec2(-1, 0))) {
+            if (ImGui::Button(materializr::tr("Deselect"), ImVec2(-1, 0))) {
                 m_editingStep = -1;
             }
         }
@@ -289,7 +295,7 @@ bool PropertiesPanel::renderContent() {
         int bodyId = sel[0].bodyId;
 
         // Header
-        ImGui::TextColored(materializr::accentText(), "Body Properties");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Body Properties"));
         ImGui::Separator();
 
         // Body name (editable)
@@ -298,7 +304,7 @@ bool PropertiesPanel::renderContent() {
         std::strncpy(nameBuffer, bodyName.c_str(), sizeof(nameBuffer) - 1);
         nameBuffer[sizeof(nameBuffer) - 1] = '\0';
 
-        ImGui::Text("Name:");
+        ImGui::Text("%s", materializr::tr("Name:"));
         ImGui::SameLine();
         if (ImGui::InputText("##BodyName", nameBuffer, sizeof(nameBuffer),
                              ImGuiInputTextFlags_EnterReturnsTrue)) {
@@ -307,12 +313,12 @@ bool PropertiesPanel::renderContent() {
 
         // Body ID
         char idText[32];
-        std::snprintf(idText, sizeof(idText), "ID: %d", bodyId);
+        std::snprintf(idText, sizeof(idText), materializr::tr("ID: %d"), bodyId);
         ImGui::Text("%s", idText);
 
         // Visibility toggle
         bool visible = m_document->isBodyVisible(bodyId);
-        if (ImGui::Checkbox("Visible", &visible)) {
+        if (ImGui::Checkbox(materializr::tr("Visible"), &visible)) {
             m_document->setBodyVisible(bodyId, visible);
         }
 
@@ -326,7 +332,7 @@ bool PropertiesPanel::renderContent() {
                 ImGui::TextDisabled("%s", hint.c_str());
                 ImGui::PopTextWrapPos();
                 if (hint.rfind("Detached", 0) == 0 && m_relink &&
-                    ImGui::SmallButton("Re-link sketch")) {
+                    ImGui::SmallButton(materializr::tr("Re-link sketch"))) {
                     m_relink(/*isBody=*/true, bodyId);
                 }
             }
@@ -340,7 +346,7 @@ bool PropertiesPanel::renderContent() {
         // Scale — same TransformOp, same anchor, same ellipse-from-cylinder
         // surprise. Editing now lives on the Scale gizmo popup, which has a
         // % / mm toggle and shows live dimensions in mm mode.
-        ImGui::TextColored(materializr::accentText(), "Dimensions");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Dimensions"));
         const TopoDS_Shape& shape = m_document->getBody(bodyId);
         if (!shape.IsNull()) {
             // BRepBndLib::AddOptimal here used to run every frame, costing
@@ -375,14 +381,14 @@ bool PropertiesPanel::renderContent() {
                 }
             }
             if (haveExtents) {
-                ImGui::Text("Size: %.2f x %.2f x %.2f mm",
+                ImGui::Text(materializr::tr("Size: %.2f x %.2f x %.2f mm"),
                             extents[0], extents[1], extents[2]);
-                ImGui::TextDisabled("Edit dimensions via the Scale gizmo (R).");
+                ImGui::TextDisabled("%s", materializr::tr("Edit dimensions via the Scale gizmo (R)."));
             } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Empty shape");
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("Empty shape"));
             }
         } else {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No shape data");
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No shape data"));
         }
 
         // If multiple bodies selected, show count
@@ -390,7 +396,7 @@ bool PropertiesPanel::renderContent() {
             ImGui::Spacing();
             ImGui::Separator();
             char multiText[64];
-            std::snprintf(multiText, sizeof(multiText), "%d bodies selected",
+            std::snprintf(multiText, sizeof(multiText), materializr::tr("%d bodies selected"),
                           m_selection->selectedBodyCount());
             ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", multiText);
         }
@@ -442,7 +448,8 @@ bool PropertiesPanel::renderContent() {
         }
 
         char selText[128];
-        std::snprintf(selText, sizeof(selText), "%d %s(s) selected", count, typeName);
+        std::snprintf(selText, sizeof(selText), materializr::tr("%d %s(s) selected"),
+                      count, materializr::tr(typeName));
         ImGui::TextColored(materializr::accentText(), "%s", selText);
         ImGui::Separator();
 
@@ -455,7 +462,7 @@ bool PropertiesPanel::renderContent() {
                 ImGui::TextDisabled("%s", hint.c_str());
                 ImGui::PopTextWrapPos();
                 if (hint.rfind("Detached", 0) == 0 && m_relink &&
-                    ImGui::SmallButton("Re-link to body")) {
+                    ImGui::SmallButton(materializr::tr("Re-link to body"))) {
                     m_relink(/*isBody=*/false, parentSketchId);
                 }
                 ImGui::Spacing();
@@ -492,8 +499,7 @@ bool PropertiesPanel::renderContent() {
     }
     // Case 4: Nothing selected
     else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                           "Select an object or operation");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("Select an object or operation"));
     }
 
     return modified;
@@ -514,25 +520,50 @@ void PropertiesPanel::renderPlanePanel(int planeId, bool& modified) {
     gp_Dir u = ax.XDirection();
 
     // World→user display swap (Y/Z) so "up" reads as the user's Z.
-    ImGui::Text("Origin:  %.2f, %.2f, %.2f mm", o.X(), o.Z(), o.Y());
-    ImGui::Text("Normal:  %.3f, %.3f, %.3f",     n.X(), n.Z(), n.Y());
-    ImGui::Text("In-plane X: %.3f, %.3f, %.3f",  u.X(), u.Z(), u.Y());
+    ImGui::Text(materializr::tr("Origin:  %.2f, %.2f, %.2f mm"), o.X(), o.Z(), o.Y());
+    ImGui::Text(materializr::tr("Normal:  %.3f, %.3f, %.3f"),     n.X(), n.Z(), n.Y());
+    ImGui::Text(materializr::tr("In-plane X: %.3f, %.3f, %.3f"),  u.X(), u.Z(), u.Y());
 
     // Tilt of the plane away from horizontal = angle of its normal from the
     // world up axis (world +Y). 0° = floor-parallel, 90° = vertical wall.
     double tilt = std::acos(std::min(1.0, std::fabs(n.Y()))) * 180.0 / M_PI;
-    ImGui::Text("Tilt from horizontal: %.1f°", tilt);
+    ImGui::Text(materializr::tr("Tilt from horizontal: %.1f°"), tilt);
 
     ImGui::Spacing();
     ImGui::Separator();
-    if (ImGui::Button("Flip Normal")) {
+    if (ImGui::Button(materializr::tr("Flip Normal"))) {
         m_document->flipPlaneNormal(planeId);
         if (m_markDirty) m_markDirty();
         modified = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Rotate About Axis...")) {
+    if (ImGui::Button(materializr::tr("Rotate About Axis..."))) {
         if (m_rotatePlane) m_rotatePlane(planeId);
+    }
+
+    // Reference image. In the document a reference image IS a plane plus a
+    // picture, so every plane can host one -- this is the route to putting a
+    // traceable photo on an offset or face-derived plane instead of only on
+    // the ground plane the import flow builds.
+    if (m_attachRefImage) {
+        const bool has = m_document->getRefImage(planeId) != nullptr;
+        ImGui::Spacing();
+        if (ImGui::Button(materializr::tr(has ? "Replace Image..."
+                                              : "Attach Image...")))
+            m_attachRefImage(planeId);
+        ImGui::SetItemTooltip("%s", materializr::tr(
+            "Put a traceable photo or drawing on this plane. Set its real size "
+            "with Calibrate, then sketch over it."));
+        if (has) {
+            ImGui::SameLine();
+            if (ImGui::Button(materializr::tr("Remove Image"))) {
+                m_document->removeRefImage(planeId);
+                if (m_markDirty) m_markDirty();
+                modified = true;
+            }
+            ImGui::SetItemTooltip("%s", materializr::tr(
+                "Detach the image. The construction plane itself stays."));
+        }
     }
 }
 
@@ -544,13 +575,13 @@ void PropertiesPanel::renderAxisPanel(int axisId, bool& modified) {
 
     const gp_Pnt& o = ae->origin;
     const gp_Dir& d = ae->direction;
-    ImGui::Text("Origin:    %.2f, %.2f, %.2f mm", o.X(), o.Z(), o.Y());
-    ImGui::Text("Direction: %.3f, %.3f, %.3f",     d.X(), d.Z(), d.Y());
-    ImGui::Text("Length:    %.1f mm", ae->halfLength * 2.0);
+    ImGui::Text(materializr::tr("Origin:    %.2f, %.2f, %.2f mm"), o.X(), o.Z(), o.Y());
+    ImGui::Text(materializr::tr("Direction: %.3f, %.3f, %.3f"),     d.X(), d.Z(), d.Y());
+    ImGui::Text(materializr::tr("Length:    %.1f mm"), ae->halfLength * 2.0);
 
     ImGui::Spacing();
     ImGui::Separator();
-    if (ImGui::Button("Flip Direction")) {
+    if (ImGui::Button(materializr::tr("Flip Direction"))) {
         m_document->flipAxisDirection(axisId);
         if (m_markDirty) m_markDirty();
         modified = true;
@@ -574,15 +605,15 @@ void PropertiesPanel::renderSketchElementPanel(bool& modified) {
     const auto& selP = m_sketchTool->getSelectedPoints();
     const size_t total = selC.size() + selA.size() + selL.size() + selP.size();
 
-    ImGui::TextDisabled("Sketch");
+    ImGui::TextDisabled("%s", materializr::tr("Sketch"));
     ImGui::Separator();
     if (total == 0) {
-        ImGui::TextWrapped("Select a sketch element to edit its size.");
+        ImGui::TextWrapped("%s", materializr::tr("Select a sketch element to edit its size."));
         return;
     }
     if (total > 1) {
-        ImGui::Text("%zu elements selected", total);
-        ImGui::TextDisabled("Select a single circle or arc to edit its size.");
+        ImGui::Text(materializr::tr("%zu elements selected"), total);
+        ImGui::TextDisabled("%s", materializr::tr("Select a single circle or arc to edit its size."));
         return;
     }
 
@@ -609,24 +640,24 @@ void PropertiesPanel::renderSketchElementPanel(bool& modified) {
         const SketchCircle* c = nullptr;
         for (const auto& cc : sk->getCircles()) if (cc.id == circleId) { c = &cc; break; }
         if (!c) return;
-        ImGui::Text("Circle");
+        ImGui::Text("%s", materializr::tr("Circle"));
         double dia = c->radius * 2.0;
         ImGui::SetNextItemWidth(140);
-        if (materializr::inputNumber("Diameter (mm)", &dia, 0.0, 0.0, "%.3f",
+        if (materializr::inputNumber(materializr::tr("Diameter (mm)"), &dia, 0.0, 0.0, "%.3f",
                                ImGuiInputTextFlags_EnterReturnsTrue)) {
             double r = std::max(dia, 1e-6) * 0.5;
             apply([sk, circleId, r]() { sk->setCircleRadius(circleId, r); });
         }
-        ImGui::TextDisabled("Centre stays put. Press Enter to apply.");
+        ImGui::TextDisabled("%s", materializr::tr("Centre stays put. Press Enter to apply."));
     } else if (arcId >= 0) {
         const SketchArc* a = nullptr;
         for (const auto& aa : sk->getArcs()) if (aa.id == arcId) { a = &aa; break; }
         if (!a) return;
-        ImGui::Text("Arc");
+        ImGui::Text("%s", materializr::tr("Arc"));
         // Radius: centre fixed, endpoints slide radially (sweep preserved).
         double rad = a->radius;
         ImGui::SetNextItemWidth(140);
-        if (materializr::inputNumber("Radius (mm)", &rad, 0.0, 0.0, "%.3f",
+        if (materializr::inputNumber(materializr::tr("Radius (mm)"), &rad, 0.0, 0.0, "%.3f",
                                ImGuiInputTextFlags_EnterReturnsTrue)) {
             double r = std::max(rad, 1e-6);
             apply([sk, arcId, r]() { sk->resizeArc(arcId, r); });
@@ -641,7 +672,7 @@ void PropertiesPanel::renderSketchElementPanel(bool& modified) {
             double chord = std::sqrt((e->pos.x - s->pos.x) * (e->pos.x - s->pos.x) +
                                      (e->pos.y - s->pos.y) * (e->pos.y - s->pos.y));
             ImGui::SetNextItemWidth(140);
-            if (materializr::inputNumber("Chord (mm)", &chord, 0.0, 0.0, "%.3f",
+            if (materializr::inputNumber(materializr::tr("Chord (mm)"), &chord, 0.0, 0.0, "%.3f",
                                    ImGuiInputTextFlags_EnterReturnsTrue)) {
                 double ch = std::max(chord, 1e-6);
                 apply([sk, arcId, ch]() { sk->setArcChord(arcId, ch); });
@@ -654,14 +685,13 @@ void PropertiesPanel::renderSketchElementPanel(bool& modified) {
             while (sweep > 2.0 * M_PI) sweep -= 2.0 * M_PI;
             double deg = sweep * 180.0 / M_PI;
             ImGui::SetNextItemWidth(140);
-            if (materializr::inputNumber("Sweep (\xC2\xB0)", &deg, 0.0, 0.0, "%.2f",
+            if (materializr::inputNumber(materializr::tr("Sweep (\xC2\xB0)"), &deg, 0.0, 0.0, "%.2f",
                                    ImGuiInputTextFlags_EnterReturnsTrue)) {
                 double rad2 = deg * M_PI / 180.0;
                 apply([sk, arcId, rad2]() { sk->setArcSweep(arcId, rad2); });
             }
         }
-        ImGui::TextDisabled("Chord & Radius scale the arc (sweep kept); "
-                            "Sweep changes the angle. Press Enter to apply.");
+        ImGui::TextDisabled("%s", materializr::tr("Chord & Radius scale the arc (sweep kept); Sweep changes the angle. Press Enter to apply."));
     } else if (!selL.empty()) {
         int lid = *selL.begin();
         const SketchLine* l = nullptr;
@@ -672,40 +702,39 @@ void PropertiesPanel::renderSketchElementPanel(bool& modified) {
         // user means by "make the rectangle editable".
         Sketch::RectInfo rect;
         if (sk->findAxisAlignedRect(lid, rect)) {
-            ImGui::Text("Rectangle");
+            ImGui::Text("%s", materializr::tr("Rectangle"));
             double w = rect.width, h = rect.height;
             ImGui::SetNextItemWidth(140);
-            bool w_ed = materializr::inputNumber("Width (mm)", &w, 0.0, 0.0, "%.3f",
+            bool w_ed = materializr::inputNumber(materializr::tr("Width (mm)"), &w, 0.0, 0.0, "%.3f",
                                            ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SetNextItemWidth(140);
-            bool h_ed = materializr::inputNumber("Height (mm)", &h, 0.0, 0.0, "%.3f",
+            bool h_ed = materializr::inputNumber(materializr::tr("Height (mm)"), &h, 0.0, 0.0, "%.3f",
                                            ImGuiInputTextFlags_EnterReturnsTrue);
             if (w_ed || h_ed) {
                 double nw = std::max(w, 1e-6), nh = std::max(h, 1e-6);
                 apply([sk, lid, nw, nh]() { sk->setRectangleSize(lid, nw, nh); });
             }
-            ImGui::TextDisabled("Centre stays put. Press Enter to apply.");
+            ImGui::TextDisabled("%s", materializr::tr("Centre stays put. Press Enter to apply."));
         } else {
             const SketchPoint* p1 = sk->getPoint(l->startPointId);
             const SketchPoint* p2 = sk->getPoint(l->endPointId);
-            ImGui::Text("Line");
+            ImGui::Text("%s", materializr::tr("Line"));
             double len = 0.0;
             if (p1 && p2)
                 len = std::sqrt((p2->pos.x - p1->pos.x) * (p2->pos.x - p1->pos.x) +
                                 (p2->pos.y - p1->pos.y) * (p2->pos.y - p1->pos.y));
             ImGui::SetNextItemWidth(140);
-            if (materializr::inputNumber("Length (mm)", &len, 0.0, 0.0, "%.3f",
+            if (materializr::inputNumber(materializr::tr("Length (mm)"), &len, 0.0, 0.0, "%.3f",
                                    ImGuiInputTextFlags_EnterReturnsTrue)) {
                 double nl = std::max(len, 1e-6);
                 apply([sk, lid, nl]() { sk->setLineLength(lid, nl); });
             }
-            ImGui::TextDisabled("Grows from its centre; attached arcs keep their "
-                                "angle. Press Enter to apply.");
+            ImGui::TextDisabled("%s", materializr::tr("Grows from its centre; attached arcs keep their angle. Press Enter to apply."));
         }
     } else {
         // A lone point that isn't a circle/arc centre (a line endpoint, etc.).
-        ImGui::Text("Point");
-        ImGui::TextDisabled("Drag to move; no editable size.");
+        ImGui::Text("%s", materializr::tr("Point"));
+        ImGui::TextDisabled("%s", materializr::tr("Drag to move; no editable size."));
     }
 }
 
@@ -758,14 +787,12 @@ void PropertiesPanel::renderSketchConstraintsPanel(int sketchId, bool& modified)
 
     auto& cs = sk->getMutableConstraints();
     if (cs.empty()) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                           "No constraints on this sketch.");
-        ImGui::TextWrapped("Add one by right-clicking a sketch element in "
-                           "sketch-edit mode and picking \"Add Constraint\".");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No constraints on this sketch."));
+        ImGui::TextWrapped("%s", materializr::tr("Add one by right-clicking a sketch element in sketch-edit mode and picking \"Add Constraint\"."));
         return;
     }
 
-    ImGui::TextColored(materializr::accentText(), "Constraints");
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Constraints"));
     ImGui::Separator();
 
     // Friendly type names for the non-editable bullet rows.
@@ -897,19 +924,17 @@ void PropertiesPanel::renderSketchConstraintsPanel(int sketchId, bool& modified)
                 }
             }
         } else {
-            ImGui::TextDisabled("\xE2\x80\xA2 %s", typeName(c.type));
+            ImGui::TextDisabled("\xE2\x80\xA2 %s", materializr::tr(typeName(c.type)));
         }
         ImGui::PopID();
     }
 
     if (!anyDim) {
         ImGui::Spacing();
-        ImGui::TextWrapped("This sketch has no dimensional constraints — only "
-                           "Horizontal / Parallel / etc., which have nothing "
-                           "to tune.");
+        ImGui::TextWrapped("%s", materializr::tr("This sketch has no dimensional constraints — only Horizontal / Parallel / etc., which have nothing to tune."));
     } else {
         ImGui::Spacing();
-        ImGui::TextDisabled("Press Enter or click elsewhere to commit a value.");
+        ImGui::TextDisabled("%s", materializr::tr("Press Enter or click elsewhere to commit a value."));
     }
 }
 

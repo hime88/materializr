@@ -4,6 +4,8 @@
 #include <gp_Vec.hxx>
 #include <imgui.h>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 AlignOp::AlignOp() = default;
 
@@ -71,7 +73,7 @@ std::string AlignOp::description() const {
 }
 
 void AlignOp::renderProperties() {
-    ImGui::Text("Align");
+    ImGui::Text("%s", materializr::tr("Align"));
     ImGui::Separator();
 
     materializr::inputNumberInt("Body ID", &m_bodyId);
@@ -79,23 +81,23 @@ void AlignOp::renderProperties() {
     double sx = m_source.X(), sy = m_source.Y(), sz = m_source.Z();
     double tx = m_target.X(), ty = m_target.Y(), tz = m_target.Z();
 
-    ImGui::Text("Source Point");
-    if (materializr::inputNumber("Src X", &sx, 0.1, 1.0, "%g") ||
-        materializr::inputNumber("Src Y", &sy, 0.1, 1.0, "%g") ||
-        materializr::inputNumber("Src Z", &sz, 0.1, 1.0, "%g")) {
+    ImGui::Text("%s", materializr::tr("Source Point"));
+    if (materializr::inputNumber(materializr::tr("Src X"), &sx, 0.1, 1.0, "%g") ||
+        materializr::inputNumber(materializr::tr("Src Y"), &sy, 0.1, 1.0, "%g") ||
+        materializr::inputNumber(materializr::tr("Src Z"), &sz, 0.1, 1.0, "%g")) {
         m_source.SetCoord(sx, sy, sz);
     }
 
-    ImGui::Text("Target Point");
-    if (materializr::inputNumber("Tgt X", &tx, 0.1, 1.0, "%g") ||
-        materializr::inputNumber("Tgt Y", &ty, 0.1, 1.0, "%g") ||
-        materializr::inputNumber("Tgt Z", &tz, 0.1, 1.0, "%g")) {
+    ImGui::Text("%s", materializr::tr("Target Point"));
+    if (materializr::inputNumber(materializr::tr("Tgt X"), &tx, 0.1, 1.0, "%g") ||
+        materializr::inputNumber(materializr::tr("Tgt Y"), &ty, 0.1, 1.0, "%g") ||
+        materializr::inputNumber(materializr::tr("Tgt Z"), &tz, 0.1, 1.0, "%g")) {
         m_target.SetCoord(tx, ty, tz);
     }
 
     // Show the computed translation
     double dx = tx - sx, dy = ty - sy, dz = tz - sz;
-    ImGui::Text("Translation: (%.3f, %.3f, %.3f)", dx, dy, dz);
+    ImGui::Text(materializr::tr("Translation: (%.3f, %.3f, %.3f)"), dx, dy, dz);
 }
 
 OperationDiff AlignOp::captureDiff() const {

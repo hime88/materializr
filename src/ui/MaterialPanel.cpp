@@ -1,9 +1,12 @@
 #include "MaterialPanel.h"
+#include "../i18n.h"
 #include "../core/Material.h"
 #include "../viewport/ShapeRenderer.h"
 
 #include <imgui.h>
 #include <cstring>
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -34,10 +37,10 @@ bool MaterialPanel::render()
 
     bool changed = false;
 
-    ImGui::Begin("Materials");
+    ImGui::Begin(materializr::tr("Materials"));
 
     // Material preset list
-    ImGui::Text("Presets");
+    ImGui::Text("%s", materializr::tr("Presets"));
     ImGui::Separator();
 
     const auto& materials = m_library->getAll();
@@ -69,19 +72,19 @@ bool MaterialPanel::render()
     // Show properties of selected material
     if (m_selectedMaterial >= 0 && m_selectedMaterial < static_cast<int>(materials.size())) {
         const Material& sel = materials[m_selectedMaterial];
-        ImGui::Text("Selected: %s", sel.name.c_str());
-        ImGui::Text("Roughness: %.2f", sel.roughness);
-        ImGui::Text("Metallic: %.2f", sel.metallic);
+        ImGui::Text(materializr::tr("Selected: %s"), sel.name.c_str());
+        ImGui::Text(materializr::tr("Roughness: %.2f"), sel.roughness);
+        ImGui::Text(materializr::tr("Metallic: %.2f"), sel.metallic);
         if (sel.transmission > 0.0f) {
-            ImGui::Text("Transmission: %.2f", sel.transmission);
-            ImGui::Text("IOR: %.2f", sel.ior);
+            ImGui::Text(materializr::tr("Transmission: %.2f"), sel.transmission);
+            ImGui::Text(materializr::tr("IOR: %.2f"), sel.ior);
         }
     }
 
     ImGui::Spacing();
 
     // Assign to selected button
-    if (ImGui::Button("Assign to Selected")) {
+    if (ImGui::Button(materializr::tr("Assign to Selected"))) {
         changed = true;
     }
 
@@ -90,15 +93,15 @@ bool MaterialPanel::render()
     ImGui::Spacing();
 
     // Custom material editor
-    if (ImGui::CollapsingHeader("Custom Material")) {
+    if (ImGui::CollapsingHeader(materializr::tr("Custom Material###Custom Material"))) {
         m_editingCustom = true;
 
-        ImGui::InputText("Name", m_customName, sizeof(m_customName));
+        ImGui::InputText(materializr::tr("Name"), m_customName, sizeof(m_customName));
         ImGui::ColorEdit3("Base Color", m_customColor);
-        ImGui::SliderFloat("Roughness", &m_customRoughness, 0.0f, 1.0f);
-        ImGui::SliderFloat("Metallic", &m_customMetallic, 0.0f, 1.0f);
+        ImGui::SliderFloat(materializr::tr("Roughness"), &m_customRoughness, 0.0f, 1.0f);
+        ImGui::SliderFloat(materializr::tr("Metallic"), &m_customMetallic, 0.0f, 1.0f);
 
-        if (ImGui::Button("Add Custom Material")) {
+        if (ImGui::Button(materializr::tr("Add Custom Material"))) {
             Material custom;
             custom.name = m_customName;
             custom.baseColor = glm::vec3(m_customColor[0], m_customColor[1], m_customColor[2]);

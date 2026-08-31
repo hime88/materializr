@@ -9,6 +9,8 @@
 #include <sstream>
 #include <vector>
 #include "../ui/NumField.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -357,7 +359,7 @@ void SketchEditOp::applyCircleRadiusToSnapshots(int circleId, double radius) {
 
 void SketchEditOp::renderProperties() {
     if (!m_after) {
-        ImGui::TextDisabled("No snapshot");
+        ImGui::TextDisabled("%s", materializr::tr("No snapshot"));
         return;
     }
     // Edit dimensional values inline. For each change we re-solve `m_after`
@@ -392,7 +394,7 @@ void SketchEditOp::renderProperties() {
             case ConstraintType::Distance: {
                 anyDim = true;
                 double v = c.value;
-                if (materializr::inputNumber("Distance (mm)", &v, 0.0, 0.0, "%g",
+                if (materializr::inputNumber(materializr::tr("Distance (mm)"), &v, 0.0, 0.0, "%g",
                                        ImGuiInputTextFlags_EnterReturnsTrue)) {
                     c.value = v;
                     resolveAfter();
@@ -404,7 +406,7 @@ void SketchEditOp::renderProperties() {
                 // Stored as radius; show as diameter to match the in-sketch
                 // popup ("Ø ..." in descriptions and dimensions).
                 double dia = c.value * 2.0;
-                if (materializr::inputNumber("\xC3\x98 (mm)", &dia, 0.0, 0.0, "%g",
+                if (materializr::inputNumber(materializr::tr("\xC3\x98 (mm)"), &dia, 0.0, 0.0, "%g",
                                        ImGuiInputTextFlags_EnterReturnsTrue)) {
                     c.value = std::max(dia, 1e-6) * 0.5;
                     resolveAfter();
@@ -414,7 +416,7 @@ void SketchEditOp::renderProperties() {
             case ConstraintType::Angle: {
                 anyDim = true;
                 double deg = c.value * 180.0 / M_PI;
-                if (materializr::inputNumber("Angle (\xC2\xB0)", &deg, 0.0, 0.0, "%.2f",
+                if (materializr::inputNumber(materializr::tr("Angle (\xC2\xB0)"), &deg, 0.0, 0.0, "%.2f",
                                        ImGuiInputTextFlags_EnterReturnsTrue)) {
                     c.value = deg * M_PI / 180.0;
                     resolveAfter();
@@ -458,7 +460,7 @@ void SketchEditOp::renderProperties() {
                 if (c.id == cid) { r = c.radius; break; }
             double dia = r * 2.0;
             ImGui::PushID(cid + 1000000);   // keep clear of the constraint-row ids
-            if (materializr::inputNumber("Diameter (mm)", &dia, 0.0, 0.0, "%g",
+            if (materializr::inputNumber(materializr::tr("Diameter (mm)"), &dia, 0.0, 0.0, "%g",
                                    ImGuiInputTextFlags_EnterReturnsTrue)) {
                 // Writes the after-snapshot AND records the edit so Apply can
                 // carry the new radius into later snapshots — otherwise the next
@@ -478,11 +480,9 @@ void SketchEditOp::renderProperties() {
     // directly and is undoable, so that's the single home for resizing.
 
     if (!anyDim) {
-        ImGui::TextWrapped("Nothing editable in this step. Resize lines, "
-                           "rectangles and arcs from the Properties panel while "
-                           "editing the sketch.");
+        ImGui::TextWrapped("%s", materializr::tr("Nothing editable in this step. Resize lines, rectangles and arcs from the Properties panel while editing the sketch."));
     } else {
-        ImGui::TextDisabled("Press Enter to commit a value, then Apply Changes.");
+        ImGui::TextDisabled("%s", materializr::tr("Press Enter to commit a value, then Apply Changes."));
     }
 }
 

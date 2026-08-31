@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <string>
+#include "../i18n.h"
+#include "../i18n.h"
 
 #ifndef MATERIALIZR_VERSION
 #define MATERIALIZR_VERSION "0.0.0"
@@ -92,16 +94,16 @@ TileAct tile(const char* id, const std::string& label, unsigned int tex,
     const bool hovered = ImGui::IsItemHovered();
     if (hovered && tooltip && *tooltip) ImGui::SetTooltip("%s", tooltip);
     if (withContext && ImGui::BeginPopupContextItem("tilectx")) {
-        if (ImGui::MenuItem("Open")) act = TileAct::CtxOpen;
+        if (ImGui::MenuItem(materializr::tr("Open"))) act = TileAct::CtxOpen;
         ImGui::Separator();
         // Cross-project parts: pick bodies/sketches out of this project into
         // a fresh workspace. Baked copies — no cross-file parametrics.
-        if (ImGui::MenuItem("Import Parts...")) act = TileAct::CtxParts;
+        if (ImGui::MenuItem(materializr::tr("Import Parts..."))) act = TileAct::CtxParts;
         ImGui::Separator();
         // The cheap, deliberate export model: the file's baked final bodies,
         // no cross-file parametrics (see Application::exportRecentProjectAs).
-        if (ImGui::MenuItem("Export as STEP...")) act = TileAct::CtxStep;
-        if (ImGui::MenuItem("Export as STL...")) act = TileAct::CtxStl;
+        if (ImGui::MenuItem(materializr::tr("Export as STEP..."))) act = TileAct::CtxStep;
+        if (ImGui::MenuItem(materializr::tr("Export as STL..."))) act = TileAct::CtxStl;
         ImGui::EndPopup();
     }
 
@@ -184,7 +186,7 @@ LandingPage::Action LandingPage::render() {
         ImGui::SameLine();
     }
     ImGui::SetWindowFontScale(1.5f);
-    ImGui::TextColored(accentText(), "Materializr");
+    ImGui::TextColored(accentText(), "%s", materializr::tr("Materializr"));
     ImGui::SetWindowFontScale(1.0f);
     ImGui::SameLine();
     ImGui::TextColored(dimText(), "v" MATERIALIZR_VERSION);
@@ -206,15 +208,15 @@ LandingPage::Action LandingPage::render() {
         if (ImGui::Button(openLbl)) action.type = ActionType::OpenFileDialog;
         ImGui::SameLine();
         if (ImGui::Button(helpLbl)) action.type = ActionType::OpenHelp;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("User guide");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", materializr::tr("User guide"));
         ImGui::SameLine();
         if (ImGui::Button(gearLbl)) action.type = ActionType::OpenSettings;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Settings");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", materializr::tr("Settings"));
         if (m_canDismiss) {
             ImGui::SameLine();
             if (ImGui::Button(backLbl)) action.type = ActionType::Dismiss;
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Back to the open project");
+                ImGui::SetTooltip("%s", materializr::tr("Back to the open project"));
         }
     }
     ImGui::Spacing();
@@ -235,8 +237,8 @@ LandingPage::Action LandingPage::render() {
         else col = 0;
     };
 
-    if (tile("new", "New Project", 0, ICON_IC_PLUS, tileW, previewH,
-             "Start an empty project", false) == TileAct::Click)
+    if (tile("new", materializr::tr("New Project"), 0, ICON_IC_PLUS, tileW, previewH,
+             materializr::tr("Start an empty project"), false) == TileAct::Click)
         action.type = ActionType::NewProject;
     nextCell();
 
@@ -264,8 +266,7 @@ LandingPage::Action LandingPage::render() {
     if (m_entries.empty()) {
         if (col != 0) ImGui::NewLine();
         ImGui::Spacing();
-        ImGui::TextColored(dimText(),
-                           "Projects you open or save appear here.");
+        ImGui::TextColored(dimText(), "%s", materializr::tr("Projects you open or save appear here."));
     }
     ImGui::EndChild();
 

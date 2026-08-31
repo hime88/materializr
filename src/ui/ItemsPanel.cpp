@@ -1,4 +1,5 @@
 #include "UiTheme.h"
+#include "../i18n.h"
 #include "ItemsPanel.h"
 #include "../touch_mode.h"
 #include "../core/Document.h"
@@ -13,6 +14,11 @@
 #include <memory>
 #include <string>
 #include <algorithm>
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
+#include "../i18n.h"
 
 namespace materializr {
 
@@ -37,7 +43,7 @@ void ItemsPanel::applyRowClick(const SelectionEntry& entry) {
 }
 
 bool ItemsPanel::render() {
-    ImGui::Begin("Items", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(materializr::tr("Items"), nullptr, ImGuiWindowFlags_NoCollapse);
     const bool changed = renderContent();
     ImGui::End();
     return changed;
@@ -55,7 +61,7 @@ bool ItemsPanel::renderContent() {
                                        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
     if (!m_document) {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No document loaded.");
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("No document loaded."));
         return false;
     }
 
@@ -70,7 +76,7 @@ bool ItemsPanel::renderContent() {
                 m_selectedBodyIdsFrame.insert(e.bodyId);
 
     // Filter toggles at top
-    ImGui::TextColored(materializr::accentText(), "Filter");
+    ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Filter"));
     ImGui::Separator();
 
     // The toggles wrap to fit whatever width the host panel has — each one
@@ -89,15 +95,24 @@ bool ItemsPanel::renderContent() {
                                     ImGui::GetWindowContentRegionMax().x;
             return ImGui::GetItemRectMax().x + st.ItemSpacing.x + w <= rightEdge;
         };
-        if (ImGui::Button(m_showBodies ? "[Bodies]" : " Bodies ")) {
+        // Bracketed = section shown. Labels are rebuilt per frame from tr()
+        // so a live language switch retranslates; ### pins each button's ID.
+        char bLbl[80], sLbl[80], cLbl[80];
+        std::snprintf(bLbl, sizeof(bLbl), m_showBodies ? "[%s]###secB" : " %s ###secB",
+                      materializr::tr("Bodies"));
+        std::snprintf(sLbl, sizeof(sLbl), m_showSketches ? "[%s]###secS" : " %s ###secS",
+                      materializr::tr("Sketches"));
+        std::snprintf(cLbl, sizeof(cLbl), m_showPlanes ? "[%s]###secC" : " %s ###secC",
+                      materializr::tr("Construction"));
+        if (ImGui::Button(bLbl)) {
             m_showBodies = !m_showBodies;
         }
-        if (fits("[Sketches]")) ImGui::SameLine();
-        if (ImGui::Button(m_showSketches ? "[Sketches]" : " Sketches ")) {
+        if (fits(sLbl)) ImGui::SameLine();
+        if (ImGui::Button(sLbl)) {
             m_showSketches = !m_showSketches;
         }
-        if (fits("[Construction]")) ImGui::SameLine();
-        if (ImGui::Button(m_showPlanes ? "[Construction]" : " Construction ")) {
+        if (fits(cLbl)) ImGui::SameLine();
+        if (ImGui::Button(cLbl)) {
             m_showPlanes = !m_showPlanes;
         }
     }
@@ -106,11 +121,11 @@ bool ItemsPanel::renderContent() {
 
     // Bodies section
     if (m_showBodies) {
-        ImGui::TextColored(materializr::accentText(), "Bodies");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Bodies"));
         // "+ New folder" button at the section header creates an empty folder
         // (bodies join via right-click → Move to folder…).
         ImGui::SameLine();
-        if (ImGui::SmallButton("+ Folder")) {
+        if (ImGui::SmallButton(materializr::tr("+ Folder"))) {
             m_newFolderForBodyIds.clear();
             m_newFolderName[0] = '\0';
             m_newFolderPopupOpen = true;
@@ -176,12 +191,12 @@ bool ItemsPanel::renderContent() {
                     m_renameBuffer[sizeof(m_renameBuffer) - 1] = '\0';
                 }
                 if (ImGui::BeginPopupContextItem("FolderContextMenu")) {
-                    if (ImGui::MenuItem("Rename")) {
+                    if (ImGui::MenuItem(materializr::tr("Rename"))) {
                         m_renamingId = renameKey;
                         std::strncpy(m_renameBuffer, fname.c_str(), sizeof(m_renameBuffer) - 1);
                         m_renameBuffer[sizeof(m_renameBuffer) - 1] = '\0';
                     }
-                    if (ImGui::MenuItem("Delete folder (keeps bodies)")) {
+                    if (ImGui::MenuItem(materializr::tr("Delete folder (keeps bodies)"))) {
                         m_document->removeFolder(folderId);
                         ImGui::EndPopup();
                         ImGui::PopID();
@@ -236,7 +251,7 @@ bool ItemsPanel::renderContent() {
         }
         if (ImGui::BeginPopupModal("New Folder##itemspanel", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Folder name:");
+            ImGui::Text("%s", materializr::tr("Folder name:"));
             if (m_newFolderFocusInput) {
                 ImGui::SetKeyboardFocusHere();
                 m_newFolderFocusInput = false;
@@ -245,9 +260,9 @@ bool ItemsPanel::renderContent() {
                                               m_newFolderName,
                                               sizeof(m_newFolderName),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
-            bool createClicked = ImGui::Button("Create");
+            bool createClicked = ImGui::Button(materializr::tr("Create"));
             ImGui::SameLine();
-            bool cancelClicked = ImGui::Button("Cancel");
+            bool cancelClicked = ImGui::Button(materializr::tr("Cancel"));
             bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
             if (committed || createClicked) {
                 if (m_newFolderName[0] != '\0') {
@@ -270,11 +285,11 @@ bool ItemsPanel::renderContent() {
     // Sketches section
     if (m_showSketches) {
         ImGui::Separator();
-        ImGui::TextColored(materializr::accentText(), "Sketches");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Sketches"));
 
         std::vector<int> sketchIds = m_document->getAllSketchIds();
         if (sketchIds.empty()) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(none)");
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("(none)"));
         }
         for (int id : sketchIds) {
             ImGui::PushID(1000000 + id); // namespace away from body ids
@@ -351,19 +366,19 @@ bool ItemsPanel::renderContent() {
                     // m_activeSketchId to stale and re-losing the geometry
                     // this same save path exists to protect.
                     bool isBeingDrawn = m_sketchModeActive && id == m_activeSketchId;
-                    if (ImGui::MenuItem("Edit Sketch", nullptr, false, !isBeingDrawn)) {
+                    if (ImGui::MenuItem(materializr::tr("Edit Sketch"), nullptr, false, !isBeingDrawn)) {
                         if (m_editSketch) m_editSketch(id);
                     }
-                    if (ImGui::MenuItem("Export as SVG…")) {
+                    if (ImGui::MenuItem(materializr::tr("Export as SVG…"))) {
                         if (m_exportSketchSvg) m_exportSketchSvg(id);
                     }
-                    if (ImGui::MenuItem("Export as DXF…")) {
+                    if (ImGui::MenuItem(materializr::tr("Export as DXF…"))) {
                         if (m_exportSketchDxf) m_exportSketchDxf(id);
                     }
                     // Make an independent copy — edit it freely (e.g. resize
                     // holes) to derive a same-layout variant without touching
                     // this sketch or any body built from it.
-                    if (ImGui::MenuItem("Duplicate Sketch")) {
+                    if (ImGui::MenuItem(materializr::tr("Duplicate Sketch"))) {
                         if (m_duplicateSketch) m_duplicateSketch(id);
                     }
                     // Fold every OTHER coplanar sketch into this one (the app
@@ -376,7 +391,7 @@ bool ItemsPanel::renderContent() {
                     // whether this row IS the active sketch.
                     bool activeSketchInvolved = m_sketchModeActive && m_activeSketchId >= 0;
                     if (sketchIds.size() > 1 &&
-                        ImGui::MenuItem("Combine coplanar into this", nullptr, false,
+                        ImGui::MenuItem(materializr::tr("Combine coplanar into this"), nullptr, false,
                                         !activeSketchInvolved)) {
                         if (m_combineSketches) {
                             std::vector<int> ids{ id };
@@ -385,10 +400,10 @@ bool ItemsPanel::renderContent() {
                             m_combineSketches(ids);
                         }
                     }
-                    if (ImGui::MenuItem("Rename", nullptr, false, !isBeingDrawn)) {
+                    if (ImGui::MenuItem(materializr::tr("Rename"), nullptr, false, !isBeingDrawn)) {
                         beginRename();
                     }
-                    if (ImGui::MenuItem("Delete", nullptr, false, !isBeingDrawn)) {
+                    if (ImGui::MenuItem(materializr::tr("Delete"), nullptr, false, !isBeingDrawn)) {
                         m_document->removeSketch(id);
                         if (m_selection) m_selection->clear();
                         m_renamingId = -1;
@@ -406,11 +421,11 @@ bool ItemsPanel::renderContent() {
     // Construction (planes + axes) section
     if (m_showPlanes) {
         ImGui::Separator();
-        ImGui::TextColored(materializr::accentText(), "Construction Planes");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Construction Planes"));
 
         std::vector<int> planeIds = m_document->getAllPlaneIds();
         if (planeIds.empty()) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(none)");
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("(none)"));
         }
         for (int id : planeIds) {
             ImGui::PushID(2000000 + id); // namespace away from body/sketch ids
@@ -472,17 +487,17 @@ bool ItemsPanel::renderContent() {
                 }
 
                 if (ImGui::BeginPopupContextItem("PlaneCtx")) {
-                    if (ImGui::MenuItem("Rename")) {
+                    if (ImGui::MenuItem(materializr::tr("Rename"))) {
                         beginRename();
                     }
-                    if (ImGui::MenuItem("Flip Normal")) {
+                    if (ImGui::MenuItem(materializr::tr("Flip Normal"))) {
                         m_document->flipPlaneNormal(id);
                         if (m_markDirty) m_markDirty();
                     }
-                    if (ImGui::MenuItem("Rotate About Axis...")) {
+                    if (ImGui::MenuItem(materializr::tr("Rotate About Axis..."))) {
                         if (m_rotatePlane) m_rotatePlane(id);
                     }
-                    if (ImGui::MenuItem("Delete")) {
+                    if (ImGui::MenuItem(materializr::tr("Delete"))) {
                         m_document->removePlane(id);
                         if (m_selection) m_selection->clear();
                         m_renamingId = -1;
@@ -497,11 +512,11 @@ bool ItemsPanel::renderContent() {
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(materializr::accentText(), "Construction Axes");
+        ImGui::TextColored(materializr::accentText(), "%s", materializr::tr("Construction Axes"));
 
         std::vector<int> axisIds = m_document->getAllAxisIds();
         if (axisIds.empty()) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(none)");
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", materializr::tr("(none)"));
         }
         for (int id : axisIds) {
             ImGui::PushID(3000000 + id);
@@ -563,14 +578,14 @@ bool ItemsPanel::renderContent() {
                 }
 
                 if (ImGui::BeginPopupContextItem("AxisCtx")) {
-                    if (ImGui::MenuItem("Rename")) {
+                    if (ImGui::MenuItem(materializr::tr("Rename"))) {
                         beginRename();
                     }
-                    if (ImGui::MenuItem("Flip Direction")) {
+                    if (ImGui::MenuItem(materializr::tr("Flip Direction"))) {
                         m_document->flipAxisDirection(id);
                         if (m_markDirty) m_markDirty();
                     }
-                    if (ImGui::MenuItem("Delete")) {
+                    if (ImGui::MenuItem(materializr::tr("Delete"))) {
                         m_document->removeAxis(id);
                         if (m_selection) m_selection->clear();
                         m_renamingId = -1;
@@ -587,9 +602,7 @@ bool ItemsPanel::renderContent() {
 
     // Bottom: counts
     ImGui::Separator();
-    char countText[128];
-    std::snprintf(countText, sizeof(countText), "Bodies: %d", m_document->bodyCount());
-    ImGui::Text("%s", countText);
+    ImGui::Text(materializr::tr("Bodies: %d"), m_document->bodyCount());
 
     // Remember which body / sketch is the primary selection so the next frame
     // knows whether selection changed (= time to auto-scroll). Use -1 when
@@ -678,9 +691,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
                           ImVec2(nameW > 1.0f ? nameW : 0.0f, 0.0f));
     if (isMesh) ImGui::PopStyleColor();
     if (isMesh && ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Imported mesh \xE2\x80\x94 a reference body.\n"
-                          "Sketch on it and snap to it; modelling operations "
-                          "(booleans, fillets, push/pull) decline it.");
+        ImGui::SetTooltip("%s", materializr::tr("Imported mesh \xE2\x80\x94 a reference body.\nSketch on it and snap to it; modelling operations (booleans, fillets, push/pull) decline it."));
     }
     if (rowClicked) {
         if (m_selection) {
@@ -737,13 +748,13 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
 
     bool deleted = false;
     if (ImGui::BeginPopupContextItem("BodyContextMenu")) {
-        if (ImGui::MenuItem("Rename")) {
+        if (ImGui::MenuItem(materializr::tr("Rename"))) {
             m_renamingId = id;
             std::string bodyName = m_document->getBodyName(id);
             std::strncpy(m_renameBuffer, bodyName.c_str(), sizeof(m_renameBuffer) - 1);
             m_renameBuffer[sizeof(m_renameBuffer) - 1] = '\0';
         }
-        if (ImGui::MenuItem("Delete")) {
+        if (ImGui::MenuItem(materializr::tr("Delete"))) {
             if (m_history) {
                 auto op = std::make_unique<DeleteOp>();
                 op->setBodyId(id);
@@ -756,7 +767,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
             m_bodyDeleted = true;
             deleted = true;
         }
-        if (!deleted && ImGui::MenuItem("Isolate")) {
+        if (!deleted && ImGui::MenuItem(materializr::tr("Isolate"))) {
             for (int otherId : m_document->getAllBodyIds()) {
                 m_document->setBodyVisible(otherId, otherId == id);
             }
@@ -764,7 +775,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
         }
         // The way back from Isolate in one click (mirrors the viewport
         // context menu) — beats re-ticking every checkbox above.
-        if (!deleted && ImGui::MenuItem("Show All Bodies")) {
+        if (!deleted && ImGui::MenuItem(materializr::tr("Show All Bodies"))) {
             for (int otherId : m_document->getAllBodyIds()) {
                 m_document->setBodyVisible(otherId, true);
             }
@@ -782,7 +793,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
             [&] { try { return SeparateBodyOp::solidCount(
                                    m_document->getBody(id)) > 1; }
                   catch (...) { return false; } }()) {
-            if (ImGui::MenuItem("Separate")) {
+            if (ImGui::MenuItem(materializr::tr("Separate"))) {
                 auto op = std::make_unique<SeparateBodyOp>();
                 op->setBody(id);
                 m_history->pushOperation(std::move(op), *m_document);
@@ -798,7 +809,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
         const std::vector<std::string> exportFormats =
             m_exportFormats ? m_exportFormats() : std::vector<std::string>{};
         if (!deleted && m_exportBodies && !exportFormats.empty() &&
-            ImGui::BeginMenu("Export")) {
+            ImGui::BeginMenu(materializr::tr("Export"))) {
             std::vector<int> targets;
             bool multi = false;
             if (m_selection) {
@@ -811,7 +822,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
             }
             if (!multi) { targets.clear(); targets.push_back(id); }
             if (multi)
-                ImGui::TextDisabled("%zu selected bodies", targets.size());
+                ImGui::TextDisabled(materializr::tr("%zu selected bodies"), targets.size());
             for (const auto& fmt : exportFormats) {
                 const std::string label = fmt + "…";
                 if (ImGui::MenuItem(label.c_str())) m_exportBodies(targets, fmt);
@@ -820,14 +831,14 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
         }
         // Kept for the callers that still wire only the STL shortcut.
         if (!deleted && m_exportStl && exportFormats.empty() &&
-            ImGui::MenuItem("Export STL…")) {
+            ImGui::MenuItem(materializr::tr("Export STL…"))) {
             m_exportStl(id);
         }
         // Baked copy of this body into a fresh project file — the "use this
         // part elsewhere" flow (the new file lands in Open Recent / the
         // landing page, ready for Import Parts from another project).
         if (!deleted && m_exportToProject &&
-            ImGui::MenuItem("Export to New Project")) {
+            ImGui::MenuItem(materializr::tr("Export to New Project"))) {
             // Same selection rule as Export above: the whole selection when
             // this body is part of one. No ellipsis — it opens a tab now
             // rather than asking for a filename.
@@ -849,7 +860,7 @@ bool ItemsPanel::renderBodyRow(int id, bool& colorChanged) {
         // otherwise it just moves this one. Lists existing folders + a "(root)"
         // entry (when at least one target is currently in a folder) + a
         // "New folder…" prompt that drops all the targets into the new folder.
-        if (!deleted && ImGui::BeginMenu("Move to folder")) {
+        if (!deleted && ImGui::BeginMenu(materializr::tr("Move to folder"))) {
             std::vector<int> targets;
             bool multi = false;
             if (m_selection) {

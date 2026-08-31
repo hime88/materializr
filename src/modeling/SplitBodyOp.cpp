@@ -7,6 +7,7 @@
 #include <TopoDS_Solid.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <imgui.h>
+#include "../i18n.h"
 
 SplitBodyOp::SplitBodyOp() = default;
 
@@ -113,19 +114,19 @@ std::string SplitBodyOp::description() const {
 }
 
 void SplitBodyOp::renderProperties() {
-    ImGui::Text("Split Body");
+    ImGui::Text("%s", materializr::tr("Split Body"));
     ImGui::Separator();
 
-    ImGui::Text("Body ID: %d", m_bodyId);
+    ImGui::Text(materializr::tr("Body ID: %d"), m_bodyId);
 
     // Display plane parameters (read-only for now, set programmatically)
     gp_Pnt loc = m_splitPlane.Location();
     gp_Dir dir = m_splitPlane.Axis().Direction();
-    ImGui::Text("Plane origin: (%.1f, %.1f, %.1f)", loc.X(), loc.Y(), loc.Z());
-    ImGui::Text("Plane normal: (%.2f, %.2f, %.2f)", dir.X(), dir.Y(), dir.Z());
+    ImGui::Text(materializr::tr("Plane origin: (%.1f, %.1f, %.1f)"), loc.X(), loc.Y(), loc.Z());
+    ImGui::Text(materializr::tr("Plane normal: (%.2f, %.2f, %.2f)"), dir.X(), dir.Y(), dir.Z());
 
     if (m_secondBodyId >= 0) {
-        ImGui::Text("Second body ID: %d", m_secondBodyId);
+        ImGui::Text(materializr::tr("Second body ID: %d"), m_secondBodyId);
     }
 }
 

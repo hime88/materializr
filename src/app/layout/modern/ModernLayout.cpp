@@ -33,6 +33,10 @@
 
 #include <imgui.h>
 #include <string>
+#include "../../../i18n.h"
+#include "../../../i18n.h"
+#include "../../../i18n.h"
+#include "../../../i18n.h"
 
 namespace materializr {
 
@@ -107,8 +111,10 @@ void Application::renderModernLayout() {
         // before discarding — the warning popup does the "throw away" wording.)
         const bool toolRunning = m_inSketchMode && m_sketchTool &&
                                  m_sketchTool->isPlacing();
-        const char* finishLbl = toolRunning ? "Finish" : "Finish Sketch";
-        const char* exitLbl   = toolRunning ? "Cancel" : "Exit Sketch";
+        const char* finishLbl = toolRunning ? materializr::tr("Finish")
+                                            : materializr::tr("Finish Sketch");
+        const char* exitLbl   = toolRunning ? materializr::tr("Cancel")
+                                            : materializr::tr("Exit Sketch");
         // Inference-level toggle (sketch mode only): a compact two-row button
         // just left of Finish, click-cycles Max->Full->Reduced->Off like the
         // classic toolbar's guides button.
@@ -129,15 +135,16 @@ void Application::renderModernLayout() {
         // label/icon reflect the CURRENT state; width uses the current label.
         const int focusState = m_leftPanelHidden ? 2 : (m_rightPanelHidden ? 1 : 0);
         const char* focusIcon = focusState == 2 ? MZ_ICON_FULL_EXIT : MZ_ICON_FOCUS;
-        const char* focusLbl  = focusState == 2 ? "Full" : "Focus";
+        const char* focusLbl  = focusState == 2 ? materializr::tr("Full")
+                                                : materializr::tr("Focus");
         float total = bh * nSquare + sp * nSquare +
                       touchui::pillButtonWidth(focusIcon, focusLbl);
         if (m_inSketchMode)
-            total += touchui::twoRowButtonWidth("Inference level", infLbl) + sp +
+            total += touchui::twoRowButtonWidth(materializr::tr("Inference level"), materializr::tr(infLbl)) + sp +
                      touchui::pillButtonWidth(MZ_ICON_FINISH, finishLbl) +
                      touchui::pillButtonWidth(MZ_ICON_DISCARD, exitLbl) + sp * 2;
         if (showMulti)
-            total += touchui::pillButtonWidth(MZ_ICON_SELECT, "Multi") + sp;
+            total += touchui::pillButtonWidth(MZ_ICON_SELECT, materializr::tr("Multi")) + sp;
         // ⋯ menu (top-left, nav-drawer style), then logo chip + name + /project.
         {
             const float bh0 = 44.0f * s;
@@ -145,7 +152,7 @@ void Application::renderModernLayout() {
             ImGui::SetCursorPos(ImVec2(pad, (topH - bh0) * 0.5f));
             if (touchui::iconButton("overflow", MZ_ICON_MORE, bh0))
                 ImGui::OpenPopup("##TouchOverflow");
-            tip("Menu: file, edit, view, help and settings");
+            tip(materializr::tr("Menu: file, edit, view, help and settings"));
             renderTouchOverflowPopup();
 
             ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -159,7 +166,7 @@ void Application::renderModernLayout() {
                                 IM_COL32_WHITE, 7.0f * s);
             ImGui::SetCursorPos(ImVec2(lx + chip + 10.0f * s,
                                        (topH - ImGui::GetTextLineHeight()) * 0.5f));
-            ImGui::TextColored(touchui::textPrimary(), "Materializr");
+            ImGui::TextColored(touchui::textPrimary(), "%s", materializr::tr("Materializr"));
             // The old "/ projectname" breadcrumb is now the tab row: one pill
             // per open project (dirty dot included), right-click/long-press
             // for Save / Save As / Close, and a trailing "+".
@@ -248,7 +255,7 @@ void Application::renderModernLayout() {
             ImGui::SetCursorPosY((topH - pillH) * 0.5f);
             if (touchui::iconButton("newtab", MZ_ICON_ADD, pillH))
                 ImGui::OpenPopup("##newTabMenu");
-            tip("New tab: empty, open a file, or a recent project");
+            tip(materializr::tr("New tab: empty, open a file, or a recent project"));
             if (ImGui::BeginPopup("##newTabMenu")) {
                 renderNewTabMenuBody();
                 ImGui::EndPopup();
@@ -273,22 +280,20 @@ void Application::renderModernLayout() {
         ImGui::SetCursorPos(ImVec2(x, cy));
 
         if (showMulti) {
-            if (touchui::pillButton("multi", MZ_ICON_SELECT, "Multi",
+            if (touchui::pillButton("multi", MZ_ICON_SELECT, materializr::tr("Multi"),
                                     m_multiSelectToggle))
                 m_multiSelectToggle = !m_multiSelectToggle;
-            tip("Multi-select: add taps to the current selection\n"
-                "(the touch equivalent of holding Ctrl)");
+            tip(materializr::tr("Multi-select: add taps to the current selection\n(the touch equivalent of holding Ctrl)"));
             ImGui::SameLine(0.0f, sp);
             ImGui::SetCursorPosY(cy);
         }
 
         if (m_inSketchMode) {
             // Inference level — just left of Finish; click cycles the level.
-            if (touchui::twoRowButton("inflvl", "Inference level", infLbl)) {
+            if (touchui::twoRowButton("inflvl", materializr::tr("Inference level"), materializr::tr(infLbl))) {
                 handleToolAction(static_cast<int>(ToolAction::SketchCycleInference));
             }
-            tip("Sketch inference level (snapping / guides)\n"
-                "Click to cycle: Full \xE2\x86\x92 Reduced \xE2\x86\x92 Off \xE2\x86\x92 Max");
+            tip(materializr::tr("Sketch inference level (snapping / guides)\nClick to cycle: Full \xE2\x86\x92 Reduced \xE2\x86\x92 Off \xE2\x86\x92 Max"));
             ImGui::SameLine(0.0f, sp);
             ImGui::SetCursorPosY(cy);
             if (touchui::pillButton("finish", MZ_ICON_FINISH, finishLbl, true)) {
@@ -316,15 +321,15 @@ void Application::renderModernLayout() {
             if (ImGui::BeginPopupModal("Discard sketch?", nullptr,
                                        ImGuiWindowFlags_AlwaysAutoResize)) {
                 ImGui::TextUnformatted(
-                    "Leave the sketch and throw away its changes?");
+                    materializr::tr("Leave the sketch and throw away its changes?"));
                 ImGui::Spacing();
                 const float bw = 150.0f * s;
-                if (ImGui::Button("Discard Sketch", ImVec2(bw, 44.0f * s))) {
+                if (ImGui::Button(materializr::tr("Discard Sketch"), ImVec2(bw, 44.0f * s))) {
                     ImGui::CloseCurrentPopup();
                     handleToolAction(static_cast<int>(ToolAction::ExitSketchDiscard));
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Keep Editing", ImVec2(bw, 44.0f * s)))
+                if (ImGui::Button(materializr::tr("Keep Editing"), ImVec2(bw, 44.0f * s)))
                     ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
@@ -336,13 +341,13 @@ void Application::renderModernLayout() {
         ImGui::BeginDisabled(histLocked || !touchCanUndo());
         if (touchui::iconButton("undo", MZ_ICON_UNDO, bh)) touchUndo();
         ImGui::EndDisabled();
-        tip("Undo (in a sketch: backs out the in-progress shape first)");
+        tip(materializr::tr("Undo (in a sketch: backs out the in-progress shape first)"));
         ImGui::SameLine(0.0f, sp);
         ImGui::SetCursorPosY(cy);
         ImGui::BeginDisabled(histLocked || !m_history->canRedo());
         if (touchui::iconButton("redo", MZ_ICON_REDO, bh)) redoWithCascade();
         ImGui::EndDisabled();
-        tip("Redo");
+        tip(materializr::tr("Redo"));
 
         // Focus cycle: 0 = everything, 1 = side panel hidden, 2 = viewport
         // only (rail hidden too). One button, three positions.
@@ -355,9 +360,9 @@ void Application::renderModernLayout() {
             m_leftPanelHidden  = next == 2;
             saveAppSettings();
         }
-        tip(focusState == 0 ? "Focus: hide the side panel (tap again for viewport only)"
-            : focusState == 1 ? "Focus: hide the tool rail too (viewport only)"
-                              : "Bring the panels back");
+        tip(focusState == 0 ? materializr::tr("Focus: hide the side panel (tap again for viewport only)")
+            : focusState == 1 ? materializr::tr("Focus: hide the tool rail too (viewport only)")
+                              : materializr::tr("Bring the panels back"));
         // (The ⋯ overflow menu now lives at the top-left of this bar.)
     }
     ImGui::End();
@@ -369,7 +374,7 @@ void Application::renderModernLayout() {
         if (beginFlushBar("##TouchRail",
                           kShellWindowFlags & ~ImGuiWindowFlags_NoScrollbar)) {
             ImGui::SetCursorPosX(10.0f * s);
-            touchui::sectionHeader("Tools");
+            touchui::sectionHeader(materializr::tr("Tools"));
 
             // TWO-COLUMN GRID when the rail is dragged wide: dragging wider
             // used to just stretch the same buttons into slabs; past the
@@ -415,9 +420,9 @@ void Application::renderModernLayout() {
             auto popPopupPad = [&] { if (touchPad) ImGui::PopStyleVar(2); };
             auto constructGroup = [&] {
                 if (touchui::railButton("constructGroup", MZ_ICON_FOCUS,
-                                        "Construct", false, cell()))
+                                        materializr::tr("Construct"), false, cell()))
                     ImGui::OpenPopup("##railConstruct");
-                tip("Create a construction plane or axis derived from the selection");
+                tip(materializr::tr("Create a construction plane or axis derived from the selection"));
                 pushPopupPad();
                 if (ImGui::BeginPopup("##railConstruct")) {
                     renderConstructionMenuItems();
@@ -431,36 +436,36 @@ void Application::renderModernLayout() {
             // selection the contextual tools lead and Construct follows.
             if (nothingSel) {
                 if (touchui::railButton("sketchOnGroup", MZ_ICON_SKETCH,
-                                        "Sketch on...", false, cell()))
+                                        materializr::tr("Sketch on..."), false, cell()))
                     ImGui::OpenPopup("##railSketchOn");
-                tip("Start a sketch on a world plane (XY / XZ / YZ)");
+                tip(materializr::tr("Start a sketch on a world plane (XY / XZ / YZ)"));
                 pushPopupPad();
                 if (ImGui::BeginPopup("##railSketchOn")) {
-                    if (ImGui::MenuItem("XY plane"))
+                    if (ImGui::MenuItem(materializr::tr("XY plane")))
                         handleToolAction(static_cast<int>(ToolAction::StartSketchXY));
-                    if (ImGui::MenuItem("XZ plane"))
+                    if (ImGui::MenuItem(materializr::tr("XZ plane")))
                         handleToolAction(static_cast<int>(ToolAction::StartSketchXZ));
-                    if (ImGui::MenuItem("YZ plane"))
+                    if (ImGui::MenuItem(materializr::tr("YZ plane")))
                         handleToolAction(static_cast<int>(ToolAction::StartSketchYZ));
                     ImGui::EndPopup();
                 }
                 popPopupPad();
                 if (touchui::railButton("primGroup", MZ_ICON_PRIMITIVE,
-                                        "Primitive", false, cell()))
+                                        materializr::tr("Primitive"), false, cell()))
                     ImGui::OpenPopup("##railPrimitive");
-                tip("Add a primitive solid: box, cylinder, sphere, cone or torus");
+                tip(materializr::tr("Add a primitive solid: box, cylinder, sphere, cone or torus"));
                 pushPopupPad();
                 if (ImGui::BeginPopup("##railPrimitive")) {
                     if (m_pluginContext) {
-                        if (ImGui::MenuItem("Box"))
+                        if (ImGui::MenuItem(materializr::tr("Box")))
                             m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveBox);
-                        if (ImGui::MenuItem("Cylinder"))
+                        if (ImGui::MenuItem(materializr::tr("Cylinder")))
                             m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveCylinder);
-                        if (ImGui::MenuItem("Sphere"))
+                        if (ImGui::MenuItem(materializr::tr("Sphere")))
                             m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveSphere);
-                        if (ImGui::MenuItem("Cone"))
+                        if (ImGui::MenuItem(materializr::tr("Cone")))
                             m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveCone);
-                        if (ImGui::MenuItem("Torus"))
+                        if (ImGui::MenuItem(materializr::tr("Torus")))
                             m_pluginContext->requestInteractiveOp(InteractiveOp::PrimitiveTorus);
                     }
                     ImGui::EndPopup();
@@ -501,6 +506,11 @@ void Application::renderModernLayout() {
                         case ToolAction::Move:
                         case ToolAction::Rotate:
                         case ToolAction::Scale:                return 2;
+                        // Both bring OUTSIDE geometry into the sketch, which is
+                        // a different act from drawing it; grouping them keeps
+                        // the rail short and makes the pair discoverable.
+                        case ToolAction::SketchSvg:
+                        case ToolAction::SketchAirfoil:        return 3;
                         default: return 0;
                     }
                 };
@@ -519,7 +529,7 @@ void Application::renderModernLayout() {
                     else handleToolAction(static_cast<int>(t.action));
                 };
 
-                bool done[3] = { false, false, false };
+                bool done[4] = { false, false, false, false };
                 int railIdx = 0;
                 for (const auto& tool : rail) {
                     if (skip(tool)) continue;
@@ -529,20 +539,26 @@ void Application::renderModernLayout() {
                     if (g != 0 && count(g) >= 2) {
                         if (done[g]) continue;
                         done[g] = true;
-                        const char* gIcon  = g == 1 ? MZ_ICON_COPY  : MZ_ICON_MOVE;
-                        const char* gLabel = g == 1 ? "Multiply"    : "Transform";
+                        const char* gIcon  = g == 1 ? MZ_ICON_COPY
+                                           : g == 2 ? MZ_ICON_MOVE : MZ_ICON_SVG;
+                        const char* gLabel = g == 1 ? "Multiply"
+                                           : g == 2 ? "Transform" : "Import";
                         const char* gPopup = g == 1 ? "##railMultiply"
-                                                    : "##railTransform";
+                                           : g == 2 ? "##railTransform"
+                                                    : "##railImport";
                         ImGui::PushID(2000 + g);
-                        if (touchui::railButton(gLabel, gIcon, gLabel, false, cell()))
+                        if (touchui::railButton(gLabel, gIcon, tr(gLabel), false, cell()))
                             ImGui::OpenPopup(gPopup);
-                        tip(g == 1 ? "Copy, mirror, pattern or split the selection"
-                                   : "Move, rotate or scale the selection");
+                        tip(materializr::tr(
+                            g == 3 ? "Bring outside artwork into the sketch: an "
+                                     "SVG outline or an aerofoil section"
+                          : g == 1 ? "Copy, mirror, pattern or split the selection"
+                                   : "Move, rotate or scale the selection"));
                         pushPopupPad();
                         if (ImGui::BeginPopup(gPopup)) {
                             for (const auto& m : rail) {
                                 if (skip(m) || groupOf(m) != g) continue;
-                                if (ImGui::MenuItem(m.label)) fire(m);
+                                if (ImGui::MenuItem(materializr::tr(m.label))) fire(m);
                             }
                             ImGui::EndPopup();
                         }
@@ -558,10 +574,10 @@ void Application::renderModernLayout() {
                     const bool isDrawOrigin =
                         tool.action == ToolAction::SketchToggleDrawOrigin;
                     const bool clicked = touchui::railButton(
-                        tool.label, tool.icon, tool.label,
+                        tool.label, tool.icon, tr(tool.label),
                         isDrawOrigin ? true : tool.active,
                         isDrawOrigin ? fullRow() : cell());
-                    tip(tool.tip);
+                    tip(materializr::tr(tool.tip));
                     if (tool.pluginIndex >= 0) {
                         if (clicked) m_toolbar->fireRailPlugin(tool.pluginIndex);
                     } else if (tool.action == ToolAction::Polygon)
@@ -617,7 +633,10 @@ void Application::renderModernLayout() {
             // Properties lives inside the History tab (below the steps) but
             // the tab just says "History" — that's where people expect it,
             // and the short label keeps the switcher clean.
-            static const char* kTabs[] = { "Items", "History" };
+            // Rebuilt per frame (NOT static) so a live language switch
+            // retranslates it; tr() pointers are stable per language.
+            const char* kTabs[] = { materializr::tr("Items"),
+                                    materializr::tr("History") };
             if (m_touchRightTab > 1) m_touchRightTab = 1; // migrate old 3-tab value
             const int tab = touchui::segmented("rightTabs", kTabs, 2,
                                                m_touchRightTab);
@@ -684,7 +703,7 @@ void Application::renderModernLayout() {
                     if (!stepEditing) {
                         const float footerTop = ImGui::GetCursorPosY();
                         ImGui::Separator();
-                        touchui::sectionHeader("Properties");
+                        touchui::sectionHeader(materializr::tr("Properties"));
                         // AutoResizeY (no max constraint) = exactly content
                         // height; NoScrollbar guarantees it never grows a
                         // scrollbar. History above already reserved this height

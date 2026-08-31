@@ -39,6 +39,7 @@
 #include "modeling/GuidedLoftOp.h"
 #include "modeling/BoundaryFillOp.h"
 #include "modeling/ConstructionPlaneOp.h"
+#include "io/FileDialogs.h"
 #include "modeling/ConstructionAxisOp.h"
 #include <Geom_Plane.hxx>
 #include <Geom_BSplineSurface.hxx>
@@ -58,6 +59,7 @@
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepGProp.hxx>
+#include "../i18n.h"
 #include <GProp_GProps.hxx>
 #include <Bnd_Box.hxx>
 #include <Geom_CylindricalSurface.hxx>
@@ -1137,10 +1139,10 @@ std::string Application::linkHintFor(bool isBody, int id) const {
         }
         if (live.empty() && detached.empty()) return "";
         if (!live.empty())
-            return "Built from " + nameList(live, false) +
-                   " — editing it updates this body.";
-        return "Detached from " + nameList(detached, false) +
-               " — moved independently; sketch edits won't update this body.";
+            return std::string(materializr::tr("Built from ")) + nameList(live, false) +
+                   materializr::tr(" — editing it updates this body.");
+        return std::string(materializr::tr("Detached from ")) + nameList(detached, false) +
+               materializr::tr(" — moved independently; sketch edits won't update this body.");
     }
     // Sketch: what body it drives + whether it's detached.
     auto it = links.find(id);
@@ -1148,8 +1150,10 @@ std::string Application::linkHintFor(bool isBody, int id) const {
     auto sk = m_document->getSketch(id);
     std::string bodies = nameList(it->second, true);
     if (sk && sk->isDetachedFromBody())
-        return "Detached — moved independently; edits won't update " + bodies + ".";
-    return "Drives " + bodies + " — editing this sketch updates it.";
+        return std::string(materializr::tr("Detached — moved independently; edits won't update ")) +
+               bodies + ".";
+    return std::string(materializr::tr("Drives ")) + bodies +
+           materializr::tr(" — editing this sketch updates it.");
 }
 
 void Application::cascadeFromSketchEdit(int sketchId) {
@@ -1615,16 +1619,97 @@ void Application::updateConstructionPlane() {
             m_selection->select(e);
         }
     }
+    // The preview plane is a NEW plane every time, so both the pending image
+    // and the rotation have to follow it -- otherwise the photo vanished and
+    // the tilt silently reset the moment the user changed the alignment or
+    // nudged the offset.
+    applyPlaneOpRotation();
+    reattachPlaneOpRefImage();
     m_meshesDirty = true;
+}
+
+// Re-apply the ABSOLUTE rotation to the freshly rebuilt preview plane. Applied
+// X, then Y, then Z about the plane's own origin, so the three fields describe
+// one orientation rather than a history of nudges.
+void Application::applyPlaneOpRotation() {
+    if (!m_document) return;
+    if (std::abs(m_planeOpRotX) <= 1e-4f && std::abs(m_planeOpRotY) <= 1e-4f &&
+        std::abs(m_planeOpRotZ) <= 1e-4f)
+        return;
+    const auto ids = m_document->getAllPlaneIds();
+    if (ids.empty()) return;
+    const int pid = ids.back();
+    const auto* entry = m_document->getPlane(pid);
+    if (!entry) return;
+    gp_Pln pln = entry->plane;
+    const gp_Pnt o = pln.Position().Location();
+    // User Z-up display convention: user Y = world Z, user Z = world Y --
+    // the same mapping the Origin / Normal readouts use.
+    const std::pair<gp_Dir, float> spins[3] = {
+        { gp_Dir(1, 0, 0), m_planeOpRotX },
+        { gp_Dir(0, 0, 1), m_planeOpRotY },
+        { gp_Dir(0, 1, 0), m_planeOpRotZ },
+    };
+    for (const auto& [axis, deg] : spins) {
+        if (std::abs(deg) <= 1e-4f) continue;
+        gp_Trsf t;
+        t.SetRotation(gp_Ax1(o, axis), deg * M_PI / 180.0);
+        pln.Transform(t);
+    }
+    m_document->setPlane(pid, pln);
+}
+
+// Put the pending image on whatever plane the preview currently is.
+void Application::reattachPlaneOpRefImage() {
+    if (!m_planeOpHasPendingImage || !m_document) return;
+    const auto ids = m_document->getAllPlaneIds();
+    if (ids.empty()) return;
+    m_document->setRefImage(ids.back(), m_planeOpPendingImage);
+    m_meshesDirty = true;
+}
+
+// Choose the file for a plane being created. Attaching immediately is the
+// point: the photo renders on the live preview plane, so alignment, offset and
+// calibration all happen with it visible rather than after the fact.
+void Application::pickPlaneOpRefImage() {
+    materializr::FileDialogs::openFile(
+        "Reference Image",
+        {{"Images", "*.png *.jpg *.jpeg *.bmp *.PNG *.JPG *.JPEG *.BMP"}},
+        [this](const std::string& path) {
+            RefImageEntry e;
+            std::string base;
+            if (!loadRefImageFile(path, e, base)) {
+                m_planeOpWantRefImage = false;   // nothing loaded; untick
+                return;
+            }
+            m_planeOpPendingImage = std::move(e);
+            m_planeOpHasPendingImage = true;
+            reattachPlaneOpRefImage();
+        });
 }
 
 void Application::commitConstructionPlane() {
+    // The image is already on the preview plane (re-attached after every
+    // apply), so commit just keeps it and clears the staging state.
+    m_planeOpWantRefImage = false;
+    m_planeOpHasPendingImage = false;
+    m_planeOpPendingImage = RefImageEntry{};
+    m_planeOpRotX = m_planeOpRotY = m_planeOpRotZ = 0.0f;
     m_planeOpPreview.commit(*m_history);
     m_planeOpActive = false;
     m_meshesDirty = true;
+
+    // The plane now exists and previewApply auto-selected it, so the id is the
+    // most recent one. Attaching here (rather than inside the op) keeps the
+    // image bytes out of the history step while still letting ANY plane type
+    // carry one.
 }
 
 void Application::cancelConstructionPlane() {
+    m_planeOpRotX = m_planeOpRotY = m_planeOpRotZ = 0.0f;
+    m_planeOpWantRefImage = false;
+    m_planeOpHasPendingImage = false;
+    m_planeOpPendingImage = RefImageEntry{};
     m_planeOpPreview.clear(*m_document);
     m_planeOpActive = false;
     m_meshesDirty = true;
